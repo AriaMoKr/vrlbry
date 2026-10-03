@@ -1,0 +1,8 @@
+node_modules/
+# ZIM archives are data, not source (the reference one is ~800 MB)
+*.zim
+*.zim[a-z][a-z]
+# self-signed certificate cache for --https
+.cert/
+.DS_Store
+Thumbs.db

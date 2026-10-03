@@ -1,0 +1,27 @@
+{
+  "name": "vrlbry",
+  "version": "0.1.0",
+  "description": "A WebXR virtual library: browse and read the books inside the ZIM files in a directory, shelved in VR.",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.15.0"
+  },
+  "bin": {
+    "vrlbry": "server/index.js"
+  },
+  "scripts": {
+    "start": "node server/index.js",
+    "start:https": "node server/index.js --https",
+    "test": "node --test test/"
+  },
+  "dependencies": {
+    "htmlparser2": "^12.0.0",
+    "selfsigned": "^5.5.0",
+    "three": "^0.186.1"
+  },
+  "devDependencies": {
+    "iwer": "^2.5.0"
+  }
+}
