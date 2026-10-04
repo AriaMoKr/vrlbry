@@ -5,9 +5,15 @@ books in a warm, candle-lit 3D reading room. Walk up to a shelf, pull a book out
 cover, open it and read it page by page. It works in a VR headset (Meta Quest and other WebXR
 browsers), on a desktop with mouse and keyboard, and on a phone.
 
-It is built for [Project Gutenberg ZIMs](https://library.kiwix.org/) made by gutenberg2zim: you
-get real covers, authors, popularity ranks and the books' own illustrations. Other ZIM files also
-work; their HTML articles become the books.
+It understands two kinds of [Kiwix ZIM files](https://library.kiwix.org/) especially well:
+
+- **Project Gutenberg** (gutenberg2zim): real covers, authors, popularity ranks and the books' own
+  illustrations.
+- **Wikisource** (mwoffliner): every multi-part work — novels, collections, histories; 17,693 in
+  the English ZIM — becomes one book with all its chapters in order, its cover, author, year and
+  genre.
+
+Other ZIM files also work; their HTML articles become the books.
 
 ## Run it
 
@@ -34,8 +40,25 @@ node server/index.js --dir /path/to/zims --port 8080
 | `--host <addr>` | interface to listen on (default: all, so a headset on your network can connect) |
 | `--https` | serve HTTPS with a self-signed certificate (cached in `.cert/`) |
 | `--cert <file> --key <file>` | use your own certificate |
-| `--max-generic <n>` | max books listed from a non-Gutenberg ZIM (default 2000) |
+| `--max-generic <n>` | max books listed from other (non-Gutenberg, non-Wikisource) ZIMs (default 2000) |
+| `--no-watch` | don't pick up `.zim` files added or removed while the server runs |
 | `--quiet` | print only problems and the address |
+
+## Adding books
+
+Drop more `.zim` files into the folder at any time — no restart needed. The server notices new,
+replaced and removed files within a few seconds (a download that is still in progress is
+retried once it finishes), and open pages re-shelve by themselves within ~10 seconds. The ⟳
+buttons on the library card and on the catalogue stand rescan immediately.
+
+The first time a Wikisource ZIM is opened, the server indexes its works in the background (about
+two minutes for the 8.6 GB English one); the library card shows the progress, and the books appear
+when it is done. The index is cached in `.cache/`, so later starts are instant.
+
+A library that large is shown one **room** at a time: a genre (Novels, Poetry, Drama, History &
+biography, Court decisions, …) or all works whose title starts with a letter, up to 3,000 books
+on the shelves. Choose the room on the **Rooms** tab of the catalogue stand. Search still covers
+every book: picking one that is not on the shelves switches to its room.
 
 ## Using a VR headset
 
@@ -64,9 +87,10 @@ Then press **Enter VR**.
 | Close / put back | Esc | **✕** / **Put back** | **B** or **Y** |
 
 The catalogue stand next to where you start lets you re-shelve the books by title, author or
-popularity, jump to a letter, pick a book at random ("Surprise me") and reopen recently read books.
-The search box (desktop and phone) finds any book by title or author and takes you to it. Your
-reading position, text size and theme are remembered in the browser.
+popularity, jump to a letter, pick a book at random ("Surprise me"), reopen recently read books,
+choose a room of a large library, and rescan the folder. The search box (desktop and phone) finds
+any book by title or author and takes you to it. Your reading position, text size, theme and
+rooms are remembered in the browser.
 
 ## Development
 
@@ -81,7 +105,7 @@ node --test test/zim.test.js
 - No build step. The browser loads plain ES modules from `public/`; Three.js comes from
   `node_modules` via an import map.
 - Tests that need the reference ZIM (`gutenberg_en_lcc-pe_2026-03.zim` in the repo root) are skipped
-  when it is not there.
+  when it is not there. Wikisource support is tested on a miniature synthetic archive.
 - Dev pages: `/reader-test.html` (the page renderer as a 2D reader) and `/dev/world-test.html` (the
   room with an orbit camera).
 - `/?xr=emulate` replaces WebXR with Meta's IWER emulator (a virtual Quest 3), so the VR controls

@@ -97,10 +97,34 @@ resolve a book's HTML by trying `<base>`, `<base>.html` in `C` then `A`; cover b
 
 ### 2.3 Non-Gutenberg ZIMs ("generic")
 
-A ZIM with no Gutenberg JSON index is a *generic* library: its books are its HTML article entries
-(mime `text/html`, namespace `C` or `A`, excluding redirects), in URL-pointer order, capped at
-`maxGenericBooks` (default 2000; log what was dropped). Book id = `e<entryIndex>`, title = entry
-title, author = ZIM `Creator`/`Publisher` metadata, no cover, rank = position, shelf = null.
+A ZIM with no Gutenberg JSON index that is not Wikisource (§2.4) is a *generic* library: its
+books are its HTML article entries (mime `text/html`, namespace `C` or `A`, excluding redirects),
+in URL-pointer order, capped at `maxGenericBooks` (default 2000; log what was dropped). Book id =
+`e<entryIndex>`, title = entry title, author = ZIM `Creator`/`Publisher` metadata, no cover, rank
+= position, shelf = null.
+
+### 2.4 Wikisource ZIMs (mwoffliner)
+
+Detected by metadata: `M/Source` ends with `wikisource.org`, or `M/Tags` contains `wikisource`.
+Reference: `wikisource_en_all_maxi_2026-09.zim` (8.6 GB, 1.08M entries, 706,865 HTML pages,
+mwoffliner 2.0). Facts verified by inspection:
+
+- A work is a top-level page in `C` (no `/`, not in a namespace such as `Author:`, `Portal:`,
+  `Category:`, `Index:`, `Page:`; `Translation:` *is* a work namespace) with its text in subpages
+  (`Teeftallow` → `Teeftallow/Chapter_1` …, or `Work/Volume_I/Chapter_IV`). **Books = multi-part
+  works** (top-level pages with ≥ 1 subpage): 17,693 here. Single pages (poems, speeches) are not
+  books. Huge compilations exist (Alumni Oxonienses 63k subpages, Britannica 1911 37k).
+- The main page links its parts in reading order (a contents list, sometimes a `wst-auxtoc`
+  box); mwoffliner removed the Wikisource header template, so **pages carry no author**.
+  `Author:` pages (46,932) link to their works. Each page embeds its categories in
+  `RLCONF = {… "wgCategories": [...] …}` (e.g. `"1926 works"`, `"Novels"`, `"American novels"`,
+  plus many maintenance categories).
+- Page structure: content in `#mw-content-text .mw-parser-output` (text in `.prp-pages-output`
+  blocks with `span.pagenum.ws-pagenum` page markers); chrome to strip: `header` with
+  `h1#firstHeading`, `#contentSub` (breadcrumb), `.ws-noexport`, `.licenseContainer` /
+  `.licenseBanner` (licence notice with a `PD-icon.svg.png`), `#catlinks`, `.zim-footer`.
+- Images are WebP files under `C/_assets_/<hash>/…`; a work's main page usually starts with its
+  cover / title-page image.
 
 ## 3. Server
 
@@ -108,7 +132,9 @@ title, author = ZIM `Creator`/`Publisher` metadata, no cover, rank = position, s
 server/
   index.js            CLI entry (shebang). Parses args, scans dir, starts HTTP(S), prints URLs.
   http.js             createServer(library, opts) → node:http(s) request handler + routes + static.
-  library.js          Library / ArchiveLibrary: catalog building, content conversion + caching.
+  library.js          Library / ArchiveLibrary: catalog building, content conversion + caching,
+                      folder rescans.
+  wikisource.js       Wikisource works index (build/cache), genres, work assembly (§2.4, §3.8).
   zim/reader.js       ZimArchive: low-level ZIM reading.
   zim/xz.js           Pure-JS .xz (LZMA2) decoder.
   content/html.js     HTML → blocks, chunking, TOC, image size sniffing.
@@ -295,10 +321,15 @@ An empty book yields one chunk with one paragraph block `"(This book has no read
 
 ```js
 export class Library {
-  static async scan(dir, { maxGenericBooks = 2000, log = console.log } = {}): Promise<Library>
+  static async scan(dir, { maxGenericBooks = 2000, log = console.log, warn = log,
+                           contentCacheBytes, archiveOptions, cacheDir = '<project>/.cache' } = {}): Promise<Library>
   dir: string
+  generation: number    // +1 whenever the set of libraries or a catalogue changes (clients poll it)
   list(): ArchiveLibrary[]
   get(libId): ArchiveLibrary | undefined
+  async rescan(): Promise<{ generation, added: id[], removed: id[], reopened: id[], failed: name[] }>
+  watch({ debounceMs = 2500, intervalMs = 60000 } = {}): () => void   // automatic rescans
+  unwatch()
   async close()
 }
 export class ArchiveLibrary {
@@ -306,8 +337,8 @@ export class ArchiveLibrary {
                         // characters outside [A-Za-z0-9._-] → '-'; de-duplicate with -2, -3…
   file: string          // basename
   archive: ZimArchive
-  kind: 'gutenberg' | 'generic'
-  async info(): Promise<LibraryInfo>                     // §4 shape, cached
+  kind: 'gutenberg' | 'wikisource' | 'generic'
+  async info(): Promise<LibraryInfo>                     // §4 shape, cached (indexing progress live)
   async books(): Promise<Book[]>                         // §4 shape, cached
   async book(bookId): Promise<Book | undefined>
   async content(bookId): Promise<{ meta, chunks }>       // converted + cached (byte LRU ~300 MB total)
@@ -316,6 +347,13 @@ export class ArchiveLibrary {
 ```
 - `scan` lists `*.zim` (case-insensitive, non-recursive), opens each; a file that fails to open is
   logged and skipped (never crash the server). Split archives (`.zimaa`…) are logged as unsupported.
+- `rescan` re-reads the directory: opens new files, closes removed ones, and reopens a file whose
+  size or mtime changed under the same library id. Concurrent calls share one scan (a call during
+  a scan triggers one more pass). A file that failed to open (e.g. still downloading) is retried
+  only after its size/mtime changes. `watch` = debounced `fs.watch` on the directory (a finished
+  browser download is a rename to `*.zim`) + a periodic pass; `generation` increments when
+  anything was added/removed/reopened, and when a library's catalogue changes on its own (a
+  Wikisource index finished, §3.8).
 - `content(bookId)`: gets the HTML (or, if the book has no HTML but has an EPUB, parses the EPUB
   and concatenates the spine documents' blocks), runs `htmlToBlocks`, fills missing image `w`/`h`
   by sniffing image bytes with `imageSize` (from the ZIM / EPUB; for large uncompressed images
@@ -336,9 +374,11 @@ export class ArchiveLibrary {
 
 ```
 node server/index.js [--dir <path>] [--port 8080] [--host 0.0.0.0] [--https]
-                     [--cert <file> --key <file>] [--max-generic 2000] [--quiet]
+                     [--cert <file> --key <file>] [--max-generic 2000] [--no-watch] [--quiet]
 ```
 - `--dir` defaults to `process.cwd()`. Port default 8080; if busy, try the next 10 ports.
+- The directory is watched (`Library.watch`) unless `--no-watch`: ZIM files added, replaced or
+  removed while the server runs are picked up, and clients re-shelve by themselves.
 - `--https`: use `--cert/--key` if given, else generate a self-signed certificate with `selfsigned`
   (SAN: localhost, 127.0.0.1, all local IPv4 addresses) and cache it in `<project>/.cert/`
   (regenerate when expired or when the address set changes). WebXR needs a secure context:
@@ -347,6 +387,44 @@ node server/index.js [--dir <path>] [--port 8080] [--host 0.0.0.0] [--https]
   plus each LAN IPv4) with a hint about HTTPS for headsets. Graceful shutdown on SIGINT/SIGTERM.
 - Never crash on a bad request: catch everything, respond 500 JSON, log.
 
+### 3.8 `server/wikisource.js`
+
+```js
+export function isWikisource(meta): boolean
+export function genreOf(categories): string        // first matching GENRES rule, else 'Other works'
+export function yearOf(categories): number | null  // from "1926 works"
+export function cleanCategories(categories)        // drops maintenance/licensing categories
+export async function buildIndex(archive, { onProgress(stage, fraction), log }): Promise<Index>
+export function indexPath(cacheDir, archive)       // <cacheDir>/wikisource-<uuid>.v<N>.json
+export async function loadIndex(file, archive)     // null when absent / stale / other archive
+export async function saveIndex(file, index)       // atomic (temp file + rename)
+export async function collectWork(archive, rootUrl, { maxParts = 1200, maxBytes = 36e6, expectedParts })
+    : Promise<{ parts: [{ url, path, html, depth }], truncated, total }>
+// Index = { version, uuid, works: [[url, title, entryIndex, parts, coverPath|null, year|null, categories[], author|null]] }
+```
+- **Index build** (~110 s for the reference ZIM, run in the background by `ArchiveLibrary` on first
+  open, then cached): (1) structure scan of all entries → works + subpage counts + `Author:`
+  pages; (2) each work's main page, in cluster order (each cluster decompressed once):
+  categories, year, cover = first image ≥ 120 px wide that is not page furniture (licence
+  banner, `*.svg.png` icons, logos, ornaments), title-page text; (3) `Author:` pages → links to
+  works (a link to a subpage credits its work). A work with several credits (author, translator,
+  editor) gets the one whose surname appears on its title page, else the first.
+- While the index is built the library's `books()` is empty and `info().indexing` =
+  `{ stage: 'scan'|'works'|'authors', progress: 0..1 }` (`stage: 'failed', error` on failure);
+  when it is ready the catalogue is rebuilt and `onChange` → `Library.generation++`.
+- **Books**: id `w<entryIndex>`, `genre` (also `shelf`), `year`, `parts`, `rank: null`,
+  `size = (parts + 1) × 30000` (shelf thickness follows length), `cover` (or null), `author`
+  (or null).
+- **Reading** (`content()`): `collectWork` = main page, then subpages depth-first in the order
+  their parent links them; the main page may link any descendant, other pages only their own
+  descendants (so in-text links to sibling chapters cannot reorder the book); if links cover less
+  than half of the known subpages, unlinked ones are appended in natural order (`Chapter_2` <
+  `Chapter_10`). Each part goes under its own heading (main page h1, depth 1 h2, deeper h3) and
+  through `htmlToBlocks`, whose skip rules drop MediaWiki chrome (`.ws-noexport`, `.noprint`,
+  `.mw-editsection`, `.navbox`, `.catlinks`, `.printfooter`, `.zim-footer`, `.licenseContainer`,
+  `.licenseBanner`, `.pr_quality`, …; ids `firstHeading`, `contentSub`, `catlinks`, `footer`, …).
+  Capped works end with a note "This edition includes the first N of M parts".
+
 ## 4. HTTP API
 
 All JSON responses: `Content-Type: application/json; charset=utf-8`. Errors: `{ "error": "..." }`
@@ -354,7 +432,7 @@ with 400/404/500. Unknown `/api/*` → 404 JSON.
 
 **`GET /api/libraries`** →
 ```json
-{ "libraries": [ {
+{ "generation": 1, "libraries": [ {
   "id": "gutenberg_en_lcc-pe_2026-03", "file": "gutenberg_en_lcc-pe_2026-03.zim",
   "kind": "gutenberg", "title": "Project Gutenberg Library", "description": "English language",
   "longDescription": "English language studies, …", "language": "eng", "date": "2026-03-05",
@@ -362,7 +440,14 @@ with 400/404/500. Unknown `/api/*` → 404 JSON.
   "bookCount": 258, "illustration": "/zim/gutenberg_en_lcc-pe_2026-03/M/Illustration_48x48%401",
   "shelves": ["PE"] } ] }
 ```
-(`illustration` null when absent; missing metadata fields are `null`.)
+(`illustration` null when absent; missing metadata fields are `null`.) `generation` changes when
+libraries are added/removed/replaced or a catalogue finishes building: clients poll it and
+re-fetch. Wikisource libraries (`"kind": "wikisource"`) add `"genres": [{ "name": "Novels",
+"count": 1644 }, …]` (largest first; `shelves` = genre names) and `"indexing": null | { "stage",
+"progress" }` (live; `bookCount` is 0 until the index is ready).
+
+**`POST /api/rescan`** → rescans the ZIM folder now: `{ "generation", "added": [ids],
+"removed": [ids], "reopened": [ids], "failed": [file names], "libraries": [ … ] }`. `GET` → 405.
 
 **`GET /api/libraries/:lib/books`** →
 ```json
@@ -376,7 +461,9 @@ with 400/404/500. Unknown `/api/*` → 404 JSON.
 ```
 `rank` = 1-based popularity position. `readable` = has HTML or EPUB that exists in the archive.
 `cover`/`epub` null when absent (verify existence with `findPath`). Ids are strings.
-`authorId`/`language`/`shelf` null when unknown.
+`authorId`/`language`/`shelf` null when unknown. Wikisource books (§3.8) have `rank: null` and add
+`"genre": "Novels", "year": 1926, "parts": 44` (`year` may be null); the full list is returned
+(17,693 works ≈ 0.8 MB gzipped) and filtered into rooms by the client (§5.6).
 
 **`GET /api/libraries/:lib/books/:id`** → reading metadata (triggers conversion):
 ```json
@@ -428,6 +515,7 @@ public/
     ui/panel.js          canvas-texture UI panels with buttons/text, hover & click via UV.
     ui/overlay.js        DOM overlay: library info, search, help (non-VR); setReading(bool) fades it while a book is open.
     interaction.js       app state machine: browse → inspect → read; wires everything.
+    rooms.js             which books are shelved: all of ordinary libraries, one room of huge ones.
     audio.js             tiny WebAudio synth: page turn, book slide/thud, UI click.
     main.js              bootstrap: renderer, scene, camera rig, XR session, loop, IWER dev flag.
 ```
@@ -553,8 +641,10 @@ export class Book3D {
 - **Spines:** canvas-rendered into atlases (e.g. 2048² per bookcase): base colour per book
   (palette of cloth/leather colours by hash), gilt bands, title (vertical, auto-fit, wrapping to
   2 lines for wide spines), author short name near the bottom. Must be legible at ~1.5 m in VR.
-  Atlases for bookcases far from the camera may be created lazily / released (LOD) for big
-  libraries; with this repo's 258 books everything may be built eagerly.
+  With more than 1,200 shelved books (~10 bookcases) atlases start at 1/8 scale and only the 8
+  nearest bookcases within 12 m get full-resolution ones (≈ 16 MB each), swapped one per
+  quarter second as the viewer moves: GPU texture memory stays bounded on a headset. Smaller
+  collections are built at full resolution eagerly.
 - **Book3D:** cover image texture on the front (cover loaded from `book.cover`; fallback generated
   cover with title/author), spine artwork, page-edge texture, back cover. Opening rotates the front
   cover; when open, the two page planes show reader canvases, slightly curved/tilted is a bonus.
@@ -634,12 +724,26 @@ States: `browse` → `inspect` → `read` (and back).
   up/down = move book nearer/farther, left stick up/down = scale (READ.minScale..maxScale), grip
   drag = reposition (bonus). Next spread is pre-rendered for instant turns. Saves position on every
   turn. Close/B/Esc → closes, flies back, → **browse**. Locomotion disabled while inspecting/reading.
-- **Kiosk panel** (at `world.kiosk`, always available in browse): library list with counts, sort
-  toggle Title/Author/Popularity (rebuilds shelves), A–Z letter grid (teleports to the first book
-  with that letter via `shelves.locate` and highlights it), "Surprise me" (random book), "Recently
-  read" list (opens directly into read), settings toggles (sound, smooth move).
-- DOM overlay (non-VR): see `ui/overlay.js` — title, library cards, search box (filters by title /
-  author across libraries; picking a result = teleport to it and select it), Enter VR button
+- **Kiosk panel** (at `world.kiosk`, always available in browse; 1.0 × 1.0 m): "⟳ Rescan folder"
+  button (`POST /api/rescan`); when a library is browsed by rooms, two tabs:
+  - *Shelves & settings*: library summary, sort toggle Title/Author/Popularity (rebuilds shelves),
+    A–Z letter grid over the shelved books (teleports to the first book with that letter via
+    `shelves.locate` and highlights it for 4 s), "Surprise me" (random book), "Recently read"
+    list (opens directly into read), settings toggles (sound, smooth move).
+  - *Rooms*: genre buttons with counts and a title-letter grid for the room-browsed library
+    ("Next library ▸" when there are several); picking one rebuilds the shelves and teleports to
+    that section. While the library is still indexing, its progress is shown instead.
+- **Rooms** (`rooms.js`): a library is browsed by rooms when `kind === 'wikisource'` or it has
+  more than 3,000 books. It then shelves one room at a time — a genre, or all works whose title
+  starts with a letter — sorted by the current sort and capped at `ROOM_CAP` = 3,000 books
+  (the section sign says "(first 3,000)"). The default room is Novels if present, else the
+  largest genre that fits. The current room per library is saved in `settings.rooms`. Ordinary
+  libraries are always shelved whole. Search results and "Recently read" entries that are not on
+  the shelves first switch to the book's room (`roomFor`: its genre, or its title letter when
+  the genre is over the cap).
+- DOM overlay (non-VR): see `ui/overlay.js` — title, library cards (with indexing progress), a
+  ⟳ rescan button, search box (filters by title / author across *all* books of all libraries;
+  picking a result = switch room if needed, teleport to it and select it), Enter VR button
   (only when `immersive-vr` is supported), control help, loading progress, error toasts.
 
 ### 5.7 Bootstrap (`main.js`)
@@ -658,7 +762,12 @@ States: `browse` → `inspect` → `read` (and back).
   overlay, xrDevice, settings, enterVR(), tick(dt, n) }` for automated testing in all modes.
   `tick` advances n frames manually (requestAnimationFrame does not run in a page that is not
   painted).
-- Loading: fetch libraries → books (all libraries in parallel) → `world.build` → spawn → loop.
-  Show progress in the overlay; on fatal errors show a readable message.
+- Loading: fetch libraries → books (all libraries in parallel) → `world.build(collectionsFor(…))`
+  → spawn → loop. Show progress in the overlay; on fatal errors show a readable message.
+- Catalogue updates: every 10 s (while the page is visible or in XR) poll `GET /api/libraries`;
+  when `generation` changed, fetch the book lists of new or changed libraries, toast what was
+  added/removed, update the overlay and call `interaction.setCatalog()`, which rebuilds the
+  shelves now in browse or after the open book is put back. Info-only changes (indexing progress)
+  just refresh texts.
 - `renderer.setAnimationLoop(tick)`: `dt` clamped to 0.1 s; update order: controls → interaction →
   world → render.
