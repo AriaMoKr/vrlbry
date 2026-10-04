@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  ROOM_CAP, isFaceted, facetsOf, inRoom, defaultRoom, roomFor, roomLabel, sameRoom, normRoom, shelfCollections, collectionsFor,
+  ROOM_CAP, ALL_PLACE, placeBookCount, isFaceted, facetsOf, inRoom, defaultRoom, roomFor, roomLabel, sameRoom, normRoom, shelfCollections, collectionsFor,
   currentPlace, placeFor,
 } from '../public/js/rooms.js';
 
@@ -124,6 +124,20 @@ describe('rooms', () => {
     assert.equal(currentPlace([ws, pg], { pg: pgBooks, ws: [] }, settings).id, 'pg');
     assert.equal(settings.place, 'pg');
     assert.deepEqual(collectionsFor([], {}, { sort: 'title' }), []);
+  });
+
+  it('can shelve every library whole in one hall', () => {
+    const books = { pg: pgBooks, ws: works(ROOM_CAP + 10, () => 'Poetry'), empty: [] };
+    const empty = { id: 'empty', kind: 'generic', title: 'Still indexing' };
+    const settings = { sort: 'title', place: ALL_PLACE.id };
+    assert.equal(currentPlace([pg, ws, empty], books, settings), ALL_PLACE);
+    const cols = collectionsFor([pg, ws, empty], books, settings);
+    assert.deepEqual(cols.map((c) => [c.library.id, c.books.length, c.room, c.capped]), [['pg', 10, null, false], ['ws', ROOM_CAP + 10, null, false]]);
+    assert.equal(placeBookCount(ALL_PLACE, [pg, ws, empty], books), ROOM_CAP + 20);
+    assert.equal(placeBookCount(ws, [pg, ws], books), ROOM_CAP + 10);
+    // With a single library there is no such place.
+    assert.equal(currentPlace([pg], books, settings).id, 'pg');
+    assert.equal(settings.place, 'pg');
   });
 
   it('knows where a book lives', () => {

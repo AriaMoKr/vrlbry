@@ -35,6 +35,11 @@ const HIGH_BUDGET = 6; // sharp atlases kept at once (~16 MB of GPU memory each)
 const HIGH_RANGE = 4.5; // metres (horizontal) within which a bookcase gets a sharp atlas
 const HYSTERESIS = 1.5; // metres of slack before a sharp atlas is dropped or displaced
 const JOB_BUDGET_MS = 3; // canvas painting per frame
+// In a room of more bookcases than this (only the all-libraries room), only the nearest MID_BUDGET
+// keep a mid atlas (~1 MB of GPU memory each), dropped once more than MID_SLACK places further
+// out; the rest show the low one.
+const MID_BUDGET = 64;
+const MID_SLACK = 16;
 
 /** Height of the surface books stand on, for shelf row r counted from the top (0 = top row). */
 export function rowSurface(r) {
@@ -548,6 +553,7 @@ export class Bookshelves {
    */
   update(dt, camera) {
     if (!camera || !this.cases.length) return;
+    this._cullFacingAway(camera.getWorldPosition(this._tmp));
     if (this._job) {
       if (this._job.painter.step(JOB_BUDGET_MS)) this._finishJob();
       return;
@@ -564,18 +570,34 @@ export class Bookshelves {
     const small = this.cases.length <= HIGH_BUDGET;
     const sharp = ranked.filter((r) => r.cs.textures.high);
     const far = sharp[sharp.length - 1];
-    if (!small && far && far.d > HIGH_RANGE + HYSTERESIS) return this._dropHigh(far.cs);
+    if (!small && far && far.d > HIGH_RANGE + HYSTERESIS) return this._drop(far.cs, 'high');
     const want = ranked.find((r) => (small || r.d < HIGH_RANGE) && !r.cs.textures.high);
     if (want) {
       if (sharp.length < HIGH_BUDGET) return this._startJob(want.cs, 'high');
       if (want.d < far.d - HYSTERESIS) {
-        this._dropHigh(far.cs);
+        this._drop(far.cs, 'high');
         return this._startJob(want.cs, 'high');
       }
     }
     if (small) return;
-    const mid = ranked.find((r) => !r.cs.textures.mid);
+    let candidates = ranked;
+    if (this.cases.length > MID_BUDGET) {
+      for (const r of ranked.slice(MID_BUDGET + MID_SLACK)) if (r.cs.textures.mid) this._drop(r.cs, 'mid');
+      candidates = ranked.slice(0, MID_BUDGET);
+    }
+    const mid = candidates.find((r) => !r.cs.textures.mid);
     if (mid) this._startJob(mid.cs, 'mid');
+  }
+
+  /**
+   * Hides the books of bookcases the viewer stands behind (behind the mid-plane, where the back
+   * and side panels cover every book). In a hall that is half of them, every frame, which matters
+   * once a room has more bookcases than the Quest's draw-call budget.
+   */
+  _cullFacingAway(cam) {
+    for (const cs of this.cases) {
+      cs.mesh.visible = (cam.x - cs.position.x) * Math.sin(cs.yaw) + (cam.z - cs.position.z) * Math.cos(cs.yaw) > 0;
+    }
   }
 
   _startJob(cs, level) {
@@ -590,9 +612,9 @@ export class Bookshelves {
     this._applyTexture(cs);
   }
 
-  _dropHigh(cs) {
-    cs.textures.high?.dispose();
-    cs.textures.high = null;
+  _drop(cs, level) {
+    cs.textures[level]?.dispose();
+    cs.textures[level] = null;
     this._applyTexture(cs);
   }
 

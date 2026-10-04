@@ -78,9 +78,8 @@ function shadowDecal(group, x, z, sx, sz, rot = 0) {
 }
 
 /** Arched window (frame, mullions, sill) facing +Z, bottom centre at the origin. */
-function makeWindow(width = 1.1, height = 2.3) {
-  const mats = materials();
-  const g = new THREE.Group();
+/** One arched window's geometries in window space, by material: glass, dark wood, wood. */
+function windowParts(width, height) {
   const r = width / 2;
   const shape = new THREE.Shape();
   shape.moveTo(-r, 0);
@@ -92,8 +91,6 @@ function makeWindow(width = 1.1, height = 2.3) {
   // ShapeGeometry UVs are in shape units: normalise for the sky texture.
   const uv = glassGeo.attributes.uv;
   for (let i = 0; i < uv.count; i++) uv.setXY(i, (uv.getX(i) + r) / width, uv.getY(i) / height);
-  const glass = new THREE.Mesh(glassGeo, mats.sky);
-  g.add(glass);
   const frameShape = new THREE.Shape();
   const fr = r + 0.09;
   frameShape.moveTo(-fr, -0.08);
@@ -102,9 +99,8 @@ function makeWindow(width = 1.1, height = 2.3) {
   frameShape.absarc(0, height - r, fr, 0, Math.PI, false);
   frameShape.lineTo(-fr, -0.08);
   frameShape.holes.push(shape);
-  const frame = new THREE.Mesh(new THREE.ExtrudeGeometry(frameShape, { depth: 0.08, bevelEnabled: false, curveSegments: 24 }), mats.darkWood);
-  frame.position.z = -0.02;
-  g.add(frame);
+  const frame = new THREE.ExtrudeGeometry(frameShape, { depth: 0.08, bevelEnabled: false, curveSegments: 24 });
+  frame.translate(0, 0, -0.02);
   const bars = [];
   const bar = (w, h, x, y) => {
     const b = new THREE.BoxGeometry(w, h, 0.03);
@@ -113,11 +109,39 @@ function makeWindow(width = 1.1, height = 2.3) {
   };
   bar(0.035, height - 0.05, 0, (height - 0.05) / 2);
   for (const f of [0.3, 0.55]) bar(width, 0.03, 0, height * f);
-  g.add(new THREE.Mesh(mergeGeometries(bars), mats.darkWood));
-  const sill = new THREE.Mesh(new THREE.BoxGeometry(width + 0.3, 0.06, 0.22), mats.wood);
-  sill.position.set(0, -0.1, 0.06);
-  g.add(sill);
-  return g;
+  const sill = new THREE.BoxGeometry(width + 0.3, 0.06, 0.22);
+  sill.translate(0, -0.1, 0.06);
+  return { sky: [glassGeo], darkWood: [frame, ...bars], wood: [sill] };
+}
+
+/**
+ * Adds a room's windows as three meshes (glass, dark wood, wood) rather than four per window: a
+ * long hall has dozens of windows, and draw calls are the Quest's bottleneck.
+ * @param {THREE.Group} group
+ * @param {Array<{ width: number, height: number, x: number, y: number, z: number, yaw: number }>} windows
+ */
+function addWindows(group, windows) {
+  if (!windows.length) return;
+  const mats = materials();
+  const parts = { sky: [], darkWood: [], wood: [] };
+  const m = new THREE.Matrix4();
+  for (const w of windows) {
+    m.makeRotationY(w.yaw).setPosition(w.x, w.y, w.z);
+    for (const [key, geos] of Object.entries(windowParts(w.width, w.height))) {
+      for (const g of geos) {
+        // mergeGeometries needs all-indexed or all-non-indexed input (ExtrudeGeometry is the latter).
+        const flat = g.index ? g.toNonIndexed() : g;
+        if (flat !== g) g.dispose();
+        parts[key].push(flat.applyMatrix4(m));
+      }
+    }
+  }
+  for (const [key, geos] of Object.entries(parts)) {
+    const mesh = new THREE.Mesh(mergeGeometries(geos), mats[key]);
+    geos.forEach((g) => g.dispose());
+    mesh.name = 'windows';
+    group.add(mesh);
+  }
 }
 
 /** Round reading table with a lamp and a few books; returns the lamp light. */
@@ -354,13 +378,8 @@ export function createRotunda({ R, windowAngles = [], kiosk, decor = true }) {
   oculus.position.y = WALL_H + R * 0.5 - 0.02;
   group.add(oculus);
 
-  for (const a of windowAngles) {
-    const w = makeWindow(1.1, 2.4);
-    const rr = R - 0.03;
-    w.position.set(Math.sin(a) * rr, 1.15, -Math.cos(a) * rr);
-    w.rotation.y = -a;
-    group.add(w);
-  }
+  const rr = R - 0.03;
+  addWindows(group, windowAngles.map((a) => ({ width: 1.1, height: 2.4, x: Math.sin(a) * rr, y: 1.15, z: -Math.cos(a) * rr, yaw: -a })));
 
   commonLights(group);
   const chandelier = makeChandelier(group, 0, WALL_H - 0.5, 0, 0.7);
@@ -437,14 +456,11 @@ export function createHall({ minX, maxX, minZ, maxZ, kiosk }) {
   ceil.rotation.x = Math.PI / 2;
   ceil.position.set(cx, WALL_H, cz);
   group.add(ceil);
+  const windows = [];
   for (let z = maxZ - 2.5; z > minZ + 1.5; z -= 3.2) {
-    for (const [x, rot] of [[minX + 0.03, Math.PI / 2], [maxX - 0.03, -Math.PI / 2]]) {
-      const win = makeWindow(1.0, 2.2);
-      win.position.set(x, 1.2, z);
-      win.rotation.y = rot;
-      group.add(win);
-    }
+    for (const [x, yaw] of [[minX + 0.03, Math.PI / 2], [maxX - 0.03, -Math.PI / 2]]) windows.push({ width: 1.0, height: 2.2, x, y: 1.2, z, yaw });
   }
+  addWindows(group, windows);
   commonLights(group);
   const lights = [];
   const n = Math.max(1, Math.min(3, Math.round(d / 8)));

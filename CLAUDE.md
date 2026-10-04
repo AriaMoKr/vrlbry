@@ -86,6 +86,7 @@ client: api.js ─► rooms.js (what to shelve) ─► World/Bookshelves ─► 
   - Page canvases come from a pool of 6: the shown spread plus the prepared next and previous spreads. `Book3D` keeps displaying (and turning) the canvases it was given, so never redraw a canvas that is on screen.
   - Background neighbour preparation is cancelled by bumping `_prepToken`.
 - **`rooms.js`**: the hall shows one *place* at a time (`settings.place`): each library is its own room. Huge libraries (Wikisource, or more than 3,000 books) are browsed through a room `{ genre, letter }`, two independent filters that may each be null (both null = the whole library). A room is capped at 3,000 books and saved in `settings.rooms`; `normRoom` converts the older `{ type, value }` shape. The place and filters are chosen on the kiosk's Rooms tab.
+  - With several libraries, the experimental `ALL_PLACE` (`settings.place = '*'`) shelves every library whole in one hall (~180 bookcases). Shelves keep it within budget by not drawing the books of bookcases seen from behind, and by keeping mid atlases for only the 64 nearest bookcases in rooms that large.
   - Kiosk-driven rebuilds keep the viewer's pose relative to the kiosk (`controls.followFrame`), not the spawn point: the kiosk moves when the room changes shape.
   - Always build the world through `collectionsFor()`.
   - Search and recently read cover all books, so call `interaction.ensureShelved(book)` before locating a book that may be in another place or room. Every loaded book carries `libId` (`withLib` in `main.js`).

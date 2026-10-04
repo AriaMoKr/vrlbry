@@ -9,7 +9,9 @@ import { audio } from './audio.js';
 import { load, save } from './util/storage.js';
 import { letterOf, SORT_MODES } from './util/books.js';
 import { PAGE_PX, READ } from './config.js';
-import { collectionsFor, currentPlace, facetsOf, isFaceted, normRoom, placeFor, roomLabel, sameRoom, ROOM_CAP } from './rooms.js';
+import {
+  ALL_PLACE, collectionsFor, currentPlace, facetsOf, isFaceted, normRoom, placeBookCount, placeFor, roomLabel, sameRoom, ROOM_CAP,
+} from './rooms.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 const THEME_ORDER = ['paper', 'sepia', 'night'];
@@ -217,20 +219,22 @@ export class Interaction {
     // One room per library…
     p.add({ type: 'text', x: pad, y, w: W - 2 * pad, h: 32, text: 'Libraries', size: 24, color: UI.muted });
     y += 38;
-    const libCols = Math.min(2, Math.max(1, this.libraries.length));
+    // With several libraries, one more place shelves them all together.
+    const places = this.libraries.length > 1 ? [...this.libraries, ALL_PLACE] : this.libraries;
+    const libCols = Math.min(2, Math.max(1, places.length));
     const lw = (W - 2 * pad - (libCols - 1) * 10) / libCols;
-    this.libraries.forEach((lib, i) => {
-      const books = this.booksByLib[lib.id] || [];
+    places.forEach((lib, i) => {
+      const n = placeBookCount(lib, this.libraries, this.booksByLib);
       const busy = lib.indexing && lib.indexing.stage !== 'failed';
       const count = busy ? `indexing ${Math.round((lib.indexing.progress || 0) * 100)}%`
-        : `${books.length.toLocaleString()} ${lib.kind === 'wikisource' ? 'works' : 'books'}`;
+        : `${n.toLocaleString()} ${lib.kind === 'wikisource' ? 'works' : 'books'}`;
       p.add({
-        id: `place-${i}`, type: 'button', x: pad + (i % libCols) * (lw + 10), y: y + Math.floor(i / libCols) * 62, w: lw, h: 54,
-        label: `${lib.title} · ${count}`, size: 23, active: place?.id === lib.id, disabled: !books.length,
+        id: lib === ALL_PLACE ? 'place-all' : `place-${i}`, type: 'button', x: pad + (i % libCols) * (lw + 10), y: y + Math.floor(i / libCols) * 62,
+        w: lw, h: 54, label: `${lib.title} · ${count}`, size: 23, active: place?.id === lib.id, disabled: !n,
         onClick: () => this.setPlace(lib.id),
       });
     });
-    y += Math.ceil(this.libraries.length / libCols) * 62 + 12;
+    y += Math.ceil(places.length / libCols) * 62 + 12;
     if (!place) return;
     const books = this.booksByLib[place.id] || [];
     if (!isFaceted(place, books)) {
@@ -310,7 +314,7 @@ export class Interaction {
     this.settings.place = libId;
     if (room) this.settings.rooms[libId] = room;
     save('settings', this.settings);
-    const lib = this.libraries.find((l) => l.id === libId);
+    const lib = libId === ALL_PLACE.id ? ALL_PLACE : this.libraries.find((l) => l.id === libId);
     const label = room ? `${lib?.title ?? ''}: ${roomLabel(room)}` : lib?.title ?? '';
     this.overlay?.showToast(`Opening ${label}…`, 'info', 2500);
     await new Promise((r) => setTimeout(r, 30)); // let the toast show before the rebuild

@@ -126,10 +126,10 @@ describe('reader layout', () => {
   });
 
   it('handles real chunks from the reference ZIM', { skip: !fs.existsSync(REAL_ZIM) && 'real ZIM not present' }, async () => {
-    const { Library } = await import('../server/library.js');
-    const lib = await Library.scan(path.dirname(REAL_ZIM), { log: () => {} });
+    // Open the reference archive itself: the repo folder may hold other ZIMs too.
+    const { ArchiveLibrary } = await import('../server/library.js');
+    const a = await ArchiveLibrary.open(REAL_ZIM, { log: () => {} });
     try {
-      const a = lib.list()[0];
       for (const id of ['37134', '10681', '11921', '44765', '26577']) {
         const { chunks } = await a.content(id);
         for (const ch of chunks.slice(0, 3)) {
@@ -139,7 +139,7 @@ describe('reader layout', () => {
         }
       }
     } finally {
-      await lib.close();
+      await a.close();
     }
   });
 });

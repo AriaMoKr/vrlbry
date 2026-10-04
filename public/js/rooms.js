@@ -10,6 +10,11 @@ import { letterOf, sortBooks } from './util/books.js';
 
 /** Most books a room shelves at once (~26 bookcases). */
 export const ROOM_CAP = 3000;
+/**
+ * The place that shelves every library whole in one hall — no filters, no cap (an experiment:
+ * ~18,000 books is ~160 bookcases, past the Quest's comfortable draw-call budget).
+ */
+export const ALL_PLACE = { id: '*', title: 'All libraries', kind: 'all' };
 /** Libraries with more books than this are browsed by rooms. */
 export const FACET_MIN = 3000;
 
@@ -93,6 +98,7 @@ export function sameRoom(a, b) {
  * @returns {object|null} library descriptor
  */
 export function currentPlace(libraries, booksByLib, settings) {
+  if (settings.place === ALL_PLACE.id && libraries.length > 1) return ALL_PLACE;
   let lib = libraries.find((l) => l.id === settings.place);
   if (!lib) lib = libraries.find((l) => (booksByLib[l.id] || []).length) || libraries[0] || null;
   settings.place = lib?.id ?? null;
@@ -109,12 +115,24 @@ export function collectionsFor(libraries, booksByLib, settings) {
   settings.rooms ||= {};
   const lib = currentPlace(libraries, booksByLib, settings);
   if (!lib) return [];
+  if (lib === ALL_PLACE) {
+    return libraries.filter((l) => booksByLib[l.id]?.length).map((library) => {
+      const books = booksByLib[library.id];
+      return { library, books, room: null, total: books.length, capped: false };
+    });
+  }
   return shelfCollections([lib], booksByLib, settings.rooms, settings.sort).map((c) => ({
     ...c,
     subtitle: c.room
       ? `${roomLabel(c.room)} · ${c.total.toLocaleString()} works${c.capped ? ` (first ${ROOM_CAP.toLocaleString()})` : ''}`
       : undefined,
   }));
+}
+
+/** Number of books a place shelves in total (all libraries for ALL_PLACE). */
+export function placeBookCount(place, libraries, booksByLib) {
+  if (place === ALL_PLACE) return libraries.reduce((n, l) => n + (booksByLib[l.id]?.length || 0), 0);
+  return booksByLib[place.id]?.length || 0;
 }
 
 /** The place (and room, for large libraries) where a book is shelved. */

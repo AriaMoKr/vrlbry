@@ -653,7 +653,11 @@ export class Book3D {
   Quest. A sharp atlas is dropped beyond 4.5 + 1.5 m, or displaced only by a bookcase at least
   1.5 m nearer (hysteresis: no repainting while standing or swaying). A room with at most 6
   bookcases (e.g. the 258-book Gutenberg room) fits the budget: all its bookcases get sharp
-  atlases regardless of distance and keep them, and the mid level is skipped. Painting is incremental,
+  atlases regardless of distance and keep them, and the mid level is skipped. A room of more than
+  64 bookcases (only the all-libraries place) keeps mid atlases for the 64 nearest only, dropping
+  one once it is more than 80th nearest. Every frame, the books of bookcases the viewer stands
+  behind (behind the bookcase's mid-plane, where its back and side panels hide every book) are
+  not drawn: about half of a hall. Painting is incremental,
   ~3 ms per frame (`atlasPainter().step()`), one atlas at a time; changing level is a texture
   swap (low and mid textures are kept). Spine text uses an offset dark copy, never `shadowBlur`
   (it blurs every glyph on the CPU).
@@ -760,7 +764,10 @@ States: `browse` → `inspect` → `read` (and back).
     walkable do they go to the spawn point.
 - **Rooms** (`rooms.js`): the hall shows one *place* at a time — each library is its own room
   (`settings.place`, default the first library with books); `collectionsFor()` returns that single
-  collection. A library is further browsed by rooms when `kind === 'wikisource'` or it has more
+  collection. With more than one library there is one more place, `ALL_PLACE`
+  (`settings.place = '*'`), that shelves every library whole in one hall, with no filters and no
+  cap (an experiment: ~21,000 books are ~180 bookcases, near the Quest's draw-call budget even
+  with the culling above, and atlas painting stutters more often). A library is further browsed by rooms when `kind === 'wikisource'` or it has more
   than 3,000 books. It then shelves one room at a time, `{ genre, letter }` (each a string or
   null): the works of that genre whose title starts with that letter, either filter alone, or —
   both null — all works. A room is sorted by the current sort and capped at `ROOM_CAP` = 3,000
@@ -800,7 +807,8 @@ States: `browse` → `inspect` → `read` (and back).
   ms even on a fast PC) and must happen in the dark in a headset. The fade and exit-ring shaders
   are compiled at startup (`renderer.compile`) so their first appearance does not stall. Room
   shells share materials and textures across rebuilds (tiling via UVs, no clones), and every room
-  shape has exactly two point lights so switching never recompiles shaders.
+  shape has exactly two point lights so switching never recompiles shaders. A room's windows are
+  merged into three meshes (glass, frame wood, sill wood), not four per window.
 - Catalogue updates: every 10 s (while the page is visible or in XR) poll `GET /api/libraries`;
   when `generation` changed, fetch the book lists of new or changed libraries, toast what was
   added/removed, update the overlay and call `interaction.setCatalog()`, which rebuilds the

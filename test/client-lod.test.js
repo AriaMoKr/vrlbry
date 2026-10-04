@@ -152,6 +152,40 @@ describe('spine atlas LOD', () => {
   });
 });
 
+describe('huge rooms (all libraries in one hall)', () => {
+  it('keeps mid atlases only for the nearest bookcases', () => {
+    const shelves = shelvesWith(100);
+    try {
+      run(shelves, camAt(0, 0), 72 * 60);
+      assert.equal(shelves.lodStats().mid, 64, 'the mid budget, then no more');
+      // Walk to one side: far mid atlases go, near ones come, never more than budget + slack.
+      for (let i = 0; i <= 72 * 30; i++) {
+        shelves.update(1 / 72, camAt((i / (72 * 30)) * 6, 0));
+        assert.ok(shelves.lodStats().mid <= 80);
+      }
+      run(shelves, camAt(6, 0), 72 * 30);
+      const cam = camAt(6, 0).position;
+      const byDistance = [...shelves.cases].sort((a, b) => a.position.distanceTo(cam) - b.position.distanceTo(cam));
+      assert.ok(byDistance.slice(0, 64).every((cs) => cs.textures.mid || cs.textures.high), 'the nearest 64 all have one');
+    } finally {
+      shelves.dispose();
+    }
+  });
+
+  it('hides the books of bookcases seen from behind', () => {
+    const shelves = shelvesWith(16); // a ring of bookcases facing its centre
+    try {
+      shelves.update(1 / 72, camAt(0, 0));
+      assert.ok(shelves.cases.every((cs) => cs.mesh.visible), 'all visible from the middle');
+      shelves.update(1 / 72, camAt(0, -20)); // outside the ring, behind the bookcase at (0, -7)
+      assert.equal(shelves.cases[0].mesh.visible, false);
+      assert.equal(shelves.cases[8].mesh.visible, true, 'the one across the ring faces us');
+    } finally {
+      shelves.dispose();
+    }
+  });
+});
+
 /**
  * Mirrors three's WebGLAttributes upload of a position attribute: the first upload sends the whole
  * array; later ones (when the version changed) send only the update ranges, or everything if there
