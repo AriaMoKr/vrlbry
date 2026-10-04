@@ -2,19 +2,38 @@
 
 - **Load Wikipedia ZIMs.** A Wikipedia ZIM (mwoffliner, `Source` = `*.wikipedia.org`) currently
   falls back to generic mode: only its first 2,000 HTML articles in URL order (`--max-generic`).
-  Planned look: Wikipedia is its own room of encyclopedia volumes. Each book covers a range of
-  titles (its spine shows the range, e.g. "Aachen – Abbey") with about 1,000 pages per volume.
-  Open questions are in the design discussion of 2026-10-04 (what a page is, which ZIM, title
-  order, links, search, the all-libraries hall). Needed:
-  - detection, like `isWikisource`;
-  - an article index built in the background and cached in `.cache/`, as for Wikisource.
-    `wikipedia_en_all_maxi` has ~6.8 M articles (~100 GB), so expect a long first pass;
-  - volumes as the books: the index stores each volume's first and last article, and reading a
-    volume streams its articles as chunks, each starting on a fresh page, with the article list
-    as its contents. English needs roughly 5,000–9,000 volumes, a catalogue the client can load
-    as it is, and at ~65 volumes per bookcase they may fit one room under the 200-bookcase cap;
-  - server-side article search (title → volume and page), since the client cannot hold millions
-    of article titles.
+  Decided (2026-10-04):
+  - Wikipedia is its own room of encyclopedia volumes. Each volume holds **1,000 consecutive
+    articles**, and its spine shows its title range (e.g. "Aachen – Abbey").
+  - Target the **maxi** ZIMs, which include images. English has ~6.8 M articles in ~110 GB,
+    which makes ~6,800 volumes.
+  - Articles are in the **app's title order** (`titleKey` + `Intl.Collator`, as in
+    `util/books.js`), not the ZIM's byte order. The server sorts all titles once while indexing.
+  - Each article starts on a **fresh page** (one chunk per article). A volume's contents list is
+    its 1,000 article titles, so the contents panel needs a letter jump.
+  - The index needs titles only, no content pass: read every directory entry, skip redirects and
+    non-HTML entries, sort, cut into volumes, cache in `.cache/` like the Wikisource index.
+    Sorting ~6.8 M titles in the server costs memory and about a minute, once.
+  - **Articles = every non-redirect HTML entry** in the main namespace, except the ZIM's main
+    page. That includes disambiguation pages (~4 %) and "List of …" pages. Skip images, CSS and
+    scripts. Redirects stay out of the volumes, but article search could use them as aliases.
+  - **The look:**
+    - One uniform binding for the whole set (e.g. deep blue cloth with gilt bands).
+    - Uniform size: ~30 cm tall, 5 cm thick (~65 volumes per bookcase; English ≈ 105
+      bookcases, one room under the 200 cap).
+    - Spine: the volume number large at the top, the title range in the middle ("Aachen –
+      Abbey", each end shortened to fit), "Wikipedia" at the foot.
+    - Generated cover in the set's binding: "Wikipedia · The Free Encyclopedia", the volume
+      number and range, with the ZIM's globe illustration as an emblem.
+    - Volumes are numbered 1–N in title order. Bookcase plates show their first and last
+      article ("Aa – Ac"), and the section sign reads "Wikipedia (English) · 6,800 volumes".
+- **Wikipedia: follow links** (later). Tapping a link in an article goes to that article, taking
+  its volume off the shelf if needed. The reader cannot follow links today.
+- **Wikipedia: article search.** Typing an article title opens the right volume at that article.
+  This needs a server endpoint, because the client cannot hold millions of titles; redirects
+  could serve as aliases.
+- **Wikipedia in the all-libraries hall.** It stays out for now. Decide later whether it gets a
+  fair share of the 200 bookcases.
 - **Dropped frames while walking.** A Quest 3 still drops ~4 % of frames walking an ordinary room
   and ~8 % in the all-libraries hall, with no clear cause since atlas uploads were fixed. Next:
   record GC and long-task timing per scenario (`?perf`, `tools/quest-perf.mjs`).
