@@ -1,7 +1,7 @@
 // Bootstrap (SPEC §5.7): renderer, camera rig, XR session, loading, frame loop.
 
 import * as THREE from 'three';
-import { getCatalog, getBooks, rescan as requestRescan } from './api.js';
+import { getCatalog, getBooks, getVersion, rescan as requestRescan } from './api.js';
 import { World } from './world/world.js';
 import { Controls } from './xr/controls.js';
 import { Interaction, DEFAULT_SETTINGS } from './interaction.js';
@@ -119,6 +119,14 @@ async function start() {
     interaction.onPresentingChange();
   });
   interaction.onExitVR = () => renderer.xr.getSession()?.end();
+  interaction.onReload = () => location.reload();
+  // When the website last changed, fetched once: it tells which version this page is running.
+  getVersion().then(({ changed }) => {
+    if (!changed) return;
+    const text = `Updated ${new Date(changed).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}`;
+    overlay.setVersion(text);
+    interaction.setVersion(text);
+  }).catch(() => {});
   overlay.onEnterVR(enterVR);
   overlay.onSearchPick((book) => interaction.searchPick(book));
 

@@ -103,7 +103,10 @@ Then press **Enter VR**.
 
 The catalogue stand next to where you start lets you re-shelve the books by title, author or
 popularity, jump to a letter, pick a book at random ("Surprise me"), reopen recently read books,
-filter a large library by genre and title letter, and rescan the folder. The search box (desktop and phone) finds
+filter a large library by genre and title letter, rescan the folder, and reload the page (handy
+in a headset, where the browser's own controls are out of reach). Its footer, and the library
+card, show when the app's files last changed ("Updated …"), so you can tell which version a page
+is running. The search box (desktop and phone) finds
 any book by title or author and takes you to it. Your reading position, text size, theme and
 rooms are remembered in the browser.
 

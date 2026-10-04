@@ -261,6 +261,21 @@ describe('HTTP API (synthetic library)', () => {
     assert.equal(wrong.headers.allow, 'POST');
   });
 
+  it('GET /api/version: when the newest client file changed (dotfiles skipped)', async () => {
+    const pub = path.join(tmp, 'public');
+    const newer = new Date('2030-01-02T03:04:05.000Z');
+    fs.utimesSync(path.join(pub, 'js', 'app.js'), newer, newer);
+    fs.utimesSync(path.join(pub, '.secret'), new Date('2031-01-01T00:00:00Z'), new Date('2031-01-01T00:00:00Z'));
+    const r = await get('/api/version');
+    assert.equal(r.status, 200);
+    assert.equal(r.headers['cache-control'], 'no-store');
+    assert.deepEqual(json(r), { changed: '2030-01-02T03:04:05.000Z', file: 'js/app.js' });
+    // It follows changes while the server runs.
+    const later = new Date('2030-06-01T00:00:00.000Z');
+    fs.utimesSync(path.join(pub, 'sub', 'index.html'), later, later);
+    assert.deepEqual(json(await get('/api/version')), { changed: '2030-06-01T00:00:00.000Z', file: 'sub/index.html' });
+  });
+
   it('GET /api/libraries/:lib/books', async () => {
     const r = await get('/api/libraries/api-fixture/books');
     assert.equal(r.status, 200);

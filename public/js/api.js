@@ -26,6 +26,11 @@ export async function getCatalog() {
   return { generation: r.generation ?? 0, libraries: r.libraries };
 }
 
+/** @returns {Promise<{ changed: string|null, file: string|null }>} when the website's files last changed */
+export async function getVersion() {
+  return getJSON('/api/version');
+}
+
 /** Asks the server to re-read its ZIM folder now. */
 export async function rescan() {
   const res = await fetch('/api/rescan', { method: 'POST' });

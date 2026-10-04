@@ -47,7 +47,7 @@ export class Overlay {
         <div class="ov-progress"><div class="ov-progress-bar"></div></div>
       </div>
       <section class="ov-card" aria-label="Library">
-        <header><span class="ov-brand">vrlbry</span><span class="ov-tools"><button class="ov-rescan" aria-label="Rescan the ZIM folder" title="Rescan the ZIM folder">⟳</button><button class="ov-collapse" aria-label="Collapse" title="Collapse">–</button></span></header>
+        <header><span class="ov-brand">vrlbry</span><span class="ov-version"></span><span class="ov-tools"><button class="ov-rescan" aria-label="Rescan the ZIM folder" title="Rescan the ZIM folder">⟳</button><button class="ov-collapse" aria-label="Collapse" title="Collapse">–</button></span></header>
         <div class="ov-libs"></div>
       </section>
       <div class="ov-search" role="search">
@@ -138,6 +138,9 @@ export class Overlay {
       }
     }
   }
+
+  /** Shows when the website last changed (next to the brand). */
+  setVersion(text) { this.$('.ov-version').textContent = text; }
 
   onSearchPick(cb) { this._pick = cb; }
   onRescan(cb) { this._rescan = cb; }

@@ -56,6 +56,9 @@ export class Interaction {
     this.onRescan = null;
     /** Set by main.js: ends the immersive session. */
     this.onExitVR = null;
+    /** Set by main.js: reloads the page (a headset's browser controls are out of reach in VR). */
+    this.onReload = null;
+    this._version = ''; // "Updated …": when the website last changed (setVersion)
     this._exitHold = null; // { name, t } while B/Y is held to leave VR
 
     this.tooltip = new Label({ width: 0.56, height: 0.13 });
@@ -118,9 +121,12 @@ export class Interaction {
     p.clear();
     p.add({ type: 'text', x: pad, y: 26, w: W - 2 * pad, h: 54, text: 'Catalogue', size: 46, weight: '600', serif: true, color: UI.accent });
     p.add({ id: 'rescan', type: 'button', x: W - pad - 230, y: 24, w: 230, h: 56, label: '⟳ Rescan folder', size: 24, onClick: () => this.onRescan?.() });
+    let right = W - pad - 230;
     if (this.controls.presenting) {
-      p.add({ id: 'exit-vr', type: 'button', x: W - pad - 230 - 12 - 170, y: 24, w: 170, h: 56, label: 'Exit VR', size: 24, onClick: () => this.onExitVR?.() });
+      right -= 12 + 170;
+      p.add({ id: 'exit-vr', type: 'button', x: right, y: 24, w: 170, h: 56, label: 'Exit VR', size: 24, onClick: () => this.onExitVR?.() });
     }
+    p.add({ id: 'reload', type: 'button', x: right - 12 - 190, y: 24, w: 190, h: 56, label: '↻ Reload page', size: 24, onClick: () => this.onReload?.() });
     const place = this._place();
     // Rooms exist when there is more than one library, or a library too big to shelve whole.
     const hasRooms = this.libraries.length > 1 || (place && isFaceted(place, this.booksByLib[place.id]));
@@ -139,6 +145,15 @@ export class Interaction {
     }
     if (this._kioskTab === 'rooms') this._fillRoomsTab(p, y, pad, place);
     else this._fillShelvesTab(p, y, pad, place);
+    if (this._version) {
+      p.add({ id: 'version', type: 'text', x: pad, y: p.h - 40, w: W - 2 * pad, h: 28, text: this._version, size: 21, color: UI.muted, align: 'right', maxLines: 1 });
+    }
+  }
+
+  /** Shows when the website last changed, at the foot of the kiosk. */
+  setVersion(text) {
+    this._version = text;
+    this._fillKiosk();
   }
 
   _fillShelvesTab(p, y0, pad, place) {

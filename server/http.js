@@ -138,6 +138,13 @@ export function createApp(library, { publicDir = DEFAULT_PUBLIC_DIR, vendorDirs 
       res.setHeader('Allow', 'POST');
       return sendError(req, res, 405, 'use POST to rescan');
     }
+    if (segs[0] === 'version' && segs.length === 1) {
+      const newest = await newestClientFile(publicRoot);
+      return sendBody(req, res, serialize({
+        changed: newest ? new Date(newest.mtimeMs).toISOString() : null,
+        file: newest ? path.relative(publicRoot, newest.path).split(path.sep).join('/') : null,
+      }), { cacheControl: 'no-store' });
+    }
     if (segs[0] !== 'libraries') return sendError(req, res, 404, 'unknown API endpoint');
     if (segs.length === 1) {
       const libraries = await Promise.all(library.list().map((l) => l.info()));
@@ -457,6 +464,24 @@ function send416(res, size) {
   res.setHeader('Content-Range', `bytes */${size}`);
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
   res.end('Range not satisfiable');
+}
+
+/**
+ * The most recently modified client file (dotfiles skipped), i.e. when the website last changed;
+ * null for an empty folder. Walked on every request: the files change while the server runs.
+ * @returns {Promise<{ path: string, mtimeMs: number }|null>}
+ */
+async function newestClientFile(dir) {
+  let newest = null;
+  const entries = await fs.promises.readdir(dir, { withFileTypes: true }).catch(() => []);
+  for (const ent of entries) {
+    if (ent.name.startsWith('.')) continue;
+    const p = path.join(dir, ent.name);
+    const found = ent.isDirectory() ? await newestClientFile(p)
+      : ent.isFile() ? { path: p, mtimeMs: (await fs.promises.stat(p)).mtimeMs } : null;
+    if (found && (!newest || found.mtimeMs > newest.mtimeMs)) newest = found;
+  }
+  return newest;
 }
 
 function sendError(req, res, status, message) {

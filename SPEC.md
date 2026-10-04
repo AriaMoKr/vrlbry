@@ -453,6 +453,11 @@ re-fetch. Wikisource libraries (`"kind": "wikisource"`) add `"genres": [{ "name"
 **`POST /api/rescan`** → rescans the ZIM folder now: `{ "generation", "added": [ids],
 "removed": [ids], "reopened": [ids], "failed": [file names], "libraries": [ … ] }`. `GET` → 405.
 
+**`GET /api/version`** → when the website last changed: `{ "changed": ISO-8601 | null, "file":
+"js/interaction.js" | null }`, the newest modification time among the client files (`public/`,
+dotfiles skipped), walked on every request since the files may change while the server runs.
+`Cache-Control: no-store`.
+
 **`GET /api/libraries/:lib/books`** →
 ```json
 { "library": "<libId>", "books": [ {
@@ -760,8 +765,11 @@ States: `browse` → `inspect` → `read` (and back).
   ring below the line of sight fills up (shown after 0.15 s, so taps do not flash it); releasing
   early cancels. Both end the XRSession (`interaction.onExitVR`).
 - **Kiosk panel** (at `world.kiosk`, always available in browse; 1.0 × 1.0 m): "⟳ Rescan folder"
-  button (`POST /api/rescan`); when there is more than one library or the current one is browsed
-  by rooms, two tabs:
+  button (`POST /api/rescan`), "↻ Reload page" (`interaction.onReload` → `location.reload()`; in
+  VR the browser's own controls are out of reach, and a reload ends the session); at its foot,
+  small and right-aligned, "Updated <date, time>" from `GET /api/version`, fetched once at load,
+  so it tells which version the page is running; when there is more than one library or the
+  current one is browsed by rooms, two tabs:
   - *Shelves & settings*: library summary, sort toggle Title/Author/Popularity (rebuilds shelves),
     A–Z letter grid over the shelved books (teleports to the first book with that letter via
     `shelves.locate` and highlights it for 4 s), "Surprise me" (random book), "Recently read"
@@ -793,8 +801,8 @@ States: `browse` → `inspect` → `read` (and back).
   on the shelves first switch to the book's place and room (`placeFor` / `roomFor`: its genre,
   narrowed to its title letter when the genre is over the cap); every loaded book carries its
   `libId` for this.
-- DOM overlay (non-VR): see `ui/overlay.js` — title, library cards (with indexing progress), a
-  ⟳ rescan button, search box (filters by title / author across *all* books of all libraries;
+- DOM overlay (non-VR): see `ui/overlay.js` — title with the same "Updated …" stamp, library
+  cards (with indexing progress), a ⟳ rescan button, search box (filters by title / author across *all* books of all libraries;
   picking a result = switch room if needed, teleport to it and select it), Enter VR button
   (only when `immersive-vr` is supported), control help, loading progress, error toasts.
 
