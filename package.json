@@ -14,7 +14,7 @@
   "scripts": {
     "start": "node server/index.js",
     "start:https": "node server/index.js --https",
-    "test": "node --test test/"
+    "test": "node --test \"test/*.test.js\""
   },
   "dependencies": {
     "htmlparser2": "^12.0.0",

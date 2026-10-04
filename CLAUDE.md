@@ -15,7 +15,7 @@ npm install                      # deps: three, htmlparser2, selfsigned; dev: iw
 npm start                        # = node server/index.js (serves ZIMs in the cwd on :8080)
 node server/index.js --dir <path> --port 8080 --host 0.0.0.0
 npm run start:https              # self-signed cert, cached in .cert/ (needed for a headset over LAN)
-npm test                         # = node --test test/
+npm test                         # = node --test "test/*.test.js" (a bare directory arg does not work)
 node --test test/zim.test.js     # one test file
 node --test --test-name-pattern="redirect" test/zim.test.js   # tests matching a name
 ```

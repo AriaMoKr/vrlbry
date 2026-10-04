@@ -22,7 +22,7 @@ If you must deviate, keep the deviation minimal and report it.
   `"three": "/vendor/three/build/three.module.js"`, `"three/addons/": "/vendor/three/examples/jsm/"`.
   The app must work fully **offline** (no CDN fetches required; optional CDN fetches such as
   controller GLB models must degrade gracefully).
-- **Tests:** `node --test test/` (built-in `node:test` + `node:assert/strict`). Test files are
+- **Tests:** `npm test` = `node --test "test/*.test.js"` (built-in `node:test` + `node:assert/strict`). Test files are
   `test/*.test.js`. Tests that need the real ZIM in the repo root must `skip` when it is absent.
 - **Style:** small focused modules, JSDoc on exported functions, 2-space indent, single quotes,
   semicolons. Comment *why*, not *what*.
