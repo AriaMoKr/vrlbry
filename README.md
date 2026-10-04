@@ -69,8 +69,9 @@ the catalogue stand switches between them. A library as large as Wikisource is n
 two filters that can be used together or alone: a genre (Novels, Poetry, Drama, History &
 biography, Court decisions, …) and the letter titles start with — say, poems starting with A.
 Tap a filter again to remove it; with both removed you get the whole library. Up to 3,000 books
-are shelved at a time. As an experiment, **All libraries** puts every book of every library in
-one big hall (heavy on a headset). You stay where you are while the shelves change around you. Search still
+are shelved at a time. As an experiment, **All libraries** puts all your libraries in one big
+hall of up to 200 bookcases: small libraries whole, and the first books of the large ones
+(each large library gets an equal share). You stay where you are while the shelves change around you. Search still
 covers every book of every library: picking one that is not on the shelves takes you to its
 room.
 

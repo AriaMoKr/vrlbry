@@ -85,32 +85,88 @@ export function rowSurface(r) {
 
 const keyOf = (book) => `${book.libId}\n${book.id}`;
 
+/** A book's footprint on a shelf: its dimensions and the small deterministic gap after it. */
+function shelfEntry(book) {
+  return { book, dims: bookDims(book), gap: 0.0015 + 0.003 * hash01(String(book.id), 'gap') };
+}
+const ROW_FILL = USABLE * 0.85; // rows are filled to ~85 %, so shelves look lived-in
+
+/** How many bookcases packBookcases uses for these books. */
+export function bookcasesNeeded(books) {
+  if (!books.length) return 0;
+  const total = books.reduce((s, b) => { const e = shelfEntry(b); return s + e.dims.w + e.gap; }, 0);
+  return Math.ceil(Math.max(1, Math.ceil(total / ROW_FILL)) / ROWS);
+}
+
+/** The longest prefix of (sorted) books that packBookcases fits into `cases` bookcases. */
+export function prefixForBookcases(books, cases) {
+  const limit = cases * ROWS * ROW_FILL;
+  let total = 0;
+  let n = 0;
+  for (; n < books.length; n++) {
+    const e = shelfEntry(books[n]);
+    if (total + e.dims.w + e.gap > limit) break;
+    total += e.dims.w + e.gap;
+  }
+  return books.slice(0, n);
+}
+
+/**
+ * Shares `max` bookcases between libraries needing `needs[i]`: every library gets an equal
+ * share; one that needs less is shelved whole and leaves the rest to the others (max-min fair).
+ * @returns {number[]} bookcases per library (each ≤ its need, summing to ≤ max)
+ */
+export function shareBookcases(needs, max) {
+  const quota = needs.map(() => 0);
+  let left = max;
+  let open = needs.map((_, i) => i).filter((i) => needs[i] > 0);
+  while (open.length && left > 0) {
+    const share = Math.floor(left / open.length);
+    const whole = open.filter((i) => needs[i] - quota[i] <= share);
+    if (whole.length) {
+      for (const i of whole) {
+        left -= needs[i] - quota[i];
+        quota[i] = needs[i];
+      }
+      open = open.filter((i) => !whole.includes(i));
+      continue;
+    }
+    for (const i of open) quota[i] += share;
+    left -= share * open.length;
+    for (const i of open.slice(0, left)) quota[i]++; // the remainder, one each, in order
+    break;
+  }
+  return quota;
+}
+
 /**
  * Distributes sorted books into bookcases: rows top→bottom, books left→right, with small
  * deterministic gaps. Rows are filled evenly (~85 %) rather than packed, so the last bookcase is
- * never nearly empty and shelves look lived-in.
+ * never nearly empty and shelves look lived-in. Each row aims at the remaining width over the
+ * remaining rows, so rows that end a little short do not pile up into an extra bookcase: the
+ * result has exactly bookcasesNeeded() bookcases.
  * @param {object[]} books sorted book descriptors (with libId)
  * @returns {Array<{ items: Array<{ book, dims, row: number, x: number }> }>} x = book centre
  */
 export function packBookcases(books) {
-  const entries = books.map((book) => ({
-    book, dims: bookDims(book), gap: 0.0015 + 0.003 * hash01(String(book.id), 'gap'),
-  }));
+  const entries = books.map(shelfEntry);
   const total = entries.reduce((s, e) => s + e.dims.w + e.gap, 0);
-  const rowsNeeded = Math.max(1, Math.ceil(total / (USABLE * 0.85)));
+  const rowsNeeded = Math.max(1, Math.ceil(total / ROW_FILL));
   const caseCount = Math.ceil(rowsNeeded / ROWS);
-  const target = Math.min(USABLE, total / (caseCount * ROWS)); // per-row length goal
   const cases = [];
   let cur = null;
   let row = ROWS;
   let x = 0;
   let filled = 0;
+  let target = 0; // this row's length goal
+  let remaining = total; // width of the books not placed yet
+  let rowsLeft = caseCount * ROWS; // planned rows not started yet
   for (const { book, dims, gap } of entries) {
     // New row when the book does not fit, or when this row has reached its share and the book
-    // would overshoot it by more than half its own thickness.
+    // would overshoot it by more than half its own thickness (never on the last planned row,
+    // which takes whatever is left).
     const overshoot = filled + dims.w - target > dims.w / 2;
-    const globalRow = (cases.length - 1) * ROWS + row; // the last planned row takes any overflow
-    if (!cur || x + dims.w > USABLE / 2 + 1e-6 || (filled > 0 && overshoot && globalRow < caseCount * ROWS - 1)) {
+    if (!cur || x + dims.w > USABLE / 2 + 1e-6 || (filled > 0 && overshoot && rowsLeft > 0)) {
       filled = 0;
       row++;
       x = -USABLE / 2;
@@ -119,10 +175,13 @@ export function packBookcases(books) {
         cases.push(cur);
         row = 0;
       }
+      target = Math.min(USABLE, remaining / Math.max(1, rowsLeft));
+      rowsLeft--;
     }
     cur.items.push({ book, dims, row, x: x + dims.w / 2 });
     x += dims.w + gap;
     filled += dims.w + gap;
+    remaining -= dims.w + gap;
   }
   return cases;
 }

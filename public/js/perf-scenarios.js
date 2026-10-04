@@ -82,8 +82,10 @@ export async function runScenarios(app, { only = null } = {}) {
   const small = bySize[0];
   const faceted = [...bySize].reverse().find((l) => isFaceted(l, I.booksByLib[l.id]));
 
-  const scenario = async (name, fn) => {
+  /** Runs fn as a recorder segment; setup runs first, outside the segment. */
+  const scenario = async (name, fn, setup = null) => {
     if (!want(name)) return;
+    await setup?.();
     log(`begin ${name}`);
     perf.begin(name);
     try {
@@ -125,7 +127,8 @@ export async function runScenarios(app, { only = null } = {}) {
     }
 
     if (libs.length > 1) {
-      await scenario('all-enter', () => goTo(ALL_PLACE.id));
+      // Entered from the small room, so there is always a rebuild to measure.
+      await scenario('all-enter', () => goTo(ALL_PLACE.id), () => settings.place === ALL_PLACE.id && goTo(small.id));
       await scenario('all-idle', async () => {
         if (settings.place !== ALL_PLACE.id) await goTo(ALL_PLACE.id);
         atSpawn();

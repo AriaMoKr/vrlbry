@@ -3,6 +3,7 @@
 
 import * as THREE from 'three';
 import { Book3D } from './world/book3d.js';
+import { MAX_BOOKCASES } from './world/world.js';
 import { BookReader, THEMES } from './reader/reader.js';
 import { Panel, Label, UI } from './ui/panel.js';
 import { audio } from './audio.js';
@@ -254,7 +255,11 @@ export class Interaction {
     if (!place) return;
     const books = this.booksByLib[place.id] || [];
     if (!isFaceted(place, books)) {
-      p.add({ type: 'text', x: pad, y, w: W - 2 * pad, h: 90, text: `${place.title} is shelved whole in this room.`, size: 26, color: UI.muted, maxLines: 2 });
+      const capped = this.world.sections.some((s) => s.shown < s.books);
+      const text = capped
+        ? `${place.title} share ${MAX_BOOKCASES} bookcases here: the small libraries whole, the first books of the large ones.`
+        : `${place.title} ${place === ALL_PLACE ? 'are' : 'is'} shelved whole in this room.`;
+      p.add({ type: 'text', x: pad, y, w: W - 2 * pad, h: 90, text, size: 26, color: UI.muted, maxLines: 2 });
       return;
     }
     // …and a large library is browsed through two filters, a genre and a title letter, each

@@ -795,9 +795,18 @@ States: `browse` → `inspect` → `read` (and back).
 - **Rooms** (`rooms.js`): the hall shows one *place* at a time — each library is its own room
   (`settings.place`, default the first library with books); `collectionsFor()` returns that single
   collection. With more than one library there is one more place, `ALL_PLACE`
-  (`settings.place = '*'`), that shelves every library whole in one hall, with no filters and no
-  cap (an experiment: ~21,000 books are ~180 bookcases, near the Quest's draw-call budget even
-  with the culling above, and atlas painting stutters more often). A library is further browsed by rooms when `kind === 'wikisource'` or it has more
+  (`settings.place = '*'`), that shelves every library in one hall, with no filters.
+  - No room has more than `MAX_BOOKCASES` = 200 bookcases (`world.js`); in practice only this
+    hall reaches the limit.
+  - Libraries share the limit fairly (`shareBookcases`, max-min fair): each gets an equal share,
+    and a library that needs less is shelved whole and leaves the rest to the others.
+  - A library over its share shows the longest prefix of its sorted books that fits
+    (`prefixForBookcases`), and its sign says "first N of M books".
+  - With 79,000 books the hall would have needed 658 bookcases. On a Quest 3 that froze entry for
+    5 s, cost ~400 draw calls per eye and ran at 56 fps; ~180 bookcases worked.
+  - `packBookcases` aims each row at the remaining width over the remaining rows, so it uses
+    exactly `bookcasesNeeded()` bookcases.
+- A library is further browsed by rooms when `kind === 'wikisource'` or it has more
   than 3,000 books. It then shelves one room at a time, `{ genre, letter }` (each a string or
   null): the works of that genre whose title starts with that letter, either filter alone, or —
   both null — all works. A room is sorted by the current sort and capped at `ROOM_CAP` = 3,000

@@ -8,7 +8,7 @@
 import * as THREE from 'three';
 import { BOOKCASE, PLAYER } from '../config.js';
 import { sortBooks } from '../util/books.js';
-import { Bookshelves, packBookcases, rangeLabel } from './shelves.js';
+import { Bookshelves, bookcasesNeeded, packBookcases, prefixForBookcases, rangeLabel, shareBookcases } from './shelves.js';
 import { createRotunda, createHall, disposeRoom } from './room.js';
 import { canvasTexture } from './canvas-texture.js';
 import { makeSignCanvas } from './textures.js';
@@ -44,6 +44,12 @@ function disposeSign(s) {
   s.userData.front.dispose();
 }
 const ROTUNDA_MAX_CASES = 22;
+/**
+ * Most bookcases a room holds. Only the all-libraries hall reaches it: 658 bookcases (79,000
+ * books) froze a Quest 3 for 5 s on entry, drew ~400 calls per eye and ran at 56 fps, while ~180
+ * bookcases worked. Libraries share it fairly (shareBookcases); large ones show their first books.
+ */
+export const MAX_BOOKCASES = 200;
 
 export class World {
   /**
@@ -77,13 +83,19 @@ export class World {
     // Pack each library into its own run of bookcases.
     const cases = [];
     this.sections = [];
-    for (const { library, books, subtitle } of collections) {
-      for (const b of books) b.libId = library.id;
-      const packed = packBookcases(sortBooks(books, sort));
-      if (!packed.length) continue;
-      this.sections.push({ library, first: cases.length, count: packed.length, books: books.length, subtitle });
+    const sorted = collections.map((c) => {
+      for (const b of c.books) b.libId = c.library.id;
+      return sortBooks(c.books, sort);
+    });
+    const quotas = shareBookcases(sorted.map(bookcasesNeeded), MAX_BOOKCASES);
+    collections.forEach(({ library, books, subtitle }, k) => {
+      let packed = packBookcases(prefixForBookcases(sorted[k], quotas[k]));
+      if (packed.length > quotas[k]) packed = packed.slice(0, quotas[k]);
+      if (!packed.length) return;
+      const shown = packed.reduce((n, p) => n + p.items.length, 0);
+      this.sections.push({ library, first: cases.length, count: packed.length, books: books.length, shown, subtitle });
       for (const p of packed) cases.push({ ...p, label: rangeLabel(p.items, sort), libId: library.id });
-    }
+    });
 
     // Tear down the previous room.
     if (this.room) disposeRoom(this.room);
@@ -174,7 +186,9 @@ export class World {
       const cs = cases[sec.first];
       const lib = sec.library;
       const canvas = makeSignCanvas(lib.title || lib.name || lib.id,
-        sec.subtitle ?? [lib.description, `${sec.books} book${sec.books === 1 ? '' : 's'}`].filter(Boolean).join(' · '));
+        sec.subtitle ?? [lib.description, sec.shown < sec.books
+          ? `first ${sec.shown.toLocaleString()} of ${sec.books.toLocaleString()} books`
+          : `${sec.books.toLocaleString()} book${sec.books === 1 ? '' : 's'}`].filter(Boolean).join(' · '));
       const w = Math.min(2.2, BOOKCASE.width * Math.min(2, sec.count) - 0.1);
       const sign = makeSign(canvas, w, w / 4, 8);
       // Centred over the section's first bookcases (two when it has two or more).
