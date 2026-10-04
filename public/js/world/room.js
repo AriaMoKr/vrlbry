@@ -4,8 +4,9 @@
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { canvasTexture } from './canvas-texture.js';
 import {
-  canvasTexture, makePlankCanvas, makePlasterCanvas, makeWoodCanvas, makeSkyCanvas, makeShadowCanvas,
+  makePlankCanvas, makePlasterCanvas, makeWoodCanvas, makeSkyCanvas, makeShadowCanvas,
   makeRugCanvas, rng,
 } from './textures.js';
 

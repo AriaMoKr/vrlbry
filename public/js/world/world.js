@@ -10,7 +10,8 @@ import { BOOKCASE, PLAYER } from '../config.js';
 import { sortBooks } from '../util/books.js';
 import { Bookshelves, packBookcases, rangeLabel } from './shelves.js';
 import { createRotunda, createHall, disposeRoom } from './room.js';
-import { canvasTexture, makeSignCanvas } from './textures.js';
+import { canvasTexture } from './canvas-texture.js';
+import { makeSignCanvas } from './textures.js';
 
 const CASE_GAP = 0.06; // between neighbouring bookcases
 const ROTUNDA_MAX_CASES = 22;

@@ -9,32 +9,28 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { BOOKCASE } from '../config.js';
 import { bookDims, hash01, titleKey, authorKey } from '../util/books.js';
-import {
-  drawSpine, drawPlate, makeSpineCanvas, newCanvas, canvasTexture, makeWoodCanvas, makePageEdgeCanvas,
-  bookColors, SPINE_PPM,
-} from './textures.js';
+import { makeSpineCanvas, makeWoodCanvas } from './textures.js';
+import { canvasTexture, disposeTexture } from './canvas-texture.js';
+import { atlasLayout, atlasPainter, STRIPE } from './atlas.js';
 
 const { width: W, height: H, depth: D, shelves: ROWS, bottom: BOTTOM, side: SIDE, board: BOARD } = BOOKCASE;
 export const TOP_TRIM = 0.14;
 export const ROW_PITCH = (H - BOTTOM - TOP_TRIM) / ROWS;
 const PAD = 0.012; // clearance between the side panels and the outermost books
 export const USABLE = W - 2 * SIDE - 2 * PAD;
-const ATLAS_W = 2048;
-const STRIPE = 6; // px of plain cloth right of each spine in the atlas (covers sample it)
-const ROW_H = Math.ceil(0.31 * SPINE_PPM) + 4;
-const LABEL = { w: 440, h: 80 }; // label plate in the atlas (px)
 const PLATE = { w: 0.42, h: 0.064 }; // label plate on the bookcase (m)
 const Y90 = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2);
 // Spine atlas levels of detail (scale of the full-resolution layout). Low is drawn instantly when a
 // room is built; mid (small but real titles) is painted for every bookcase, nearest first; high
 // (legible titles) only for the few bookcases near enough to read — on a Quest 3 spine titles are
-// legible within ~4 m. Painting is spread over frames (JOB_BUDGET_MS each), so walking or switching
-// rooms never stalls rendering; dropping a level is just a texture swap.
+// legible within ~4 m. Mid and high atlases are painted in a worker (AtlasWorker) where the browser
+// allows, else spread over frames (JOB_BUDGET_MS each), so walking or switching rooms never stalls
+// rendering; dropping a level is just a texture swap.
 const LEVELS = { low: 0.125, mid: 0.25, high: 1 };
 const HIGH_BUDGET = 6; // sharp atlases kept at once (~16 MB of GPU memory each)
 const HIGH_RANGE = 4.5; // metres (horizontal) within which a bookcase gets a sharp atlas
 const HYSTERESIS = 1.5; // metres of slack before a sharp atlas is dropped or displaced
-const JOB_BUDGET_MS = 3; // canvas painting per frame
+const JOB_BUDGET_MS = 3; // canvas painting per frame, when painting on the main thread
 // In a room of more bookcases than this (only the all-libraries room), only the nearest MID_BUDGET
 // keep a mid atlas (~1 MB of GPU memory each), dropped once more than MID_SLACK places further
 // out; the rest show the low one.
@@ -165,74 +161,6 @@ function bookcaseWood() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Atlas
-
-/** Packs spine cells (+ label + page-edge patch) into an atlas layout (full-res pixel units). */
-function atlasLayout(items) {
-  const cells = [];
-  let x = 0;
-  let y = 0;
-  for (const it of items) {
-    const w = Math.max(16, Math.round(it.dims.w * SPINE_PPM));
-    const h = Math.round(it.dims.h * SPINE_PPM);
-    if (x + w + STRIPE > ATLAS_W) {
-      x = 0;
-      y += ROW_H;
-    }
-    cells.push({ x, y, w, h });
-    x += w + STRIPE + 2;
-  }
-  const labelY = y + ROW_H;
-  const label = { x: 0, y: labelY, w: LABEL.w, h: LABEL.h };
-  const page = { x: LABEL.w + 8, y: labelY, w: 64, h: LABEL.h };
-  const height = Math.ceil((labelY + LABEL.h + 2) / 4) * 4;
-  return { cells, label, page, width: ATLAS_W, height };
-}
-
-let pageEdge = null;
-
-/**
- * Paints an atlas at `scale` (1 = full resolution) incrementally: `step(budgetMs)` paints spines
- * until the time budget is used and returns true once the atlas is complete.
- */
-function atlasPainter(layout, items, labelText, scale) {
-  const c = newCanvas(Math.max(4, Math.round(layout.width * scale)), Math.max(4, Math.round(layout.height * scale)));
-  const g = c.getContext('2d');
-  g.scale(scale, scale);
-  g.fillStyle = '#2a1a10';
-  g.fillRect(0, 0, layout.width, layout.height);
-  const detailed = scale >= 0.2;
-  let i = 0;
-  let done = false;
-  return {
-    canvas: c,
-    step(budgetMs = Infinity) {
-      if (done) return true;
-      const t0 = performance.now();
-      while (i < items.length) {
-        const it = items[i];
-        const cell = layout.cells[i++];
-        const col = bookColors(it.book);
-        g.fillStyle = col.cloth;
-        g.fillRect(cell.x + cell.w, cell.y, STRIPE, cell.h);
-        if (detailed) drawSpine(g, it.book, cell.x, cell.y, cell.w, cell.h);
-        else {
-          g.fillRect(cell.x, cell.y, cell.w, cell.h);
-          g.fillStyle = col.gilt;
-          g.fillRect(cell.x + cell.w * 0.15, cell.y + cell.h * 0.2, cell.w * 0.7, cell.h * 0.55);
-        }
-        if (performance.now() - t0 > budgetMs) return false;
-      }
-      drawPlate(g, layout.label.x, layout.label.y, layout.label.w, layout.label.h, labelText || '');
-      pageEdge ||= makePageEdgeCanvas({ w: 64, h: 64 });
-      g.drawImage(pageEdge, layout.page.x, layout.page.y, layout.page.w, layout.page.h);
-      done = true;
-      return true;
-    },
-  };
-}
-
-// ---------------------------------------------------------------------------------------------
 // Book geometry
 
 /** UV rect (normalized, v up) of a pixel rect in an atlas of size W×H. */
@@ -290,12 +218,70 @@ function buildGeometry(arr) {
 
 // ---------------------------------------------------------------------------------------------
 
+/**
+ * Paints atlases in a module worker on an OffscreenCanvas (atlas-worker.js), so neither the
+ * drawing nor the canvas rasterization it triggers runs on the main thread, which only uploads
+ * the finished ImageBitmap. Even time-sliced, main-thread painting caused frame spikes: the
+ * browser defers canvas rasterization to the upload.
+ */
+class AtlasWorker {
+  /** @returns {AtlasWorker|null} null where module workers or OffscreenCanvas are missing */
+  static create() {
+    if (typeof Worker === 'undefined' || typeof OffscreenCanvas === 'undefined' || typeof createImageBitmap === 'undefined') return null;
+    try {
+      return new AtlasWorker(new Worker(new URL('./atlas-worker.js', import.meta.url), { type: 'module' }));
+    } catch {
+      return null;
+    }
+  }
+
+  constructor(worker) {
+    this.worker = worker;
+    this.pending = new Map();
+    this.seq = 0;
+    this.failed = null; // a worker that failed to start never answers: reject every later request
+    worker.onmessage = ({ data }) => {
+      const p = this.pending.get(data.id);
+      this.pending.delete(data.id);
+      if (!p) data.bitmap?.close();
+      else if (data.error) p.reject(new Error(data.error));
+      else p.resolve(data.bitmap);
+    };
+    worker.onerror = (e) => {
+      e.preventDefault?.();
+      this.failed = new Error(e.message || 'the atlas worker failed to start');
+      for (const p of this.pending.values()) p.reject(this.failed);
+      this.pending.clear();
+    };
+  }
+
+  /** @returns {Promise<ImageBitmap>} */
+  paint(layout, items, label, scale) {
+    if (this.failed) return Promise.reject(this.failed);
+    const id = ++this.seq;
+    return new Promise((resolve, reject) => {
+      this.pending.set(id, { resolve, reject });
+      // Only what the spine art reads: whole book descriptors would be cloned for nothing.
+      const slim = items.map(({ book, dims }) => ({ book: { id: book.id, title: book.title, author: book.author }, dims }));
+      this.worker.postMessage({ id, layout, items: slim, label, scale });
+    });
+  }
+
+  terminate() {
+    this.worker.terminate();
+    this.pending.clear();
+  }
+}
+
 export class Bookshelves {
   /**
-   * @param {{ renderer: THREE.WebGLRenderer }} o
+   * @param {{ renderer: THREE.WebGLRenderer, atlasWorker?: { paint(layout, items, label, scale): Promise<ImageBitmap> } | null }} o
+   *   atlasWorker: defaults to a real worker when the browser supports one; null paints on the
+   *   main thread (tests pass a fake)
    */
-  constructor({ renderer }) {
+  constructor({ renderer, atlasWorker }) {
     this.renderer = renderer;
+    this._worker = atlasWorker !== undefined ? atlasWorker : AtlasWorker.create();
     this.group = new THREE.Group();
     this.group.name = 'bookshelves';
     this.cases = [];
@@ -303,7 +289,7 @@ export class Bookshelves {
     this._order = [];
     this._highlight = null;
     this._lodTimer = 0;
-    this._job = null; // atlas being painted: { cs, level, painter }
+    this._job = null; // atlas being painted: { cs, level, painter } on the main thread, { cs, level, done, image } in the worker
     this._ray = new THREE.Ray();
     this._inv = new THREE.Matrix4();
     this._tmp = new THREE.Vector3();
@@ -555,7 +541,8 @@ export class Bookshelves {
     if (!camera || !this.cases.length) return;
     this._cullFacingAway(camera.getWorldPosition(this._tmp));
     if (this._job) {
-      if (this._job.painter.step(JOB_BUDGET_MS)) this._finishJob();
+      const job = this._job;
+      if (job.painter ? job.painter.step(JOB_BUDGET_MS) : job.done) this._finishJob();
       return;
     }
     this._lodTimer -= dt;
@@ -601,19 +588,36 @@ export class Bookshelves {
   }
 
   _startJob(cs, level) {
-    this._job = { cs, level, painter: atlasPainter(cs.layout, cs.items, cs.label, LEVELS[level]) };
+    const scale = LEVELS[level];
+    if (!this._worker) {
+      this._job = { cs, level, painter: atlasPainter(cs.layout, cs.items, cs.label, scale) };
+      return;
+    }
+    const job = { cs, level, done: false, image: null };
+    this._job = job;
+    this._worker.paint(cs.layout, cs.items, cs.label, scale).then((image) => {
+      if (this._job !== job) return image.close?.(); // the room was rebuilt meanwhile
+      job.image = image;
+      job.done = true;
+    }, (err) => {
+      // Never retry a failing worker: paint on the main thread from now on.
+      console.warn(`vrlbry: atlas worker failed (${err.message}); painting on the main thread`);
+      this._worker?.terminate?.();
+      this._worker = null;
+      if (this._job === job) this._job = null;
+    });
   }
 
   _finishJob() {
-    const { cs, level, painter } = this._job;
+    const { cs, level, painter, image } = this._job;
     this._job = null;
     const aniso = level === 'high' ? Math.min(4, this.renderer.capabilities.getMaxAnisotropy()) : 2;
-    cs.textures[level] = canvasTexture(painter.canvas, { anisotropy: aniso });
+    cs.textures[level] = canvasTexture(painter ? painter.canvas : image, { anisotropy: aniso });
     this._applyTexture(cs);
   }
 
   _drop(cs, level) {
-    cs.textures[level]?.dispose();
+    disposeTexture(cs.textures[level]);
     cs.textures[level] = null;
     this._applyTexture(cs);
   }
@@ -639,7 +643,7 @@ export class Bookshelves {
       cs.mesh.geometry.dispose();
       cs.material.dispose();
       cs.highlightMaterial?.dispose();
-      for (const t of Object.values(cs.textures)) t?.dispose();
+      for (const t of Object.values(cs.textures)) disposeTexture(t);
     }
     if (this.woodMesh) {
       this.woodMesh.geometry.dispose();

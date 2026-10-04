@@ -1,7 +1,8 @@
 // Procedural canvas art for the world (SPEC §5.3): wood, plaster, floor planks, sky, page edges,
 // book spines and generated covers. No image files are needed, so the app works offline.
+// No three.js here: the atlas worker (atlas-worker.js) paints spines with this module too, and
+// module workers cannot use the page's import map. Textures are made in canvas-texture.js.
 
-import * as THREE from 'three';
 import { hashString } from '../util/books.js';
 
 export const SPINE_PPM = 1100; // spine texture pixels per metre (legible at ~1.5 m in VR)
@@ -17,26 +18,12 @@ const PALETTE = [
 ];
 const GILT = ['#d8b45a', '#e3c77c', '#c9a14a', '#efe0b0'];
 
+/** A 2D canvas: a DOM canvas on the page, an OffscreenCanvas in a worker. */
 export function newCanvas(w, h) {
-  const c = document.createElement('canvas');
+  const c = typeof document !== 'undefined' ? document.createElement('canvas') : new OffscreenCanvas(w, h);
   c.width = w;
   c.height = h;
   return c;
-}
-
-/** CanvasTexture with the settings every world texture wants. */
-export function canvasTexture(canvas, { repeat = null, anisotropy = 4, srgb = true } = {}) {
-  const t = new THREE.CanvasTexture(canvas);
-  if (srgb) t.colorSpace = THREE.SRGBColorSpace;
-  t.anisotropy = anisotropy;
-  t.generateMipmaps = true;
-  t.minFilter = THREE.LinearMipmapLinearFilter;
-  t.magFilter = THREE.LinearFilter;
-  if (repeat) {
-    t.wrapS = t.wrapT = THREE.RepeatWrapping;
-    t.repeat.set(repeat[0], repeat[1]);
-  }
-  return t;
 }
 
 /** Deterministic PRNG (mulberry32). */

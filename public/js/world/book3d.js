@@ -6,7 +6,8 @@
 // slides +d/2 in X so that the open spread is centred on the origin with the spine at x = 0.
 
 import * as THREE from 'three';
-import { canvasTexture, makeCoverCanvas, makePageEdgeCanvas, bookColors } from './textures.js';
+import { canvasTexture } from './canvas-texture.js';
+import { makeCoverCanvas, makePageEdgeCanvas, bookColors } from './textures.js';
 import { READ } from '../config.js';
 
 const OPEN_TIME = 0.65;

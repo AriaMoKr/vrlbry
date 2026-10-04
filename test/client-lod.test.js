@@ -1,8 +1,12 @@
 // Bookshelves (public/js/world/shelves.js) run in Node with a stub 2D canvas: spine-atlas level of
-// detail (budget, nearest-first upgrades, hysteresis, time-sliced painting) and the partial vertex
-// uploads behind hover highlights and hidden books.
+// detail (budget, nearest-first upgrades, hysteresis, time-sliced painting), painting through the
+// atlas worker (with a fake worker), and the partial vertex uploads behind hover highlights and
+// hidden books.
 
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, it, before } from 'node:test';
 import * as THREE from 'three';
 
@@ -37,7 +41,7 @@ before(async () => {
 
 const renderer = { capabilities: { getMaxAnisotropy: () => 16 } };
 
-function shelvesWith(nCases) {
+function shelvesWith(nCases, opts = {}) {
   const books = Array.from({ length: nCases * 90 }, (_, i) => ({
     id: String(i), title: `Book ${i}`, author: `Author ${i % 50}`, libId: 'lib', size: 200000,
   }));
@@ -50,7 +54,7 @@ function shelvesWith(nCases) {
     cs.yaw = -a;
     cs.label = 'A – Z';
   });
-  const shelves = new Bookshelves({ renderer });
+  const shelves = new Bookshelves({ renderer, atlasWorker: null, ...opts });
   shelves.build(cases);
   return shelves;
 }
@@ -147,6 +151,85 @@ describe('spine atlas LOD', () => {
       run(shelves, camAt(0, 0), 72 * 10);
       assert.equal(shelves.lodStats().high, 0);
     } finally {
+      shelves.dispose();
+    }
+  });
+});
+
+/** A stand-in for the atlas worker: answers each paint() on a later turn with a fake bitmap. */
+function fakeWorker({ fail = false } = {}) {
+  const w = {
+    scales: [],
+    images: [],
+    paint(layout, items, label, scale) {
+      w.scales.push(scale);
+      const image = { width: 4, height: 4, closed: false, close() { this.closed = true; } };
+      w.images.push(image);
+      return new Promise((resolve, reject) => setImmediate(() => (fail ? reject(new Error('boom')) : resolve(image))));
+    },
+  };
+  return w;
+}
+
+const turn = () => new Promise((r) => setImmediate(r));
+
+describe('atlas worker', () => {
+  it('loads only relative modules (module workers have no import map, so no three.js)', () => {
+    const seen = new Set();
+    const visit = (file) => {
+      if (seen.has(file)) return;
+      seen.add(file);
+      const src = fs.readFileSync(file, 'utf8');
+      for (const [, spec] of src.matchAll(/^import\s[^'"]*['"]([^'"]+)['"]/gm)) {
+        assert.ok(spec.startsWith('.'), `${path.basename(file)} imports ${spec}`);
+        visit(path.resolve(path.dirname(file), spec));
+      }
+    };
+    visit(fileURLToPath(new URL('../public/js/world/atlas-worker.js', import.meta.url)));
+    assert.deepEqual([...seen].map((p) => path.basename(p)).sort(), ['atlas-worker.js', 'atlas.js', 'books.js', 'config.js', 'textures.js']);
+  });
+
+  it('paints sharp and mid atlases in the worker, never on the main thread', async () => {
+    const worker = fakeWorker();
+    const shelves = shelvesWith(3, { atlasWorker: worker });
+    try {
+      for (let i = 0; i < 50 && shelves.lodStats().high < 3; i++) {
+        shelves.update(1 / 72, camAt(0, 0));
+        assert.equal(shelves._job?.painter, undefined, 'no main-thread painter');
+        await turn();
+      }
+      assert.equal(shelves.lodStats().high, 3);
+      assert.deepEqual(worker.scales, [1, 1, 1]);
+      for (const cs of shelves.cases) assert.ok(worker.images.includes(cs.material.map.image), 'shows the worker bitmap');
+    } finally {
+      shelves.dispose();
+    }
+  });
+
+  it('frees a bitmap that arrives after the room was rebuilt', async () => {
+    const worker = fakeWorker();
+    const shelves = shelvesWith(3, { atlasWorker: worker });
+    shelves.update(1 / 72, camAt(0, 0));
+    assert.ok(shelves._job, 'a job is in flight');
+    shelves.dispose();
+    await turn();
+    assert.equal(worker.images.length, 1);
+    assert.equal(worker.images[0].closed, true);
+  });
+
+  it('falls back to painting on the main thread when the worker fails', async () => {
+    const shelves = shelvesWith(3, { atlasWorker: fakeWorker({ fail: true }) });
+    const warn = console.warn;
+    console.warn = () => {};
+    try {
+      shelves.update(1 / 72, camAt(0, 0));
+      await turn();
+      assert.equal(shelves._worker, null);
+      assert.equal(shelves._job, null, 'the failed job is dropped');
+      run(shelves, camAt(0, 0), 72 * 10);
+      assert.equal(shelves.lodStats().high, 3, 'painted on the main thread instead');
+    } finally {
+      console.warn = warn;
       shelves.dispose();
     }
   });

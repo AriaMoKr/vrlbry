@@ -510,7 +510,10 @@ public/
     util/storage.js      safe localStorage get/set JSON (try/catch; namespaced STORAGE_PREFIX).
     reader/layout.js     text layout engine: blocks → positioned lines/items (pure, canvas measure).
     reader/reader.js     BookReader: chunk loading, pagination, page rendering to canvas.
-    world/textures.js    procedural textures (wood, paper edges, spines, covers, signs).
+    world/textures.js    procedural canvas art (wood, paper edges, spines, covers, signs); no three.js.
+    world/canvas-texture.js  three.js textures from canvases / ImageBitmaps (canvasTexture, disposeTexture).
+    world/atlas.js       spine atlas layout + painter (no three.js, shared with the worker).
+    world/atlas-worker.js  module worker painting atlases on an OffscreenCanvas.
     world/room.js        the library room (floor, walls, ceiling, windows, lights, decor).
     world/shelves.js     bookcases + books (merged geometry, spine atlases), picking, locate.
     world/book3d.js      a single free-standing book: closed/open, cover, pages, page turn anim.
@@ -657,8 +660,16 @@ export class Book3D {
   64 bookcases (only the all-libraries place) keeps mid atlases for the 64 nearest only, dropping
   one once it is more than 80th nearest. Every frame, the books of bookcases the viewer stands
   behind (behind the bookcase's mid-plane, where its back and side panels hide every book) are
-  not drawn: about half of a hall. Painting is incremental,
-  ~3 ms per frame (`atlasPainter().step()`), one atlas at a time; changing level is a texture
+  not drawn: about half of a hall. Mid and high atlases are painted one at a time in a module
+  worker on an OffscreenCanvas (`atlas-worker.js`), which returns a vertically flipped
+  `ImageBitmap` (WebGL ignores `flipY` for bitmaps); the main thread only uploads it. Main-thread
+  painting, even time-sliced, caused 15–80 ms frame spikes on a fast PC, because the browser
+  defers canvas rasterization until the upload. The worker loads only relative modules
+  (`atlas.js`, `textures.js`, `util/books.js`, `config.js`): module workers have no import map,
+  so none of them may import three. Where module workers or OffscreenCanvas are missing, or the
+  worker fails, painting falls back to the main thread, ~3 ms per frame
+  (`atlasPainter().step()`). The low level is still painted on the main thread by `build()`,
+  behind the fade. Changing level is a texture
   swap (low and mid textures are kept). Spine text uses an offset dark copy, never `shadowBlur`
   (it blurs every glyph on the CPU).
 - **Book3D:** cover image texture on the front (cover loaded from `book.cover`; fallback generated
