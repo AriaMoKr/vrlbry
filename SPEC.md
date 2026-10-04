@@ -644,7 +644,8 @@ export class Book3D {
   filled until the next book does not fit; occasional book leaning/lying stacks are optional decor.
   The top of each bookcase carries a small label with its range (e.g. `"Ab – Ch"` for title/author
   sort, `"#1 – #160"` for popularity); the first bookcase of a section has a larger section sign
-  with the library title.
+  with the library title: a thin brass board with the text on its front and a plain plate (shared,
+  no text) on its back and edges, so it is visible from behind too.
 - **Room:** an inviting library hall sized to the content. ≤ ~24 bookcases: a rotunda (bookcases
   on a circle, facing inward, around a central area with the kiosk and a reading table/armchair
   decor); more: a rectangular hall with parallel aisles of double-sided bookcases. Warm lighting
@@ -713,8 +714,13 @@ export class Controls extends EventTarget {
   cursor dot (cursor placed by interaction at hit distance via `pointer.setHitDistance(d)` if you
   add it); controller models via `XRControllerModelFactory` (CDN profile assets; on failure show a
   simple procedural controller); hands via `XRHandModelFactory` with the procedural `'spheres'` or
-  `'boxes'` profile (offline-safe). Locomotion when enabled: **right stick forward → teleport arc**
-  (release to teleport onto `world.teleportTargets`, validated by `world.isWalkable`), right stick
+  `'boxes'` profile (offline-safe). The ray stops where it meets something: a panel, a book, or a
+  bookcase (`shelves.raycast`: bookcases are solid except for their open front, so a ray reaches
+  books only through it and never passes through a back, side, top or shelf board into the next
+  bookcase; this applies in every state, while books are pickable only when browsing).
+  Locomotion when enabled: **right stick forward → teleport arc** (release to teleport onto
+  `world.teleportTargets`, validated by `world.isWalkable`); while aiming, that controller's ray
+  and cursor are hidden and `pointer.teleporting` keeps it from hovering or selecting; right stick
   left/right → snap turn (`PLAYER.snapTurn`), left stick → smooth move (optional setting, default
   on) constrained by `world.constrain`. When locomotion is disabled, sticks only emit events.
 - **Desktop:** drag (any mouse button) to look; a press that does not move more than a few pixels

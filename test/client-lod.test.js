@@ -9,6 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it, before } from 'node:test';
 import * as THREE from 'three';
+import { BOOKCASE } from '../public/js/config.js';
 
 let Bookshelves;
 let packBookcases;
@@ -241,6 +242,59 @@ describe('atlas worker', () => {
       assert.equal(shelves.lodStats().high, 3, 'painted on the main thread instead');
     } finally {
       console.warn = warn;
+      shelves.dispose();
+    }
+  });
+});
+
+describe('pointer rays on the shelves', () => {
+  const D = BOOKCASE.depth;
+  const ray = (origin, dir) => {
+    const rc = new THREE.Raycaster(new THREE.Vector3(...origin), new THREE.Vector3(...dir).normalize());
+    rc.far = 30;
+    return rc;
+  };
+
+  it('reach books through the open front, and stop at the back panel when picking is off', () => {
+    const shelves = shelvesWith(16); // a ring of radius 7; bookcase 0 at (0, 0, -7) faces the centre
+    try {
+      const hit = shelves.raycast(ray([0, 1.2, 0], [0, 0, -1]));
+      assert.ok(hit.book, 'a book');
+      assert.ok(hit.distance > 7 - D / 2 && hit.distance < 7 + D / 2, String(hit.distance));
+      const wood = shelves.raycast(ray([0, 1.2, 0], [0, 0, -1]), { books: false });
+      assert.equal(wood.book, null);
+      assert.ok(Math.abs(wood.distance - (7 + D / 2 - 0.018)) < 1e-6, 'the back panel');
+    } finally {
+      shelves.dispose();
+    }
+  });
+
+  it('never pass through a bookcase seen from behind into the one beyond', () => {
+    const shelves = shelvesWith(16);
+    try {
+      // From behind bookcase 0, aiming across the ring at bookcase 8, whose books face this way.
+      const hit = shelves.raycast(ray([0, 1.2, -20], [0, 0, 1]));
+      assert.equal(hit.book, null);
+      assert.ok(Math.abs(hit.distance - (13 - D / 2)) < 1e-6, 'stops at the back of bookcase 0');
+      assert.ok(Math.abs(hit.point.z - (-7 - D / 2)) < 1e-6);
+    } finally {
+      shelves.dispose();
+    }
+  });
+
+  it('stop at the side panels and at a shelf board', () => {
+    const shelves = shelvesWith(1);
+    try {
+      const side = shelves.raycast(ray([-5, 1.2, -7], [1, 0, 0]));
+      assert.equal(side.book, null);
+      assert.ok(Math.abs(side.distance - (5 - BOOKCASE.width / 2)) < 1e-6);
+      // Straight down through the open front, just in front of the books: the board's front lip.
+      const down = shelves.raycast(ray([0, 1.9, -7 + D / 2 - 0.015], [0, -1, 0]));
+      assert.equal(down.book, null);
+      assert.ok(down.distance > 0.01 && down.distance < 0.6, `a board, not the floor: ${down.distance}`);
+      // From inside the opening out through the open front: nothing of this bookcase is in the way.
+      assert.equal(shelves.raycast(ray([0, 1.2, -7 + D / 2 - 0.015], [0, 0, 1])), null);
+    } finally {
       shelves.dispose();
     }
   });

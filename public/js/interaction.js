@@ -507,15 +507,16 @@ export class Interaction {
         if (h && (!best || h.distance < best.distance)) best = { kind: 'held', distance: h.distance };
       }
     }
-    if (this.state === 'browse') {
-      const bh = this.world.shelves.raycast(rc);
-      if (bh && (!best || bh.distance < best.distance)) best = { kind: 'book', book: bh.book, distance: bh.distance };
+    // Bookcases stop the laser in every state; their books can be picked only while browsing.
+    const sh = this.world.shelves.raycast(rc, { books: this.state === 'browse' });
+    if (sh && (!best || sh.distance < best.distance)) {
+      best = sh.book ? { kind: 'book', book: sh.book, distance: sh.distance } : { kind: 'solid', distance: sh.distance };
     }
     return best;
   }
 
   _select(pointer) {
-    if (this.state === 'busy') return;
+    if (this.state === 'busy' || pointer.teleporting) return;
     const hit = this._hitTest(pointer);
     if (!hit) return;
     if (hit.kind === 'panel') {
@@ -1371,7 +1372,7 @@ export class Interaction {
     let hoverBook = null;
     const seen = new Set();
     for (const pointer of this.controls.pointers) {
-      const hit = this.state === 'busy' ? null : this._hitTest(pointer);
+      const hit = this.state === 'busy' || pointer.teleporting ? null : this._hitTest(pointer);
       pointer.setHitDistance(hit ? hit.distance : null);
       const prev = this._hover.get(pointer.id);
       if (prev?.panel && prev.panel !== hit?.panel) prev.panel.pointerLeave();

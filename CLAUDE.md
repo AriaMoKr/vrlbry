@@ -78,11 +78,11 @@ client: api.js ─► rooms.js (what to shelve) ─► World/Bookshelves ─► 
   - The worker's modules (`atlas.js`, `textures.js`, `util/books.js`, `config.js`) must never import three or anything else bare: module workers have no import map. A test checks this. Make textures with `canvas-texture.js`.
   - Never paint a whole atlas, or anything else heavy, in a single frame. Never use canvas `shadowBlur` on spine text.
   - More than 22 bookcases switches the rotunda to a hall with aisles.
-  - Picking uses per-book bounding boxes. `hideBook` / `showBook` collapse or restore that book's vertices.
+  - Picking uses per-book bounding boxes. `shelves.raycast` treats each bookcase as solid except for its open front (`OPENING` minus the `SHELF_BOARDS`), so the laser stops at backs, sides and boards instead of reaching the next row. `hideBook` / `showBook` collapse or restore that book's vertices.
   - `Book3D` is the free-floating book used in the inspect and read states. Its local frame: front cover +Z, spine −X. Reading mode sets `centerWhenOpen = false`, so the cover swings open around a fixed spine.
 - **`xr/controls.js`**: unifies XR controllers and hands, the mouse, and touch into `Pointer`s (each with a world-space `Raycaster`) plus events (`select`, `axis`, `flick`, `button`, `key`, `wheel`, `swipe`).
   - The desktop uses drag-to-look, not pointer lock, so the DOM overlay stays usable.
-  - It also does locomotion (teleport arc, snap turn, smooth move), which is turned off outside the browse state.
+  - It also does locomotion (teleport arc, snap turn, smooth move), which is turned off outside the browse state. While a controller aims the teleport arc, its laser is hidden and `pointer.teleporting` is set, and interaction.js then ignores that pointer.
 - **`interaction.js`**: state machine `browse → inspect → read` (plus `busy` during animations). It owns the canvas-texture UI panels (`ui/panel.js`): the kiosk, the inspect panel, the reader toolbar and the table-of-contents list. The DOM overlay (`ui/overlay.js`) is only for non-VR use.
   - Page canvases come from a pool of 6: the shown spread plus the prepared next and previous spreads. `Book3D` keeps displaying (and turning) the canvases it was given, so never redraw a canvas that is on screen.
   - Background neighbour preparation is cancelled by bumping `_prepToken`.

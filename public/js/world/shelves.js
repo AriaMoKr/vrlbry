@@ -19,6 +19,27 @@ export const ROW_PITCH = (H - BOTTOM - TOP_TRIM) / ROWS;
 const PAD = 0.012; // clearance between the side panels and the outermost books
 export const USABLE = W - 2 * SIDE - 2 * PAD;
 const PLATE = { w: 0.42, h: 0.064 }; // label plate on the bookcase (m)
+// Where a pointer ray may travel inside a bookcase (bookcase space): its open front, between the
+// side panels, the base and the frieze, back to the back panel. Everything else is wood, and so
+// are the shelf boards (each with its front lip) crossing the opening.
+const OPENING = new THREE.Box3(
+  new THREE.Vector3(-W / 2 + SIDE, BOTTOM, -D / 2 + 0.018), new THREE.Vector3(W / 2 - SIDE, H - TOP_TRIM, D / 2 + 0.05),
+);
+const SHELF_BOARDS = Array.from({ length: ROWS - 1 }, (_, i) => {
+  const y = BOTTOM + (i + 1) * ROW_PITCH;
+  return new THREE.Box3(new THREE.Vector3(-W / 2 + SIDE, y - 0.034, -D / 2), new THREE.Vector3(W / 2 - SIDE, y, D / 2 - 0.01));
+});
+const _inner = new THREE.Ray();
+
+/** Distance along a ray that starts inside (or on) a box to where it leaves the box. */
+function exitDistance(ray, box) {
+  let t = Infinity;
+  for (const a of ['x', 'y', 'z']) {
+    const d = ray.direction[a];
+    if (Math.abs(d) > 1e-12) t = Math.min(t, ((d > 0 ? box.max[a] : box.min[a]) - ray.origin[a]) / d);
+  }
+  return Math.max(0, t);
+}
 const Y90 = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2);
 // Spine atlas levels of detail (scale of the full-resolution layout). Low (coloured bands and the
 // label plate) is requested for every bookcase when a room is built; mid (small but real titles) is
@@ -390,7 +411,6 @@ export class Bookshelves {
         index: ci, group: g, mesh, material: mat, layout, items: cs.items, label: cs.label,
         textures: { low: null, mid: null, high: null }, records, original, position: cs.position.clone(), yaw: cs.yaw,
         box: new THREE.Box3(new THREE.Vector3(-W / 2, 0, -D / 2), new THREE.Vector3(W / 2, H, D / 2 + 0.05)),
-        back: new THREE.Box3(new THREE.Vector3(-W / 2, 0, -D / 2), new THREE.Vector3(W / 2, H, -D / 2 + 0.02)),
       });
     });
     if (woodParts.length) {
@@ -451,27 +471,54 @@ export class Bookshelves {
     return book ? this._records.get(keyOf(book)) : undefined;
   }
 
-  /** Nearest visible book hit by the raycaster (front-facing bookcases only). */
-  raycast(raycaster) {
+  /**
+   * What a pointer ray meets on the shelves: the nearest visible book (when `books`), else the
+   * bookcase itself (`book: null`), which stops the laser. Bookcases are solid except for their
+   * open front: a ray reaches books only through it, and never passes through a back, side, top
+   * or shelf board into the bookcase behind.
+   * @returns {{ book: object|null, distance: number, point: THREE.Vector3 }|null}
+   */
+  raycast(raycaster, { books = true } = {}) {
     let best = null;
     const ray = this._ray;
-    const hit = this._tmp;
+    const at = this._tmp;
     for (const cs of this.cases) {
       this._inv.copy(cs.group.matrixWorld).invert();
       ray.copy(raycaster.ray).applyMatrix4(this._inv);
-      if (ray.direction.z >= 0) continue; // looking at the bookcase from behind / edge-on
-      if (!ray.intersectBox(cs.box, hit)) continue;
-      const near = ray.origin.distanceTo(hit);
-      if (best && near > best.distance) continue;
-      let limit = Infinity;
-      if (ray.intersectBox(cs.back, hit)) limit = ray.origin.distanceTo(hit);
-      for (const rec of cs.records) {
-        if (rec.hidden) continue;
-        if (!ray.intersectBox(rec.box, hit)) continue;
-        const d = ray.origin.distanceTo(hit);
-        if (d > limit || d > raycaster.far || d < raycaster.near) continue;
-        if (!best || d < best.distance) best = { book: rec.book, distance: d, point: hit.clone().applyMatrix4(cs.group.matrixWorld) };
+      const inside = cs.box.containsPoint(ray.origin);
+      if (!inside && !ray.intersectBox(cs.box, at)) continue;
+      const entry = inside ? 0 : ray.origin.distanceTo(at);
+      if (entry > raycaster.far || (best && entry >= best.distance)) continue;
+      const p = inside ? ray.origin : at;
+      // In the opening: entering through the open front, or starting inside it (a hand reaching in).
+      const throughFront = inside ? OPENING.containsPoint(p)
+        : ray.direction.z < 0 && p.z >= cs.box.max.z - 1e-6
+          && p.x > OPENING.min.x && p.x < OPENING.max.x && p.y > OPENING.min.y && p.y < OPENING.max.y;
+      let nearest = entry; // the frame, a side, the back or the top
+      let book = null;
+      if (throughFront) {
+        // Wood where the ray leaves the opening (none if it leaves through the open front), or a
+        // shelf board it crosses first.
+        _inner.origin.copy(p);
+        _inner.direction.copy(ray.direction);
+        const out = exitDistance(_inner, OPENING);
+        nearest = p.z + ray.direction.z * out >= OPENING.max.z - 1e-6 ? Infinity : entry + out;
+        for (const board of SHELF_BOARDS) {
+          if (ray.intersectBox(board, at)) nearest = Math.min(nearest, ray.origin.distanceTo(at));
+        }
+        if (books) {
+          for (const rec of cs.records) {
+            if (rec.hidden || !ray.intersectBox(rec.box, at)) continue;
+            const d = ray.origin.distanceTo(at);
+            if (d <= nearest) {
+              nearest = d;
+              book = rec.book;
+            }
+          }
+        }
       }
+      if (nearest === Infinity || nearest < raycaster.near || nearest > raycaster.far || (best && nearest >= best.distance)) continue;
+      best = { book, distance: nearest, point: ray.at(nearest, new THREE.Vector3()).applyMatrix4(cs.group.matrixWorld) };
     }
     return best;
   }

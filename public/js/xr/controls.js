@@ -155,7 +155,7 @@ export class Controls extends EventTarget {
     };
     pointer.raycaster.far = 30;
     entry.pointer = pointer;
-    entry.visual.line.visible = source.targetRayMode === 'tracked-pointer' && this._rayVisible;
+    this._syncRay(entry);
     entry.fallback.visible = !isHand;
     entry.buttons = [];
     entry.flicks = {};
@@ -172,10 +172,19 @@ export class Controls extends EventTarget {
 
   setRayVisible(visible) {
     this._rayVisible = visible;
-    for (const e of this._xr) {
-      if (e.source) e.visual.line.visible = visible && e.source.targetRayMode === 'tracked-pointer';
-      if (!visible) e.visual.cursor.visible = false;
-    }
+    for (const e of this._xr) if (e.source) this._syncRay(e);
+  }
+
+  /**
+   * Shows a controller's laser unless rays are off, it is not a tracked pointer, or it is aiming
+   * a teleport: then the arc replaces the laser, and `pointer.teleporting` tells interaction.js
+   * not to hover or select with it.
+   */
+  _syncRay(e) {
+    const show = this._rayVisible && e.source?.targetRayMode === 'tracked-pointer' && !e.aiming;
+    e.visual.line.visible = show;
+    if (!show) e.visual.cursor.visible = false;
+    if (e.pointer) e.pointer.teleporting = e.aiming;
   }
 
   _pollXR(dt) {
@@ -227,7 +236,10 @@ export class Controls extends EventTarget {
   _xrLocomotion(e, hand, x, y, dt) {
     if (hand === 'right') {
       // Teleport: push forward to aim, release to jump.
-      if (!e.aiming && y < -0.6) e.aiming = true;
+      if (!e.aiming && y < -0.6) {
+        e.aiming = true;
+        this._syncRay(e);
+      }
       if (e.aiming) {
         this._updateAim(e);
         if (y > -0.3) this._endAim(e, true);
@@ -314,6 +326,7 @@ export class Controls extends EventTarget {
   _endAim(e, commit) {
     const t = this._teleport;
     e.aiming = false;
+    this._syncRay(e);
     t.group.visible = false;
     if (commit && t.valid && t.point) this.teleportTo(t.point);
   }

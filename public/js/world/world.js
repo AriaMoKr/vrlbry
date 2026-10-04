@@ -14,6 +14,35 @@ import { canvasTexture } from './canvas-texture.js';
 import { makeSignCanvas } from './textures.js';
 
 const CASE_GAP = 0.06; // between neighbouring bookcases
+const SIGN_DEPTH = 0.025;
+
+let signBackMat = null;
+/** Back and edges of every sign: the brass plate without text, shared and never disposed. */
+function signBack() {
+  signBackMat ||= new THREE.MeshLambertMaterial({ map: canvasTexture(makeSignCanvas('', ''), { anisotropy: 4 }), emissive: 0x221608 });
+  return signBackMat;
+}
+
+/**
+ * A sign: a thin brass board, the canvas on its front (+Z, at z = 0) and a plain plate on the back
+ * and edges, so it does not vanish when seen from behind (a plane is one-sided). No text on the
+ * back: in a hall the bookcase behind a sign may belong to another section.
+ */
+function makeSign(canvas, w, h, anisotropy) {
+  const front = new THREE.MeshLambertMaterial({ map: canvasTexture(canvas, { anisotropy }), emissive: 0x221608 });
+  const back = signBack();
+  const geo = new THREE.BoxGeometry(w, h, SIGN_DEPTH);
+  geo.translate(0, 0, -SIGN_DEPTH / 2);
+  const sign = new THREE.Mesh(geo, [back, back, back, back, front, back]); // box faces: ±x, ±y, +z, −z
+  sign.userData.front = front;
+  return sign;
+}
+
+function disposeSign(s) {
+  s.geometry.dispose();
+  s.userData.front.map.dispose();
+  s.userData.front.dispose();
+}
 const ROTUNDA_MAX_CASES = 22;
 
 export class World {
@@ -59,9 +88,7 @@ export class World {
     // Tear down the previous room.
     if (this.room) disposeRoom(this.room);
     for (const s of this.signs) {
-      s.geometry.dispose();
-      s.material.map.dispose();
-      s.material.dispose();
+      disposeSign(s);
       s.removeFromParent();
     }
     this.signs = [];
@@ -148,9 +175,8 @@ export class World {
       const lib = sec.library;
       const canvas = makeSignCanvas(lib.title || lib.name || lib.id,
         sec.subtitle ?? [lib.description, `${sec.books} book${sec.books === 1 ? '' : 's'}`].filter(Boolean).join(' · '));
-      const mat = new THREE.MeshLambertMaterial({ map: canvasTexture(canvas, { anisotropy: 8 }), emissive: 0x221608 });
       const w = Math.min(2.2, BOOKCASE.width * Math.min(2, sec.count) - 0.1);
-      const sign = new THREE.Mesh(new THREE.PlaneGeometry(w, w / 4), mat);
+      const sign = makeSign(canvas, w, w / 4, 8);
       // Centred over the section's first bookcases (two when it has two or more).
       const next = cases[sec.first + Math.min(1, sec.count - 1)];
       const other = Math.abs(next.yaw - cs.yaw) < 0.5 ? next : cs; // never span back-to-back cases
@@ -167,8 +193,7 @@ export class World {
 
   _emptySign() {
     const canvas = makeSignCanvas('No ZIM files found', 'Put .zim files in the server folder and reload');
-    const mat = new THREE.MeshLambertMaterial({ map: canvasTexture(canvas), emissive: 0x221608 });
-    const sign = new THREE.Mesh(new THREE.PlaneGeometry(2, 0.5), mat);
+    const sign = makeSign(canvas, 2, 0.5, 4);
     sign.position.set(0, 1.8, -2.5);
     this.group.add(sign);
     this.signs.push(sign);
@@ -259,11 +284,7 @@ export class World {
   dispose() {
     if (this.room) disposeRoom(this.room);
     this.shelves.dispose();
-    for (const s of this.signs) {
-      s.geometry.dispose();
-      s.material.map?.dispose();
-      s.material.dispose();
-    }
+    for (const s of this.signs) disposeSign(s);
     this.group.removeFromParent();
   }
 }
