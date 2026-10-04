@@ -470,7 +470,9 @@ export class Bookshelves {
     } else {
       a.set(cs.original.subarray(start * 3, (start + count) * 3), start * 3);
     }
-    attr.clearUpdateRanges();
+    // Never clear the pending ranges: moving the hover straight to a neighbouring book restores
+    // one book and collapses another in the same frame, and both must reach the GPU. three merges
+    // the ranges on upload and clears them afterwards.
     attr.addUpdateRange(start * 3, count * 3);
     attr.needsUpdate = true;
   }

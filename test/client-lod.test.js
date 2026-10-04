@@ -1,5 +1,6 @@
-// Spine-atlas level of detail in Bookshelves (public/js/world/shelves.js), run in Node with a stub
-// 2D canvas: budget, nearest-first upgrades, hysteresis (no thrashing), time-sliced painting.
+// Bookshelves (public/js/world/shelves.js) run in Node with a stub 2D canvas: spine-atlas level of
+// detail (budget, nearest-first upgrades, hysteresis, time-sliced painting) and the partial vertex
+// uploads behind hover highlights and hidden books.
 
 import assert from 'node:assert/strict';
 import { describe, it, before } from 'node:test';
@@ -145,6 +146,52 @@ describe('spine atlas LOD', () => {
       // Back to the middle (7 m from every bookcase, beyond range + hysteresis): sharp atlases go.
       run(shelves, camAt(0, 0), 72 * 10);
       assert.equal(shelves.lodStats().high, 0);
+    } finally {
+      shelves.dispose();
+    }
+  });
+});
+
+/**
+ * Mirrors three's WebGLAttributes upload of a position attribute: the first upload sends the whole
+ * array; later ones (when the version changed) send only the update ranges, or everything if there
+ * are none, and then clear the ranges.
+ */
+function gpuMirror(attr) {
+  let gpu = null;
+  let version = -1;
+  return {
+    upload() {
+      if (!gpu) {
+        gpu = attr.array.slice();
+      } else if (version < attr.version) {
+        if (!attr.updateRanges.length) gpu.set(attr.array);
+        for (const r of attr.updateRanges) gpu.set(attr.array.subarray(r.start, r.start + r.count), r.start);
+        attr.clearUpdateRanges();
+      }
+      version = attr.version;
+      return gpu;
+    },
+  };
+}
+
+describe('shelf vertex uploads', () => {
+  it('a book stays visible when the hover moves straight to its neighbour', () => {
+    const shelves = shelvesWith(1);
+    try {
+      const cs = shelves.cases[0];
+      const attr = cs.mesh.geometry.attributes.position;
+      const gpu = gpuMirror(attr);
+      gpu.upload();
+      const [a, b, c] = cs.records.filter((r) => r.range.count).slice(0, 3).map((r) => r.book);
+      const frame = (fn) => { fn(); return gpu.upload(); };
+      // Sweeping the laser sideways along a shelf: one book to the next with no gap frame.
+      for (const step of [() => shelves.setHighlight(a), () => shelves.setHighlight(b), () => shelves.setHighlight(c),
+        () => shelves.setHighlight(null), () => { shelves.setHighlight(a); shelves.hideBook(a); },
+        () => { shelves.showBook(a); shelves.setHighlight(b); }, () => shelves.setHighlight(null)]) {
+        assert.deepEqual(frame(step), attr.array, 'the GPU copy matches the CPU vertices');
+      }
+      assert.deepEqual(attr.array, cs.original, 'every book back on the shelf');
     } finally {
       shelves.dispose();
     }
