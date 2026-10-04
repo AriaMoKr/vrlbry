@@ -27,7 +27,14 @@ npm install
 npm start
 ```
 
-That serves every `.zim` file in the current folder at <http://localhost:8080>. Other options:
+That serves every `.zim` file in the current folder at <http://localhost:8080>. For a VR headset,
+start it with HTTPS as well (HTTP stays on 8080, HTTPS is added on 8443):
+
+```bash
+npm run start:https
+```
+
+Other options:
 
 ```bash
 node server/index.js --dir /path/to/zims --port 8080
@@ -36,9 +43,11 @@ node server/index.js --dir /path/to/zims --port 8080
 | Option | Meaning |
 | --- | --- |
 | `--dir <path>` | folder with `.zim` files (default: current folder) |
-| `--port <n>` | port (default 8080; the next free port is used if it is busy) |
+| `--port <n>` | HTTP port (default 8080; the next free port is used if it is busy) |
 | `--host <addr>` | interface to listen on (default: all, so a headset on your network can connect) |
-| `--https` | serve HTTPS with a self-signed certificate (cached in `.cert/`) |
+| `--https` | also serve HTTPS, on port 8443, with a self-signed certificate (cached in `.cert/`) |
+| `--https-port <n>` | HTTPS port (default 8443) |
+| `--no-http` | with `--https`: serve HTTPS only |
 | `--cert <file> --key <file>` | use your own certificate |
 | `--max-generic <n>` | max books listed from other (non-Gutenberg, non-Wikisource) ZIMs (default 2000) |
 | `--no-watch` | don't pick up `.zim` files added or removed while the server runs |
@@ -66,7 +75,7 @@ every library: picking one that is not on the shelves takes you to its room.
 WebXR only runs on a secure page. On the computer itself `http://localhost` counts as secure. A
 headset on your Wi-Fi needs one of these:
 
-- **HTTPS:** start with `npm run start:https`, then open `https://<your-computer's-IP>:8080` in the
+- **HTTPS:** start with `npm run start:https`, then open `https://<your-computer's-IP>:8443` in the
   headset browser (the server prints the address). The certificate is self-signed, so the browser
   warns once; choose to proceed.
 - **USB (Quest):** connect the headset, run `adb reverse tcp:8080 tcp:8080`, and open
@@ -86,6 +95,7 @@ Then press **Enter VR**.
 | Text size, theme, contents | + / −, toolbar | toolbar | toolbar |
 | Book distance / size | mouse wheel | pinch | right stick up/down · left stick up/down · grip to move the book |
 | Close / put back | Esc | **✕** / **Put back** | **B** or **Y** |
+| Leave VR | | | hold **B** or **Y** for a second while browsing, or **Exit VR** on the catalogue stand (or the headset's Meta button) |
 
 The catalogue stand next to where you start lets you re-shelve the books by title, author or
 popularity, jump to a letter, pick a book at random ("Surprise me"), reopen recently read books,

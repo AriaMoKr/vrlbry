@@ -26,6 +26,7 @@ const HELP = {
     ['Read', 'Flick the right stick or trigger a page to turn · grip to move the book'],
     ['Book distance / size', 'Right stick up/down · left stick up/down'],
     ['Close / put back', 'B or Y button'],
+    ['Leave VR', 'Hold B or Y for a second while browsing, or “Exit VR” on the catalogue stand'],
   ],
 };
 

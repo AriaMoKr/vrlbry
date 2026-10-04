@@ -373,18 +373,22 @@ export class ArchiveLibrary {
 `index.js` CLI:
 
 ```
-node server/index.js [--dir <path>] [--port 8080] [--host 0.0.0.0] [--https]
-                     [--cert <file> --key <file>] [--max-generic 2000] [--no-watch] [--quiet]
+node server/index.js [--dir <path>] [--port 8080] [--host 0.0.0.0] [--https] [--https-port 8443]
+                     [--no-http] [--cert <file> --key <file>] [--max-generic 2000] [--no-watch] [--quiet]
 ```
-- `--dir` defaults to `process.cwd()`. Port default 8080; if busy, try the next 10 ports.
+- `--dir` defaults to `process.cwd()`. **Conventional ports: HTTP 8080 (`--port`), HTTPS 8443
+  (`--https-port`).** `--https` (also implied by `--https-port`, `--cert`/`--key`) adds the HTTPS
+  listener next to plain HTTP: one process, one shared `Library`, two servers; `--no-http` keeps
+  HTTPS only. Each listener tries the next 10 ports when its port is busy. `main()` returns
+  `{ server, servers, library, port, httpPort, httpsPort, urls, close }`.
 - The directory is watched (`Library.watch`) unless `--no-watch`: ZIM files added, replaced or
   removed while the server runs are picked up, and clients re-shelve by themselves.
 - `--https`: use `--cert/--key` if given, else generate a self-signed certificate with `selfsigned`
   (SAN: localhost, 127.0.0.1, all local IPv4 addresses) and cache it in `<project>/.cert/`
   (regenerate when expired or when the address set changes). WebXR needs a secure context:
   `localhost` is fine over HTTP; a headset on the LAN needs HTTPS.
-- On start print: the libraries found (file, title, book count), and URLs (`http(s)://localhost:port`
-  plus each LAN IPv4) with a hint about HTTPS for headsets. Graceful shutdown on SIGINT/SIGTERM.
+- On start print: the libraries found (file, title, book count), and URLs for every listener
+  (`http(s)://localhost:port` plus each LAN IPv4) with a hint about HTTPS for headsets. Graceful shutdown on SIGINT/SIGTERM.
 - Never crash on a bad request: catch everything, respond 500 JSON, log.
 
 ### 3.8 `server/wikisource.js`
@@ -647,7 +651,9 @@ export class Book3D {
   bookcase, nearest first) and *high* (full scale, legible titles, ~16 MB) only for at most 6
   bookcases within 4.5 m (horizontal), because spine titles are only legible that close on a
   Quest. A sharp atlas is dropped beyond 4.5 + 1.5 m, or displaced only by a bookcase at least
-  1.5 m nearer (hysteresis: no repainting while standing or swaying). Painting is incremental,
+  1.5 m nearer (hysteresis: no repainting while standing or swaying). A room with at most 6
+  bookcases (e.g. the 258-book Gutenberg room) fits the budget: all its bookcases get sharp
+  atlases regardless of distance and keep them, and the mid level is skipped. Painting is incremental,
   ~3 ms per frame (`atlasPainter().step()`), one atlas at a time; changing level is a texture
   swap (low and mid textures are kept). Spine text uses an offset dark copy, never `shadowBlur`
   (it blurs every glyph on the CPU).
@@ -730,6 +736,10 @@ States: `browse` → `inspect` → `read` (and back).
   up/down = move book nearer/farther, left stick up/down = scale (READ.minScale..maxScale), grip
   drag = reposition (bonus). Next spread is pre-rendered for instant turns. Saves position on every
   turn. Close/B/Esc → closes, flies back, → **browse**. Locomotion disabled while inspecting/reading.
+- **Leaving VR**: an "Exit VR" button in the kiosk header (only while presenting), or holding
+  B/Y for 1 s while browsing (a short press still means "back" when a book is out): a head-locked
+  ring below the line of sight fills up (shown after 0.15 s, so taps do not flash it); releasing
+  early cancels. Both end the XRSession (`interaction.onExitVR`).
 - **Kiosk panel** (at `world.kiosk`, always available in browse; 1.0 × 1.0 m): "⟳ Rescan folder"
   button (`POST /api/rescan`); when there is more than one library or the current one is browsed
   by rooms, two tabs:
@@ -774,6 +784,12 @@ States: `browse` → `inspect` → `read` (and back).
   painted).
 - Loading: fetch libraries → books (all libraries in parallel) → `world.build(collectionsFor(…))`
   → spawn → loop. Show progress in the overlay; on fatal errors show a readable message.
+- Rebuilds (room switch, sort, rescan) fade to black (0.15 s), rebuild, wait a few frames and fade
+  back (0.3 s): the first render of a new room uploads its geometry and textures at once (tens of
+  ms even on a fast PC) and must happen in the dark in a headset. The fade and exit-ring shaders
+  are compiled at startup (`renderer.compile`) so their first appearance does not stall. Room
+  shells share materials and textures across rebuilds (tiling via UVs, no clones), and every room
+  shape has exactly two point lights so switching never recompiles shaders.
 - Catalogue updates: every 10 s (while the page is visible or in XR) poll `GET /api/libraries`;
   when `generation` changed, fetch the book lists of new or changed libraries, toast what was
   added/removed, update the overlay and call `interaction.setCatalog()`, which rebuilds the

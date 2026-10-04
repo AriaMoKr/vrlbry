@@ -557,10 +557,13 @@ export class Bookshelves {
     const ranked = this.cases
       .map((cs) => ({ cs, d: Math.hypot(cs.position.x - cam.x, cs.position.z - cam.z) }))
       .sort((x, y) => x.d - y.d);
+    // A small room fits the whole budget: every bookcase gets (and keeps) a sharp atlas, nearest
+    // first, so titles are crisp from anywhere and the mid level is never needed.
+    const small = this.cases.length <= HIGH_BUDGET;
     const sharp = ranked.filter((r) => r.cs.textures.high);
     const far = sharp[sharp.length - 1];
-    if (far && far.d > HIGH_RANGE + HYSTERESIS) return this._dropHigh(far.cs);
-    const want = ranked.find((r) => r.d < HIGH_RANGE && !r.cs.textures.high);
+    if (!small && far && far.d > HIGH_RANGE + HYSTERESIS) return this._dropHigh(far.cs);
+    const want = ranked.find((r) => (small || r.d < HIGH_RANGE) && !r.cs.textures.high);
     if (want) {
       if (sharp.length < HIGH_BUDGET) return this._startJob(want.cs, 'high');
       if (want.d < far.d - HYSTERESIS) {
@@ -568,6 +571,7 @@ export class Bookshelves {
         return this._startJob(want.cs, 'high');
       }
     }
+    if (small) return;
     const mid = ranked.find((r) => !r.cs.textures.mid);
     if (mid) this._startJob(mid.cs, 'mid');
   }

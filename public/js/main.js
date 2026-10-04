@@ -111,11 +111,14 @@ async function start() {
   }
   renderer.xr.addEventListener('sessionstart', () => {
     overlay.hide();
+    interaction.onPresentingChange();
   });
   renderer.xr.addEventListener('sessionend', () => {
     overlay.show();
     controls.onSessionEnd();
+    interaction.onPresentingChange();
   });
+  interaction.onExitVR = () => renderer.xr.getSession()?.end();
   overlay.onEnterVR(enterVR);
   overlay.onSearchPick((book) => interaction.searchPick(book));
 

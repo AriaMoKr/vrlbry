@@ -90,6 +90,25 @@ describe('spine atlas LOD', () => {
     }
   });
 
+  it('makes every bookcase of a small room sharp, even from far away, without mid atlases', () => {
+    const shelves = shelvesWith(3);
+    try {
+      assert.equal(shelves.cases.length, 3);
+      const cam = camAt(0, 0); // 7 m from every bookcase: beyond the reading range
+      run(shelves, cam, 72 * 30);
+      const stats = shelves.lodStats();
+      assert.equal(stats.high, 3);
+      assert.equal(stats.mid, 0);
+      assert.equal(stats.painting, null);
+      for (const cs of shelves.cases) assert.equal(cs.material.map, cs.textures.high);
+      // Walking far away does not drop them.
+      run(shelves, camAt(30, 30), 72 * 10);
+      assert.equal(shelves.lodStats().high, 3);
+    } finally {
+      shelves.dispose();
+    }
+  });
+
   it('does not thrash: standing still or swaying causes no repaints once settled', () => {
     const shelves = shelvesWith(16);
     try {

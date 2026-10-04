@@ -640,6 +640,8 @@ describe('CLI (server/index.js)', () => {
     assert.equal(d.port, 8080);
     assert.equal(d.host, undefined);
     assert.equal(d.https, false);
+    assert.equal(d.httpsPort, 8443);
+    assert.equal(d.http, true);
     assert.equal(d.maxGeneric, 2000);
     assert.equal(d.quiet, false);
     const o = parseCliArgs(['--dir', 'x', '--port=9000', '--host', '127.0.0.1', '--https', '--max-generic', '5', '--quiet']);
@@ -650,6 +652,13 @@ describe('CLI (server/index.js)', () => {
     assert.equal(o.maxGeneric, 5);
     assert.equal(o.quiet, true);
     assert.equal(parseCliArgs(['--cert', 'c.pem', '--key', 'k.pem']).https, true);
+    const h = parseCliArgs(['--https-port', '9443']);
+    assert.equal(h.https, true, '--https-port implies --https');
+    assert.equal(h.httpsPort, 9443);
+    assert.equal(h.port, 8080, 'plain HTTP stays on');
+    assert.equal(parseCliArgs(['--https', '--no-http']).http, false);
+    assert.throws(() => parseCliArgs(['--no-http']), /needs --https/);
+    assert.throws(() => parseCliArgs(['--https-port', 'x']), /--https-port/);
     assert.equal(parseCliArgs(['-h']).help, true);
     assert.throws(() => parseCliArgs(['--port', 'abc']), /--port/);
     assert.throws(() => parseCliArgs(['--port', '70000']), /--port/);
@@ -761,6 +770,38 @@ describe('CLI (server/index.js)', () => {
     assert.equal(r.cached, false);
     assert.ok(new crypto.X509Certificate(r.cert).checkPrivateKey(crypto.createPrivateKey(r.key)), 'key matches certificate');
     assert.match(logged.join('\n'), /Cannot cache the HTTPS certificate/);
+  });
+
+  it('serves HTTP and HTTPS side by side from one library with --https', async () => {
+    const certDir = path.join(tmp, 'dual-cert');
+    await loadCertificate({ certDir });
+    const dir = path.join(tmp, 'cli-dual');
+    fs.mkdirSync(dir);
+    writeFixture(path.join(dir, 'lib.zim'));
+    const out = [];
+    const app = await main(['--dir', dir, '--port', '0', '--https-port', '0', '--host', '127.0.0.1',
+      '--cert', path.join(certDir, 'cert.pem'), '--key', path.join(certDir, 'key.pem'), '--quiet'], {
+      out: (m) => out.push(m), err: () => {}, handleSignals: false,
+    });
+    try {
+      assert.equal(app.servers.length, 2);
+      assert.ok(app.httpPort && app.httpsPort && app.httpPort !== app.httpsPort);
+      assert.equal(app.port, app.httpPort);
+      assert.deepEqual(out, [`vrlbry listening on http://127.0.0.1:${app.httpPort}`, `vrlbry listening on https://127.0.0.1:${app.httpsPort}`]);
+      const plain = await request(app.httpPort, '/api/libraries');
+      assert.equal(plain.status, 200);
+      const secure = await new Promise((resolve, reject) => {
+        https.get({ host: '127.0.0.1', port: app.httpsPort, path: '/api/libraries', rejectUnauthorized: false, agent: false }, (res) => {
+          const chunks = [];
+          res.on('data', (c) => chunks.push(c));
+          res.on('end', () => resolve({ status: res.statusCode, body: Buffer.concat(chunks) }));
+        }).on('error', reject);
+      });
+      assert.equal(secure.status, 200);
+      assert.deepEqual(JSON.parse(secure.body), JSON.parse(plain.body), 'same library on both');
+    } finally {
+      await app.close();
+    }
   });
 
   it('reports skipped archives on stderr even with --quiet', async () => {

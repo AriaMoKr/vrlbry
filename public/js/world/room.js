@@ -11,7 +11,31 @@ import {
 
 export const WALL_H = 4.4;
 
-/** Shared materials (created on first use, reused across rebuilds). */
+/** Dark-to-clear gradient for the floor rim along the wall. */
+function makeRimCanvas() {
+  const c = document.createElement('canvas');
+  c.width = 4;
+  c.height = 64;
+  const g = c.getContext('2d');
+  const grd = g.createLinearGradient(0, 0, 0, 64);
+  grd.addColorStop(0, 'rgba(0,0,0,0)');
+  grd.addColorStop(1, 'rgba(0,0,0,0.55)');
+  g.fillStyle = grd;
+  g.fillRect(0, 0, 4, 64);
+  return c;
+}
+
+/** Scales a geometry's UVs so a repeating texture tiles at a fixed real-world size. */
+function tileUVs(geo, su, sv) {
+  const uv = geo.attributes.uv;
+  for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * su, uv.getY(i) * sv);
+  return geo;
+}
+
+/**
+ * Shared materials and textures (created on first use, reused across rebuilds): switching rooms
+ * re-uploads nothing to the GPU. Tiling is done in the geometry UVs, never by cloning textures.
+ */
 let M = null;
 function materials() {
   if (M) return M;
@@ -38,6 +62,7 @@ function materials() {
     rug: new THREE.MeshLambertMaterial({ map: canvasTexture(makeRugCanvas({ size: 512 })) }),
     globe: new THREE.MeshLambertMaterial({ color: 0x9fb38a }),
     stand: new THREE.MeshLambertMaterial({ color: 0x3a2516 }),
+    rimTex: canvasTexture(makeRimCanvas()),
   };
   return M;
 }
@@ -289,25 +314,11 @@ export function createRotunda({ R, windowAngles = [], kiosk, decor = true }) {
   // Planks at ~0.17 m per board: scale UVs (CircleGeometry UVs span 0..1 over the diameter).
   const uv = floorGeo.attributes.uv;
   for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * (2 * R) / 1.4, uv.getY(i) * (2 * R) / 1.4);
-  const floorMat = mats.floor.clone();
-  floorMat.map = mats.plankTex.clone();
-  floorMat.map.wrapS = floorMat.map.wrapT = THREE.RepeatWrapping;
-  floorMat.map.needsUpdate = true;
-  const floor = new THREE.Mesh(floorGeo, floorMat);
+  const floor = new THREE.Mesh(floorGeo, mats.floor);
   floor.name = 'floor';
   group.add(floor);
   // Darker rim where the floor meets the wall.
-  const rimC = document.createElement('canvas');
-  rimC.width = 4;
-  rimC.height = 64;
-  const rg = rimC.getContext('2d');
-  const grd = rg.createLinearGradient(0, 0, 0, 64);
-  grd.addColorStop(0, 'rgba(0,0,0,0)');
-  grd.addColorStop(1, 'rgba(0,0,0,0.55)');
-  rg.fillStyle = grd;
-  rg.fillRect(0, 0, 4, 64);
-  const rimTex = canvasTexture(rimC);
-  const rim = new THREE.Mesh(new THREE.RingGeometry(R - 1.4, R + 0.05, seg, 1), new THREE.MeshBasicMaterial({ map: rimTex, transparent: true, depthWrite: false }));
+  const rim = new THREE.Mesh(new THREE.RingGeometry(R - 1.4, R + 0.05, seg, 1), new THREE.MeshBasicMaterial({ map: mats.rimTex, transparent: true, depthWrite: false }));
   // RingGeometry UV is planar; remap v to radial distance so the gradient runs outward.
   const ruv = rim.geometry.attributes.uv;
   const rpos = rim.geometry.attributes.position;
@@ -323,11 +334,7 @@ export function createRotunda({ R, windowAngles = [], kiosk, decor = true }) {
   const wallGeo = new THREE.CylinderGeometry(R, R, WALL_H, seg, 1, true);
   const wuv = wallGeo.attributes.uv;
   for (let i = 0; i < wuv.count; i++) wuv.setXY(i, wuv.getX(i) * circ / 2.2, wuv.getY(i) * WALL_H / 2.2);
-  const wallMat = mats.wall.clone();
-  wallMat.map = mats.plasterTex.clone();
-  wallMat.map.wrapS = wallMat.map.wrapT = THREE.RepeatWrapping;
-  wallMat.map.needsUpdate = true;
-  const wall = new THREE.Mesh(wallGeo, wallMat);
+  const wall = new THREE.Mesh(wallGeo, mats.wall);
   wall.position.y = WALL_H / 2;
   group.add(wall);
   const wainscot = new THREE.Mesh(new THREE.CylinderGeometry(R - 0.012, R - 0.012, 1.0, seg, 1, true), mats.woodBack);
@@ -406,26 +413,16 @@ export function createHall({ minX, maxX, minZ, maxZ, kiosk }) {
   const d = maxZ - minZ;
   const cx = (minX + maxX) / 2;
   const cz = (minZ + maxZ) / 2;
-  const floorMat = mats.floor.clone();
-  floorMat.map = mats.plankTex.clone();
-  floorMat.map.wrapS = floorMat.map.wrapT = THREE.RepeatWrapping;
-  floorMat.map.repeat.set(w / 1.4, d / 1.4);
-  floorMat.map.needsUpdate = true;
-  const floor = new THREE.Mesh(new THREE.PlaneGeometry(w, d), floorMat);
+  const floor = new THREE.Mesh(tileUVs(new THREE.PlaneGeometry(w, d), w / 1.4, d / 1.4), mats.floor);
   floor.rotation.x = -Math.PI / 2;
   floor.position.set(cx, 0, cz);
   floor.name = 'floor';
   group.add(floor);
-  const wallMat = mats.wallFront.clone();
-  wallMat.map = mats.plasterTex.clone();
-  wallMat.map.wrapS = wallMat.map.wrapT = THREE.RepeatWrapping;
-  wallMat.map.repeat.set(Math.max(w, d) / 2.2, WALL_H / 2.2);
-  wallMat.map.needsUpdate = true;
   const walls = [
     [w, cx, maxZ, Math.PI], [w, cx, minZ, 0], [d, minX, cz, Math.PI / 2], [d, maxX, cz, -Math.PI / 2],
   ];
   for (const [len, x, z, rot] of walls) {
-    const m = new THREE.Mesh(new THREE.PlaneGeometry(len, WALL_H), wallMat);
+    const m = new THREE.Mesh(tileUVs(new THREE.PlaneGeometry(len, WALL_H), len / 2.2, WALL_H / 2.2), mats.wallFront);
     m.position.set(x, WALL_H / 2, z);
     m.rotation.y = rot;
     group.add(m);
@@ -451,8 +448,15 @@ export function createHall({ minX, maxX, minZ, maxZ, kiosk }) {
   commonLights(group);
   const lights = [];
   const n = Math.max(1, Math.min(3, Math.round(d / 8)));
-  // Only the first chandelier casts light: every point light costs per-pixel shading on a Quest.
-  for (let i = 0; i < n; i++) lights.push(makeChandelier(group, cx, WALL_H - 0.6, maxZ - (i + 0.5) * (d / n), 0.6, { light: i === 0 }));
+  // Exactly two point lights in every room shape (here: the first two chandeliers, or one plus a
+  // lamp-like fill): each light costs per-pixel shading on a Quest, and a different light count
+  // would make three.js recompile every shader when switching rooms.
+  for (let i = 0; i < n; i++) lights.push(makeChandelier(group, cx, WALL_H - 0.6, maxZ - (i + 0.5) * (d / n), 0.6, { light: i < 2 }));
+  if (n === 1) {
+    const fill = new THREE.PointLight(0xffb468, 2.2, 5, 1.6);
+    fill.position.set(kiosk ? kiosk.position.x : cx, 1.6, kiosk ? kiosk.position.z : maxZ - 2);
+    group.add(fill);
+  }
   const colliders = [];
   if (kiosk) colliders.push(makePedestal(group, kiosk.position.x, kiosk.position.z, kiosk.yaw));
   const dust = makeDust(group, cx, maxZ - 3, 3, WALL_H - 1);

@@ -12,9 +12,9 @@ vrlbry is a WebXR virtual library. A Node.js server scans a directory (default: 
 
 ```bash
 npm install                      # deps: three, htmlparser2, selfsigned; dev: iwer
-npm start                        # = node server/index.js (serves ZIMs in the cwd on :8080)
+npm start                        # = node server/index.js (serves ZIMs in the cwd over HTTP on :8080)
 node server/index.js --dir <path> --port 8080 --host 0.0.0.0
-npm run start:https              # self-signed cert, cached in .cert/ (needed for a headset over LAN)
+npm run start:https              # HTTP :8080 + HTTPS :8443 in one process (self-signed cert in .cert/; needed for a headset over LAN)
 node server/index.js --no-watch  # do not rescan the folder while running
 npm test                         # = node --test "test/*.test.js" (a bare directory arg does not work)
 node --test test/zim.test.js     # one test file
@@ -23,7 +23,9 @@ node --test --test-name-pattern="redirect" test/zim.test.js   # tests matching a
 
 - Node **≥ 22.15** is required, because the server uses the built-in `zlib.zstdDecompress`.
 - There is no build step, bundler, linter or TypeScript. The client is plain ES modules in `public/`. An import map resolves `three` → `/vendor/three/build/three.module.js` and `three/addons/` → `/vendor/three/examples/jsm/`. The server maps `/vendor/three/*` to `node_modules/three/*` and `/vendor/iwer/*` to `node_modules/iwer/build/*`.
-- WebXR needs a secure context. `http://localhost` works. A headset on the LAN needs `--https`, or `adb reverse tcp:8080 tcp:8080`.
+- Conventional ports: **HTTP 8080, HTTPS 8443** (`--port`, `--https-port`).
+- WebXR needs a secure context. `http://localhost` works. A headset on the LAN needs `https://<ip>:8443`, or `adb reverse tcp:8080 tcp:8080`.
+- The embedded browser pane rejects the self-signed certificate, so use the HTTP port (8080) for browser testing.
 - Dev pages: `/reader-test.html` is a 2D reader built on the page renderer, and `/dev/world-test.html` shows the room with an orbit camera.
 - **Scripted testing:**
   - Append `?xr=emulate` to the app URL to install Meta's IWER WebXR emulator (a virtual Quest 3). It is installed with `forceInstall`, because Chromium exposes a native `navigator.xr` even without a headset.
@@ -72,7 +74,7 @@ client: api.js ─► rooms.js (what to shelve) ─► World/Bookshelves ─► 
   - Durable positions (saved reading position, staying on the same text after a font change) use the block anchor `{c, b}` via `anchorOf` / `refForAnchor`.
 - **`world/`**: `World` builds the room and `Bookshelves`.
   - Each bookcase's books are one merged `BufferGeometry` whose spines use a per-bookcase canvas atlas, which keeps draw calls within the Quest budget (≤ ~150).
-  - **Quest 3 is the performance target; the development PC is far faster**, so anything that stutters on the PC is unusable on the headset. Atlases have three levels (`LEVELS` in `shelves.js`): low is drawn at build time, mid for every bookcase nearest-first, and high only for at most 6 bookcases within 4.5 m, with 1.5 m of hysteresis. Painting is time-sliced at ~3 ms per frame (`atlasPainter`), and dropping a level is a texture swap.
+  - **Quest 3 is the performance target; the development PC is far faster**, so anything that stutters on the PC is unusable on the headset. Atlases have three levels (`LEVELS` in `shelves.js`): low is drawn at build time, mid for every bookcase nearest-first, and high only for at most 6 bookcases within 4.5 m, with 1.5 m of hysteresis. A room of 6 or fewer bookcases is all sharp regardless of distance. Painting is time-sliced at ~3 ms per frame (`atlasPainter`), and dropping a level is a texture swap.
   - Never paint a whole atlas, or anything else heavy, in a single frame. Never use canvas `shadowBlur` on spine text.
   - More than 22 bookcases switches the rotunda to a hall with aisles.
   - Picking uses per-book bounding boxes. `hideBook` / `showBook` collapse or restore that book's vertices.

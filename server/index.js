@@ -2,8 +2,8 @@
 /**
  * vrlbry CLI (SPEC §3.7): scans a directory for ZIM files and serves the library over HTTP(S).
  *
- *   node server/index.js [--dir <path>] [--port 8080] [--host 0.0.0.0] [--https]
- *                        [--cert <file> --key <file>] [--max-generic 2000] [--no-watch] [--quiet]
+ *   node server/index.js [--dir <path>] [--port 8080] [--host 0.0.0.0] [--https] [--https-port 8443]
+ *                        [--no-http] [--cert <file> --key <file>] [--max-generic 2000] [--no-watch] [--quiet]
  */
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -29,11 +29,13 @@ Serves the books of every *.zim file in a directory as a WebXR library.
 
 Options:
   --dir <path>         directory with .zim files (default: current directory)
-  --port <n>           port (default 8080; if busy, the next 10 ports are tried)
+  --port <n>           HTTP port (default 8080; if busy, the next 10 ports are tried)
   --host <addr>        address to listen on (default: all interfaces)
-  --https              serve HTTPS (needed by a VR headset on the LAN); uses --cert/--key,
-                       else a self-signed certificate cached in .cert/
-  --cert <file>        PEM certificate for --https
+  --https              also serve HTTPS (needed by a VR headset on the LAN) on --https-port;
+                       uses --cert/--key, else a self-signed certificate cached in .cert/
+  --https-port <n>     HTTPS port (default 8443; implies --https)
+  --no-http            with --https: serve HTTPS only
+  --cert <file>        PEM certificate for --https (implies --https)
   --key <file>         PEM private key for --https
   --max-generic <n>    max books listed from a non-Gutenberg ZIM (default 2000)
   --no-watch           do not pick up added/removed .zim files while running
@@ -57,6 +59,8 @@ export function parseCliArgs(argv) {
       port: { type: 'string' },
       host: { type: 'string' },
       https: { type: 'boolean', default: false },
+      'https-port': { type: 'string' },
+      'no-http': { type: 'boolean', default: false },
       cert: { type: 'string' },
       key: { type: 'string' },
       'max-generic': { type: 'string' },
@@ -76,7 +80,9 @@ export function parseCliArgs(argv) {
     dir: path.resolve(values.dir ?? process.cwd()),
     port: values.port === undefined ? 8080 : int('port', values.port, 0, 65535),
     host: values.host || undefined,
-    https: values.https || !!(values.cert || values.key),
+    https: values.https || !!(values.cert || values.key || values['https-port'] !== undefined),
+    httpsPort: values['https-port'] === undefined ? 8443 : int('https-port', values['https-port'], 0, 65535),
+    http: !values['no-http'],
     cert: values.cert ?? null,
     key: values.key ?? null,
     maxGeneric: values['max-generic'] === undefined ? 2000 : int('max-generic', values['max-generic'], 1, 10_000_000),
@@ -85,6 +91,7 @@ export function parseCliArgs(argv) {
     help: values.help,
   };
   if (!!opts.cert !== !!opts.key) throw new Error('--cert and --key must be given together');
+  if (!opts.http && !opts.https) throw new Error('--no-http needs --https (otherwise nothing would be served)');
   return opts;
 }
 
@@ -241,8 +248,9 @@ async function listenWithFallback(server, port, host, log) {
  * @param {(msg: string) => void} [io.out=console.log]
  * @param {(msg: string) => void} [io.err=console.error]
  * @param {boolean} [io.handleSignals=true] install SIGINT/SIGTERM handlers
- * @returns {Promise<{ server: import('node:http').Server, library: Library, port: number,
- *   urls: string[], close: () => Promise<void> } | null>} null after --help
+ * @returns {Promise<{ server, servers, library: Library, port: number, httpPort: number|null,
+ *   httpsPort: number|null, urls: string[], close: () => Promise<void> } | null>} null after --help;
+ *   `port` is the HTTP port (the HTTPS one with --no-http)
  */
 export async function main(argv = process.argv.slice(2), { out = console.log, err = console.error, handleSignals = true } = {}) {
   const opts = parseCliArgs(argv);
@@ -265,29 +273,36 @@ export async function main(argv = process.argv.slice(2), { out = console.log, er
     tls = await loadCertificate({ certFile: opts.cert, keyFile: opts.key, log: info });
     if (tls.generated && tls.cached) info(`Generated a self-signed HTTPS certificate in ${CERT_DIR}`);
   }
-  const server = tls ? https.createServer({ key: tls.key, cert: tls.cert }, app) : http.createServer(app);
-  // Malformed requests and TLS handshake failures (e.g. a browser rejecting the self-signed
-  // certificate) end up here; they must never take the server down.
-  server.on('clientError', (e, socket) => {
-    if (socket.writable && !socket.destroyed) socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n');
-    else socket.destroy();
-  });
-  if (tls) server.on('tlsClientError', () => {});
+  // One library, up to two listeners: plain HTTP (8080) and HTTPS (8443) side by side.
+  const listeners = [];
+  if (opts.http) listeners.push({ scheme: 'http', port: opts.port, server: http.createServer(app) });
+  if (tls) listeners.push({ scheme: 'https', port: opts.httpsPort, server: https.createServer({ key: tls.key, cert: tls.cert }, app) });
+  for (const { server } of listeners) {
+    // Malformed requests and TLS handshake failures (e.g. a browser rejecting the self-signed
+    // certificate) end up here; they must never take the server down.
+    server.on('clientError', (e, socket) => {
+      if (socket.writable && !socket.destroyed) socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n');
+      else socket.destroy();
+    });
+    server.on('tlsClientError', () => {});
+  }
 
-  let port;
   try {
-    port = await listenWithFallback(server, opts.port, opts.host, info);
+    for (const l of listeners) l.port = await listenWithFallback(l.server, l.port, opts.host, info);
   } catch (e) {
+    for (const l of listeners) if (l.server.listening) l.server.close();
     await library.close();
     throw e;
   }
 
-  const scheme = tls ? 'https' : 'http';
   const anyHost = !opts.host || opts.host === '0.0.0.0' || opts.host === '::';
   const hostForUrl = (h) => (h.includes(':') ? `[${h}]` : h);
-  const urls = anyHost ?
+  const urlsOf = ({ scheme, port }) => (anyHost ?
     [`${scheme}://localhost:${port}`, ...localIPv4s().map((ip) => `${scheme}://${ip}:${port}`)] :
-    [`${scheme}://${hostForUrl(opts.host)}:${port}`];
+    [`${scheme}://${hostForUrl(opts.host)}:${port}`]);
+  const urls = listeners.flatMap(urlsOf);
+  const httpL = listeners.find((l) => l.scheme === 'http');
+  const httpsL = listeners.find((l) => l.scheme === 'https');
 
   const libs = library.list();
   if (!opts.quiet) {
@@ -300,20 +315,19 @@ export async function main(argv = process.argv.slice(2), { out = console.log, er
     }
     out('');
     out('Open in a browser:');
-    for (const u of urls) out(`  ${u}`);
+    for (const l of listeners) for (const u of urlsOf(l)) out(`  ${u}`);
     out('');
-    if (tls) {
-      if (tls.generated || !opts.cert) {
-        out('The certificate is self-signed: accept the browser warning once per device.');
-      }
+    if (httpsL) {
+      out(`VR headsets on your network: use an https:// address (WebXR needs a secure page).`);
+      if (tls.generated || !opts.cert) out('The certificate is self-signed: accept the browser warning once per device.');
     } else {
       out(`WebXR needs a secure context: http://localhost works on this machine, but a VR headset on`);
-      out(`your LAN needs HTTPS. Restart with --https, or connect the headset by USB and run`);
-      out(`"adb reverse tcp:${port} tcp:${port}", then open http://localhost:${port} on it.`);
+      out(`your LAN needs HTTPS. Restart with --https (adds https:// on port 8443), or connect the headset`);
+      out(`by USB and run "adb reverse tcp:${httpL.port} tcp:${httpL.port}", then open http://localhost:${httpL.port} on it.`);
     }
     out('Press Ctrl+C to stop.');
   } else {
-    out(`vrlbry listening on ${urls[0]}`);
+    for (const l of listeners) out(`vrlbry listening on ${urlsOf(l)[0]}`);
   }
 
   // New or removed .zim files are picked up while running (clients re-shelve on their own).
@@ -322,12 +336,12 @@ export async function main(argv = process.argv.slice(2), { out = console.log, er
   let closing = null;
   const close = () => {
     closing ??= (async () => {
-      await new Promise((resolve) => {
+      await Promise.all(listeners.map(({ server }) => new Promise((resolve) => {
         server.close(() => resolve());
         server.closeIdleConnections?.();
         // Keep-alive clients (browsers) would hold the server open: cut them after a grace period.
         setTimeout(() => server.closeAllConnections?.(), 1000).unref();
-      });
+      })));
       await library.close();
     })();
     return closing;
@@ -353,7 +367,10 @@ export async function main(argv = process.argv.slice(2), { out = console.log, er
       }
     }
   }
-  return { server, library, port, urls, close };
+  return {
+    server: listeners[0].server, servers: listeners.map((l) => l.server), library,
+    port: (httpL ?? httpsL).port, httpPort: httpL?.port ?? null, httpsPort: httpsL?.port ?? null, urls, close,
+  };
 }
 
 function isMainModule() {

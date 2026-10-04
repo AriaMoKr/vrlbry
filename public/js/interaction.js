@@ -52,6 +52,9 @@ export class Interaction {
     this._grab = null;
     /** Set by main.js: asks the server to rescan its ZIM folder and re-shelves. */
     this.onRescan = null;
+    /** Set by main.js: ends the immersive session. */
+    this.onExitVR = null;
+    this._exitHold = null; // { name, t } while B/Y is held to leave VR
 
     this.tooltip = new Label({ width: 0.56, height: 0.13 });
     this.tooltip.visible = false;
@@ -61,6 +64,15 @@ export class Interaction {
     this._buildInspectPanel();
     this._buildToolbar();
     this._buildToc();
+    this._buildExitRing();
+    this._buildFade();
+    // Compile the shaders of overlays that appear later (fade, exit ring) now, behind the loading
+    // screen: a first-use compile costs ~100 ms, which would freeze the start of the first fade.
+    this._fade.visible = true;
+    this._exitRing.mesh.visible = true;
+    renderer.compile(scene, camera);
+    this._fade.visible = false;
+    this._exitRing.mesh.visible = false;
 
     this._canvases = Array.from({ length: 6 }, () => {
       const c = document.createElement('canvas');
@@ -104,6 +116,9 @@ export class Interaction {
     p.clear();
     p.add({ type: 'text', x: pad, y: 26, w: W - 2 * pad, h: 54, text: 'Catalogue', size: 46, weight: '600', serif: true, color: UI.accent });
     p.add({ id: 'rescan', type: 'button', x: W - pad - 230, y: 24, w: 230, h: 56, label: '⟳ Rescan folder', size: 24, onClick: () => this.onRescan?.() });
+    if (this.controls.presenting) {
+      p.add({ id: 'exit-vr', type: 'button', x: W - pad - 230 - 12 - 170, y: 24, w: 170, h: 56, label: 'Exit VR', size: 24, onClick: () => this.onExitVR?.() });
+    }
     const place = this._place();
     // Rooms exist when there is more than one library, or a library too big to shelve whole.
     const hasRooms = this.libraries.length > 1 || (place && isFaceted(place, this.booksByLib[place.id]));
@@ -407,8 +422,18 @@ export class Interaction {
     c.addEventListener('flick', (e) => this._flick(e.detail));
     c.addEventListener('axis', (e) => this._axis(e.detail));
     c.addEventListener('button', (e) => {
-      if (e.detail.pressed && (e.detail.name === 'b' || e.detail.name === 'y')) this.back();
-      if (e.detail.pressed && e.detail.name === 'a' && this.state === 'inspect') this.read();
+      const { name, pressed } = e.detail;
+      if (name === 'b' || name === 'y') {
+        if (pressed && this.state === 'browse' && this.controls.presenting) {
+          // Nothing to go back from: holding the button leaves VR (released early = cancel).
+          this._exitHold = { name, t: 0 };
+        } else if (pressed) {
+          this.back();
+        } else if (this._exitHold?.name === name) {
+          this._cancelExitHold();
+        }
+      }
+      if (pressed && name === 'a' && this.state === 'inspect') this.read();
     });
     c.addEventListener('key', (e) => {
       if (e.detail.pressed) this._key(e.detail);
@@ -1023,6 +1048,7 @@ export class Interaction {
     this._pendingCatalog = false;
     this.state = 'busy';
     try {
+      await this._fadeTo(1, 0.15);
       const viewer = this.controls.viewerPosition(new THREE.Vector3());
       this._hoveredBook = null;
       this._highlightUntil = 0;
@@ -1032,7 +1058,11 @@ export class Interaction {
       this.placeKiosk();
       if (walk || !this.world.isWalkable(viewer.x, viewer.z)) this.controls.teleportTo(this.world.spawn.position, this.world.spawn.yaw);
       this._fillKiosk();
+      await this._tween(0.08, () => {}); // a few frames in the dark: the heavy first render
+      await this._fadeTo(0, 0.3);
     } finally {
+      this._fade.material.opacity = 0;
+      this._fade.visible = false;
       this.state = 'browse';
     }
   }
@@ -1153,6 +1183,112 @@ export class Interaction {
     this.tooltip.visible = true;
   }
 
+  // ===========================================================================================
+  // Fade to black around rebuilds: the first frame of a new room uploads its geometry and
+  // textures at once (tens of ms even on a fast PC); in a headset that stall must happen in the
+  // dark, or the world judders.
+
+  _buildFade() {
+    const mesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(4, 4),
+      new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0, depthTest: false, depthWrite: false, toneMapped: false }),
+    );
+    mesh.name = 'fade';
+    mesh.position.z = -0.12;
+    mesh.renderOrder = 1000; // over panels, tooltips and the exit ring
+    mesh.visible = false;
+    this.camera.add(mesh);
+    this._fade = mesh;
+  }
+
+  async _fadeTo(target, duration) {
+    const m = this._fade;
+    const from = m.material.opacity;
+    m.visible = true;
+    await this._tween(duration, (t) => { m.material.opacity = from + (target - from) * t; });
+    m.material.opacity = target;
+    m.visible = target > 0;
+  }
+
+  // ===========================================================================================
+  // Leaving VR: kiosk button, or hold B/Y while browsing (a filling ring shows the hold)
+
+  _buildExitRing() {
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 256;
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    const mesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.14, 0.14),
+      new THREE.MeshBasicMaterial({ map: texture, transparent: true, depthTest: false, depthWrite: false, toneMapped: false }),
+    );
+    mesh.name = 'exit-ring';
+    mesh.renderOrder = 40;
+    mesh.position.set(0, -0.06, -0.6); // just below the line of sight, head-locked
+    mesh.visible = false;
+    this.camera.add(mesh);
+    this._exitRing = { mesh, canvas, texture };
+  }
+
+  _drawExitRing(progress) {
+    const { canvas, texture } = this._exitRing;
+    const g = canvas.getContext('2d');
+    const c = canvas.width / 2;
+    g.clearRect(0, 0, canvas.width, canvas.height);
+    g.fillStyle = 'rgba(20,16,12,0.82)';
+    g.beginPath();
+    g.arc(c, c, 120, 0, Math.PI * 2);
+    g.fill();
+    g.lineWidth = 16;
+    g.lineCap = 'round';
+    g.strokeStyle = 'rgba(255,255,255,0.18)';
+    g.beginPath();
+    g.arc(c, c, 100, 0, Math.PI * 2);
+    g.stroke();
+    g.strokeStyle = UI.accent;
+    g.beginPath();
+    g.arc(c, c, 100, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.min(1, progress));
+    g.stroke();
+    g.fillStyle = UI.text;
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.font = `600 40px ${UI.font}`;
+    g.fillText('Exit VR', c, c - 8);
+    g.font = `24px ${UI.font}`;
+    g.fillStyle = UI.muted;
+    g.fillText('keep holding', c, c + 34);
+    texture.needsUpdate = true;
+  }
+
+  static get EXIT_HOLD_SECONDS() { return 1.0; }
+
+  _updateExitHold(dt) {
+    const hold = this._exitHold;
+    if (!hold) return;
+    if (this.state !== 'browse' || !this.controls.presenting) return this._cancelExitHold();
+    hold.t += dt;
+    const p = hold.t / Interaction.EXIT_HOLD_SECONDS;
+    // Show the ring only after a moment, so a quick tap does not flash it.
+    this._exitRing.mesh.visible = hold.t > 0.15;
+    if (this._exitRing.mesh.visible) this._drawExitRing(p);
+    if (p >= 1) {
+      this._cancelExitHold();
+      audio.click();
+      this.onExitVR?.();
+    }
+  }
+
+  _cancelExitHold() {
+    this._exitHold = null;
+    if (this._exitRing) this._exitRing.mesh.visible = false;
+  }
+
+  /** Called by main.js when an immersive session starts or ends. */
+  onPresentingChange() {
+    this._cancelExitHold();
+    this._fillKiosk(); // the Exit VR button only exists in VR
+  }
+
   /** Per frame. */
   update(dt) {
     this._time += dt;
@@ -1170,6 +1306,7 @@ export class Interaction {
       }
     }
     this.book3d?.update(dt);
+    this._updateExitHold(dt);
 
     if (this._grab) {
       const p = this._grab.pointer.object3D;
