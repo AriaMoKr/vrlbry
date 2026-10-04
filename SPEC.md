@@ -649,8 +649,8 @@ export class Book3D {
   (palette of cloth/leather colours by hash), gilt bands, title (vertical, auto-fit, wrapping to
   2 lines for wide spines), author short name near the bottom. Must be legible at ~1.5 m in VR.
   **Quest 3 is the performance target** (development PCs are far faster: anything that stutters
-  there is unusable on the headset). Atlases have three levels: *low* (1/8 scale, coloured bands,
-  drawn instantly by `build()`), *mid* (1/4 scale, small titles, ~1 MB, painted for every
+  there is unusable on the headset). Atlases have three levels: *low* (1/8 scale, coloured bands
+  and the label plate, requested for every bookcase by `build()`), *mid* (1/4 scale, small titles, ~1 MB, painted for every
   bookcase, nearest first) and *high* (full scale, legible titles, ~16 MB) only for at most 6
   bookcases within 4.5 m (horizontal), because spine titles are only legible that close on a
   Quest. A sharp atlas is dropped beyond 4.5 + 1.5 m, or displaced only by a bookcase at least
@@ -660,16 +660,20 @@ export class Book3D {
   64 bookcases (only the all-libraries place) keeps mid atlases for the 64 nearest only, dropping
   one once it is more than 80th nearest. Every frame, the books of bookcases the viewer stands
   behind (behind the bookcase's mid-plane, where its back and side panels hide every book) are
-  not drawn: about half of a hall. Mid and high atlases are painted one at a time in a module
-  worker on an OffscreenCanvas (`atlas-worker.js`), which returns a vertically flipped
+  not drawn: about half of a hall. Atlases are painted in a module worker on an OffscreenCanvas (`atlas-worker.js`), which returns a vertically flipped
   `ImageBitmap` (WebGL ignores `flipY` for bitmaps); the main thread only uploads it. Main-thread
   painting, even time-sliced, caused 15–80 ms frame spikes on a fast PC, because the browser
   defers canvas rasterization until the upload. The worker loads only relative modules
   (`atlas.js`, `textures.js`, `util/books.js`, `config.js`): module workers have no import map,
   so none of them may import three. Where module workers or OffscreenCanvas are missing, or the
   worker fails, painting falls back to the main thread, ~3 ms per frame
-  (`atlasPainter().step()`). The low level is still painted on the main thread by `build()`,
-  behind the fade. Changing level is a texture
+  (`atlasPainter().step()`), and low atlases are painted during `build()`. With the worker,
+  `build()` posts every bookcase's low atlas at once; until one arrives the bookcase shows a
+  shared plain placeholder texture, so the material always has a map and the swap needs no shader
+  recompile. `shelves.ready()` resolves when all low atlases are in, and `World.build` waits for
+  it (at most 3 s) while the room is still hidden behind the fade or the loading screen. Mid and
+  high are painted one at a time after the lows (the worker works in order). Late results for a
+  room that was rebuilt meanwhile are closed and dropped. Changing level is a texture
   swap (low and mid textures are kept). Spine text uses an offset dark copy, never `shadowBlur`
   (it blurs every glyph on the CPU).
 - **Book3D:** cover image texture on the front (cover loaded from `book.cover`; fallback generated

@@ -20,12 +20,13 @@ const PAD = 0.012; // clearance between the side panels and the outermost books
 export const USABLE = W - 2 * SIDE - 2 * PAD;
 const PLATE = { w: 0.42, h: 0.064 }; // label plate on the bookcase (m)
 const Y90 = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2);
-// Spine atlas levels of detail (scale of the full-resolution layout). Low is drawn instantly when a
-// room is built; mid (small but real titles) is painted for every bookcase, nearest first; high
-// (legible titles) only for the few bookcases near enough to read — on a Quest 3 spine titles are
-// legible within ~4 m. Mid and high atlases are painted in a worker (AtlasWorker) where the browser
-// allows, else spread over frames (JOB_BUDGET_MS each), so walking or switching rooms never stalls
-// rendering; dropping a level is just a texture swap.
+// Spine atlas levels of detail (scale of the full-resolution layout). Low (coloured bands and the
+// label plate) is requested for every bookcase when a room is built; mid (small but real titles) is
+// painted for every bookcase, nearest first; high (legible titles) only for the few bookcases near
+// enough to read — on a Quest 3 spine titles are legible within ~4 m. All levels are painted in a
+// worker (AtlasWorker) where the browser allows; otherwise low is painted during build() and mid
+// and high are spread over frames (JOB_BUDGET_MS each), so walking or switching rooms never stalls
+// rendering. Dropping a level is just a texture swap.
 const LEVELS = { low: 0.125, mid: 0.25, high: 1 };
 const HIGH_BUDGET = 6; // sharp atlases kept at once (~16 MB of GPU memory each)
 const HIGH_RANGE = 4.5; // metres (horizontal) within which a bookcase gets a sharp atlas
@@ -36,6 +37,24 @@ const JOB_BUDGET_MS = 3; // canvas painting per frame, when painting on the main
 // out; the rest show the low one.
 const MID_BUDGET = 64;
 const MID_SLACK = 16;
+
+let placeholderTex = null;
+/**
+ * What a bookcase shows until its low atlas arrives from the worker: plain dark cloth. Sharing
+ * one texture (never disposed) keeps the material's map set, so the atlas swaps in without a
+ * shader recompile.
+ */
+function placeholder() {
+  if (!placeholderTex) {
+    const c = document.createElement('canvas');
+    c.width = c.height = 4;
+    const g = c.getContext('2d');
+    g.fillStyle = '#3b2417';
+    g.fillRect(0, 0, 4, 4);
+    placeholderTex = canvasTexture(c, { anisotropy: 1 });
+  }
+  return placeholderTex;
+}
 
 /** Height of the surface books stand on, for shelf row r counted from the top (0 = top row). */
 export function rowSurface(r) {
@@ -267,8 +286,11 @@ class AtlasWorker {
     });
   }
 
+  /** Stops the worker; requests still waiting are rejected (so callers can paint them elsewhere). */
   terminate() {
     this.worker.terminate();
+    this.failed ||= new Error('the atlas worker was stopped');
+    for (const p of this.pending.values()) p.reject(this.failed);
     this.pending.clear();
   }
 }
@@ -290,6 +312,8 @@ export class Bookshelves {
     this._highlight = null;
     this._lodTimer = 0;
     this._job = null; // atlas being painted: { cs, level, painter } on the main thread, { cs, level, done, image } in the worker
+    this._gen = 0; // bumped by every build/dispose: late worker results for an old room are dropped
+    this._lows = Promise.resolve();
     this._ray = new THREE.Ray();
     this._inv = new THREE.Matrix4();
     this._tmp = new THREE.Vector3();
@@ -313,11 +337,7 @@ export class Bookshelves {
       woodParts.push(wood);
 
       const layout = atlasLayout(cs.items);
-      // Low level now (cheap: coloured bands); mid/high are painted progressively by update().
-      const low = atlasPainter(layout, cs.items, cs.label, LEVELS.low);
-      low.step();
-      const tex = canvasTexture(low.canvas, { anisotropy: 1 });
-      const mat = new THREE.MeshLambertMaterial({ map: tex, vertexColors: true });
+      const mat = new THREE.MeshLambertMaterial({ map: placeholder(), vertexColors: true });
       const arr = { pos: [], nrm: [], uv: [], col: [], idx: [] };
       const pageUV = uvRect(layout.page, layout.width, layout.height, 2);
       const records = [];
@@ -368,7 +388,7 @@ export class Bookshelves {
       const original = geo.attributes.position.array.slice();
       this.cases.push({
         index: ci, group: g, mesh, material: mat, layout, items: cs.items, label: cs.label,
-        textures: { low: tex, mid: null, high: null }, records, original, position: cs.position.clone(), yaw: cs.yaw,
+        textures: { low: null, mid: null, high: null }, records, original, position: cs.position.clone(), yaw: cs.yaw,
         box: new THREE.Box3(new THREE.Vector3(-W / 2, 0, -D / 2), new THREE.Vector3(W / 2, H, D / 2 + 0.05)),
         back: new THREE.Box3(new THREE.Vector3(-W / 2, 0, -D / 2), new THREE.Vector3(W / 2, H, -D / 2 + 0.02)),
       });
@@ -381,6 +401,45 @@ export class Bookshelves {
       this.woodMesh.matrixAutoUpdate = false;
       this.group.add(this.woodMesh);
     }
+    const gen = ++this._gen;
+    this._lows = Promise.all(this.cases.map((cs) => this._paintLow(cs, gen)));
+  }
+
+  /**
+   * Resolves once every bookcase of the current room shows its low atlas (immediately when they
+   * were painted on the main thread). World.build waits for it, behind the fade.
+   */
+  ready() {
+    return this._lows;
+  }
+
+  /** A bookcase's low atlas: from the worker, or painted here and now without one. */
+  async _paintLow(cs, gen) {
+    if (this._worker) {
+      try {
+        const image = await this._worker.paint(cs.layout, cs.items, cs.label, LEVELS.low);
+        if (gen !== this._gen) return void image.close?.();
+        cs.textures.low = canvasTexture(image, { anisotropy: 1 });
+        this._applyTexture(cs);
+        return;
+      } catch (err) {
+        if (gen !== this._gen) return;
+        this._workerFailed(err);
+      }
+    }
+    const painter = atlasPainter(cs.layout, cs.items, cs.label, LEVELS.low);
+    painter.step();
+    cs.textures.low = canvasTexture(painter.canvas, { anisotropy: 1 });
+    this._applyTexture(cs);
+  }
+
+  /** Never retries a failing worker: everything is painted on the main thread from then on. */
+  _workerFailed(err) {
+    if (!this._worker) return;
+    console.warn(`vrlbry: atlas worker failed (${err.message}); painting on the main thread`);
+    const worker = this._worker;
+    this._worker = null;
+    worker.terminate?.();
   }
 
   /** Book descriptors in shelf order. */
@@ -600,11 +659,8 @@ export class Bookshelves {
       job.image = image;
       job.done = true;
     }, (err) => {
-      // Never retry a failing worker: paint on the main thread from now on.
-      console.warn(`vrlbry: atlas worker failed (${err.message}); painting on the main thread`);
-      this._worker?.terminate?.();
-      this._worker = null;
-      if (this._job === job) this._job = null;
+      this._workerFailed(err);
+      if (this._job === job) this._job = null; // update() paints it again, on the main thread
     });
   }
 
@@ -624,7 +680,7 @@ export class Bookshelves {
 
   /** Shows the best atlas a bookcase has. */
   _applyTexture(cs) {
-    const t = cs.textures.high || cs.textures.mid || cs.textures.low;
+    const t = cs.textures.high || cs.textures.mid || cs.textures.low || placeholder();
     if (cs.material.map === t) return;
     cs.material.map = t;
     if (cs.highlightMaterial) cs.highlightMaterial.map = t;
@@ -639,6 +695,7 @@ export class Bookshelves {
   dispose() {
     this.setHighlight(null);
     this._job = null;
+    this._gen++;
     for (const cs of this.cases) {
       cs.mesh.geometry.dispose();
       cs.material.dispose();

@@ -189,32 +189,41 @@ describe('atlas worker', () => {
     assert.deepEqual([...seen].map((p) => path.basename(p)).sort(), ['atlas-worker.js', 'atlas.js', 'books.js', 'config.js', 'textures.js']);
   });
 
-  it('paints sharp and mid atlases in the worker, never on the main thread', async () => {
+  it('paints every level in the worker, never on the main thread', async () => {
     const worker = fakeWorker();
     const shelves = shelvesWith(3, { atlasWorker: worker });
     try {
+      // Built: low atlases requested for every bookcase, a placeholder shown meanwhile.
+      assert.deepEqual(worker.scales, [0.125, 0.125, 0.125]);
+      const placeholder = shelves.cases[0].material.map;
+      assert.ok(shelves.cases.every((cs) => cs.material.map === placeholder && !cs.textures.low));
+      await shelves.ready();
+      for (const cs of shelves.cases) {
+        assert.ok(worker.images.includes(cs.textures.low.image), 'low atlas from the worker');
+        assert.equal(cs.material.map, cs.textures.low);
+      }
       for (let i = 0; i < 50 && shelves.lodStats().high < 3; i++) {
         shelves.update(1 / 72, camAt(0, 0));
         assert.equal(shelves._job?.painter, undefined, 'no main-thread painter');
         await turn();
       }
       assert.equal(shelves.lodStats().high, 3);
-      assert.deepEqual(worker.scales, [1, 1, 1]);
+      assert.deepEqual(worker.scales, [0.125, 0.125, 0.125, 1, 1, 1]);
       for (const cs of shelves.cases) assert.ok(worker.images.includes(cs.material.map.image), 'shows the worker bitmap');
     } finally {
       shelves.dispose();
     }
   });
 
-  it('frees a bitmap that arrives after the room was rebuilt', async () => {
+  it('frees bitmaps that arrive after the room was rebuilt', async () => {
     const worker = fakeWorker();
     const shelves = shelvesWith(3, { atlasWorker: worker });
     shelves.update(1 / 72, camAt(0, 0));
-    assert.ok(shelves._job, 'a job is in flight');
+    assert.ok(shelves._job, 'a sharp atlas is in flight too');
     shelves.dispose();
     await turn();
-    assert.equal(worker.images.length, 1);
-    assert.equal(worker.images[0].closed, true);
+    assert.equal(worker.images.length, 4, 'three low, one sharp');
+    assert.ok(worker.images.every((im) => im.closed));
   });
 
   it('falls back to painting on the main thread when the worker fails', async () => {
@@ -226,6 +235,8 @@ describe('atlas worker', () => {
       await turn();
       assert.equal(shelves._worker, null);
       assert.equal(shelves._job, null, 'the failed job is dropped');
+      await shelves.ready();
+      assert.ok(shelves.cases.every((cs) => cs.textures.low && cs.material.map === cs.textures.low), 'low atlases painted here instead');
       run(shelves, camAt(0, 0), 72 * 10);
       assert.equal(shelves.lodStats().high, 3, 'painted on the main thread instead');
     } finally {

@@ -74,6 +74,9 @@ export class World {
     this._makeSigns(cases);
     if (!n) this._emptySign();
     this.group.updateMatrixWorld(true);
+    // The low atlases come from a worker: wait for them (callers keep the room hidden meanwhile),
+    // but never hang the build on it.
+    await Promise.race([this.shelves.ready(), new Promise((r) => setTimeout(r, 3000))]);
   }
 
   _layoutRotunda(cases) {
