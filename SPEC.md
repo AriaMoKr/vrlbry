@@ -748,18 +748,29 @@ States: `browse` → `inspect` → `read` (and back).
     `shelves.locate` and highlights it for 4 s), "Surprise me" (random book), "Recently read"
     list (opens directly into read), settings toggles (sound, smooth move).
   - *Rooms*: one button per library (with its book count, or indexing progress), and for a
-    library browsed by rooms its genre buttons with counts and a title-letter grid. Picking one
-    rebuilds the hall and moves the viewer to its spawn point.
+    library browsed by rooms the current room ("Now: Poetry, titles starting with A · 39 works")
+    with a "✕ Clear filters" button, genre buttons and a title-letter grid. Genre and letter are
+    independent toggles: tapping one sets or swaps that filter, tapping the active one removes
+    it, and the other filter is kept. Counts show what the room would hold with that choice
+    (a genre's count respects the current letter and vice versa); choices that would give an
+    empty room are disabled.
+  - Rebuilding from the kiosk (library, filters, sort) never moves the viewer: they keep their
+    pose relative to the kiosk (`controls.followFrame`), which itself moves only when the room
+    changes shape (rotunda ↔ hall, or a different rotunda radius). Only if that spot is no longer
+    walkable do they go to the spawn point.
 - **Rooms** (`rooms.js`): the hall shows one *place* at a time — each library is its own room
   (`settings.place`, default the first library with books); `collectionsFor()` returns that single
   collection. A library is further browsed by rooms when `kind === 'wikisource'` or it has more
-  than 3,000 books. It then shelves one room at a time — a genre, or all works whose title
-  starts with a letter — sorted by the current sort and capped at `ROOM_CAP` = 3,000 books
-  (the section sign says "(first 3,000)"). The default room is Novels if present, else the
-  largest genre that fits. The current room per library is saved in `settings.rooms`. Ordinary
-  libraries are shelved whole. Search results and "Recently read" entries that are not on the
-  shelves first switch to the book's place and room (`placeFor` / `roomFor`: its genre, or its
-  title letter when the genre is over the cap); every loaded book carries its `libId` for this.
+  than 3,000 books. It then shelves one room at a time, `{ genre, letter }` (each a string or
+  null): the works of that genre whose title starts with that letter, either filter alone, or —
+  both null — all works. A room is sorted by the current sort and capped at `ROOM_CAP` = 3,000
+  books (the section sign says "(first 3,000)"). The default room is Novels if present, else the
+  largest genre that fits. The current room per library is saved in `settings.rooms`; rooms
+  saved in the earlier `{ type: 'genre' | 'letter', value }` shape are converted (`normRoom`).
+  Ordinary libraries are shelved whole. Search results and "Recently read" entries that are not
+  on the shelves first switch to the book's place and room (`placeFor` / `roomFor`: its genre,
+  narrowed to its title letter when the genre is over the cap); every loaded book carries its
+  `libId` for this.
 - DOM overlay (non-VR): see `ui/overlay.js` — title, library cards (with indexing progress), a
   ⟳ rescan button, search box (filters by title / author across *all* books of all libraries;
   picking a result = switch room if needed, teleport to it and select it), Enter VR button

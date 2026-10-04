@@ -65,10 +65,13 @@ two minutes for the 8.6 GB English one); the library card shows the progress, an
 when it is done. The index is cached in `.cache/`, so later starts are instant.
 
 Each library is its own **room**: the hall shows one collection at a time, and the **Rooms** tab of
-the catalogue stand switches between them. A library as large as Wikisource is split further,
-into rooms of one genre (Novels, Poetry, Drama, History & biography, Court decisions, …) or of all
-works whose title starts with a letter, up to 3,000 books each. Search still covers every book of
-every library: picking one that is not on the shelves takes you to its room.
+the catalogue stand switches between them. A library as large as Wikisource is narrowed down with
+two filters that can be used together or alone: a genre (Novels, Poetry, Drama, History &
+biography, Court decisions, …) and the letter titles start with — say, poems starting with A.
+Tap a filter again to remove it; with both removed you get the whole library. Up to 3,000 books
+are shelved at a time. You stay where you are while the shelves change around you. Search still
+covers every book of every library: picking one that is not on the shelves takes you to its
+room.
 
 ## Using a VR headset
 
@@ -99,7 +102,7 @@ Then press **Enter VR**.
 
 The catalogue stand next to where you start lets you re-shelve the books by title, author or
 popularity, jump to a letter, pick a book at random ("Surprise me"), reopen recently read books,
-choose a room of a large library, and rescan the folder. The search box (desktop and phone) finds
+filter a large library by genre and title letter, and rescan the folder. The search box (desktop and phone) finds
 any book by title or author and takes you to it. Your reading position, text size, theme and
 rooms are remembered in the browser.
 

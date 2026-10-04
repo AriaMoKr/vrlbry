@@ -9,7 +9,7 @@ import { audio } from './audio.js';
 import { load, save } from './util/storage.js';
 import { letterOf, SORT_MODES } from './util/books.js';
 import { PAGE_PX, READ } from './config.js';
-import { collectionsFor, currentPlace, facetsOf, isFaceted, placeFor, roomLabel, sameRoom, ROOM_CAP } from './rooms.js';
+import { collectionsFor, currentPlace, facetsOf, isFaceted, normRoom, placeFor, roomLabel, sameRoom, ROOM_CAP } from './rooms.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 const THEME_ORDER = ['paper', 'sepia', 'night'];
@@ -237,11 +237,25 @@ export class Interaction {
       p.add({ type: 'text', x: pad, y, w: W - 2 * pad, h: 90, text: `${place.title} is shelved whole in this room.`, size: 26, color: UI.muted, maxLines: 2 });
       return;
     }
-    // …and a large library is split into rooms by genre or title letter.
-    const room = this.settings.rooms?.[place.id];
-    p.add({ type: 'text', x: pad, y, w: W - 2 * pad, h: 34, text: `${place.title} rooms · now: ${roomLabel(room)}`, size: 24, color: UI.muted, maxLines: 1 });
-    y += 40;
-    const { genres, letters } = facetsOf(books);
+    // …and a large library is browsed through two filters, a genre and a title letter, each
+    // switched on, swapped or (tapped again) off independently.
+    const room = normRoom(this.settings.rooms?.[place.id]) || { genre: null, letter: null };
+    const { genres, letters } = facetsOf(books, room);
+    const total = genres.reduce((n, g) => n + (!room.genre || g.name === room.genre ? g.count : 0), 0);
+    const filtered = !!(room.genre || room.letter);
+    p.add({
+      type: 'text', x: pad, y: y + 6, w: W - 2 * pad - (filtered ? 230 : 0), h: 34, size: 24, color: UI.text, maxLines: 1,
+      text: `Now: ${roomLabel(room)} · ${total.toLocaleString()} works${total > ROOM_CAP ? ` (first ${ROOM_CAP.toLocaleString()})` : ''}`,
+    });
+    if (filtered) {
+      p.add({
+        id: 'room-clear', type: 'button', x: W - pad - 220, y, w: 220, h: 46, label: '✕ Clear filters', size: 21,
+        onClick: () => this.setRoom(place.id, { genre: null, letter: null }),
+      });
+    }
+    y += 54;
+    p.add({ type: 'text', x: pad, y, w: W - 2 * pad, h: 30, text: 'Genre · tap again to remove', size: 21, color: UI.muted, maxLines: 1 });
+    y += 34;
     const cols = 3;
     const gw = (W - 2 * pad - (cols - 1) * 10) / cols;
     const rowsLeft = Math.max(2, Math.floor((p.h - y - 150) / 54));
@@ -249,15 +263,16 @@ export class Interaction {
     shown.forEach((g, i) => {
       const r = Math.floor(i / cols);
       const c = i % cols;
+      const active = room.genre === g.name;
       p.add({
         id: `room-g-${i}`, type: 'button', x: pad + c * (gw + 10), y: y + r * 54, w: gw, h: 48,
         label: `${g.name} · ${g.count > 999 ? (g.count / 1000).toFixed(1) + 'k' : g.count}`, size: 21,
-        active: sameRoom(room, { type: 'genre', value: g.name }),
-        onClick: () => this.setRoom(place.id, { type: 'genre', value: g.name }),
+        active, disabled: !active && !g.count,
+        onClick: () => this.toggleFilter(place.id, 'genre', g.name),
       });
     });
     y += Math.ceil(shown.length / cols) * 54 + 8;
-    p.add({ type: 'text', x: pad, y, w: W - 2 * pad, h: 30, text: `Or titles starting with (rooms hold up to ${ROOM_CAP.toLocaleString()})`, size: 21, color: UI.muted, maxLines: 1 });
+    p.add({ type: 'text', x: pad, y, w: W - 2 * pad, h: 30, text: `Title starts with · up to ${ROOM_CAP.toLocaleString()} works are shelved`, size: 21, color: UI.muted, maxLines: 1 });
     y += 34;
     const keys = ['#', ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'];
     const counts = new Map(letters.map((l) => [l.letter, l.count]));
@@ -266,10 +281,11 @@ export class Interaction {
     keys.forEach((key, i) => {
       const r = Math.floor(i / lc);
       const c = i % lc;
+      const active = room.letter === key;
       p.add({
         id: `room-l-${key}`, type: 'button', x: pad + c * (kw + 6), y: y + r * 52, w: kw, h: 46, label: key, size: 22,
-        disabled: !counts.get(key), active: sameRoom(room, { type: 'letter', value: key }),
-        onClick: () => this.setRoom(place.id, { type: 'letter', value: key }),
+        active, disabled: !active && !counts.get(key),
+        onClick: () => this.toggleFilter(place.id, 'letter', key),
       });
     });
   }
@@ -281,11 +297,12 @@ export class Interaction {
   }
 
   /**
-   * Shows another library (and, for a large one, a given room), then walks to its shelves.
+   * Shows another library (and, for a large one, a given room). The viewer stays where they are
+   * (relative to the kiosk, see _rebuildWorld).
    * @param {string} libId
-   * @param {{type: string, value: string}|null} [room]
+   * @param {{genre: string|null, letter: string|null}|null} [room]
    */
-  async setPlace(libId, room = null, { walk = true } = {}) {
+  async setPlace(libId, room = null) {
     if (this.state !== 'browse') return;
     this.settings.rooms ||= {};
     const same = this.settings.place === libId && (!room || sameRoom(this.settings.rooms[libId], room));
@@ -297,12 +314,22 @@ export class Interaction {
     const label = room ? `${lib?.title ?? ''}: ${roomLabel(room)}` : lib?.title ?? '';
     this.overlay?.showToast(`Opening ${label}…`, 'info', 2500);
     await new Promise((r) => setTimeout(r, 30)); // let the toast show before the rebuild
-    await this._rebuildWorld({ walk });
+    await this._rebuildWorld();
   }
 
-  /** Shelves another room of a large library (and goes there). */
-  setRoom(libId, room, opts) {
-    return this.setPlace(libId, room, opts);
+  /** Shelves another room of a large library. */
+  setRoom(libId, room) {
+    return this.setPlace(libId, room);
+  }
+
+  /**
+   * Switches one filter ('genre' or 'letter') of a large library's room to `value`, or off when
+   * it already has that value; the other filter is kept.
+   */
+  toggleFilter(libId, key, value) {
+    const room = normRoom(this.settings.rooms?.[libId]) || { genre: null, letter: null };
+    room[key] = room[key] === value ? null : value;
+    return this.setRoom(libId, room);
   }
 
   /** Makes sure a book is on the shelves, switching library / room if needed. */
@@ -310,7 +337,7 @@ export class Interaction {
     if (this.world.shelves.locate(book)) return true;
     const where = placeFor(book, this.libraries, this.booksByLib);
     if (!where) return false;
-    await this.setPlace(where.libId, where.room, { walk: false });
+    await this.setPlace(where.libId, where.room);
     return !!this.world.shelves.locate(book);
   }
 
@@ -1040,23 +1067,29 @@ export class Interaction {
   }
 
   /**
-   * Rebuilds the shelves for the current place/room/sort.
-   * @param {{ walk?: boolean }} [opts] walk: go to the room's spawn point (a new room); otherwise
-   *   stay where we are if that spot is still walkable
+   * Rebuilds the shelves for the current place/room/sort. The viewer keeps their place relative
+   * to the kiosk: that is where they usually stand when choosing a room or sort, and the kiosk
+   * itself moves when the room changes shape (it stays put for most changes, and so do they).
+   * Only when that spot ends up inside a bookcase or outside the walls do they go to the spawn
+   * point.
    */
-  async _rebuildWorld({ walk = false } = {}) {
+  async _rebuildWorld() {
     this._pendingCatalog = false;
     this.state = 'busy';
     try {
       await this._fadeTo(1, 0.15);
-      const viewer = this.controls.viewerPosition(new THREE.Vector3());
+      const kiosk = { position: this.world.kiosk.position.clone(), yaw: this.world.kiosk.yaw };
       this._hoveredBook = null;
       this._highlightUntil = 0;
       this.tooltip.visible = false;
       const collections = collectionsFor(this.libraries, this.booksByLib, this.settings);
       await this.world.build(collections, { sort: this.settings.sort });
       this.placeKiosk();
-      if (walk || !this.world.isWalkable(viewer.x, viewer.z)) this.controls.teleportTo(this.world.spawn.position, this.world.spawn.yaw);
+      const to = this.world.kiosk;
+      const viewer = this.controls.viewerPosition(new THREE.Vector3())
+        .sub(kiosk.position).applyAxisAngle(UP, to.yaw - kiosk.yaw).add(to.position);
+      if (this.world.isWalkable(viewer.x, viewer.z)) this.controls.followFrame(kiosk, to);
+      else this.controls.teleportTo(this.world.spawn.position, this.world.spawn.yaw);
       this._fillKiosk();
       await this._tween(0.08, () => {}); // a few frames in the dark: the heavy first render
       await this._fadeTo(0, 0.3);

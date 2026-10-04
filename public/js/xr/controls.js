@@ -20,6 +20,7 @@ const GRAVITY = 9.8;
 const _v = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 const _q = new THREE.Quaternion();
+const _up = new THREE.Vector3(0, 1, 0);
 
 function makePointerVisual() {
   const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1)]);
@@ -352,6 +353,22 @@ export class Controls extends EventTarget {
     this.rig.position.z += position.z - viewer.z;
     this.rig.updateMatrixWorld(true);
     this._emit('teleport', { position: position.clone() });
+  }
+
+  /**
+   * Moves the viewer rigidly along with a reference frame that went from `from` to `to`
+   * ({ position, yaw }; e.g. the kiosk after a rebuild), so they keep their place relative to it.
+   * Unlike teleportTo this never counters the head's own motion, so it is safe in XR at any time.
+   */
+  followFrame(from, to) {
+    const turn = to.yaw - from.yaw;
+    _v.set(this.rig.position.x - from.position.x, 0, this.rig.position.z - from.position.z)
+      .applyAxisAngle(_up, turn);
+    this.rig.position.x = to.position.x + _v.x;
+    this.rig.position.z = to.position.z + _v.z;
+    this.rig.rotation.y += turn;
+    if (!this.presenting) this.yaw = this.rig.rotation.y;
+    this.rig.updateMatrixWorld(true);
   }
 
   _rotateAroundViewer(angle) {

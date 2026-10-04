@@ -1,7 +1,10 @@
 // Rooms: the library hall shows one collection at a time. Each library is its own room (its
-// "place"); very large libraries (Wikisource) are further split into rooms of one genre or of the
-// titles starting with a letter, because 18,000 works are far too many to draw on a Quest. The
-// visitor picks the room at the kiosk. Pure helpers shared by main.js and interaction.js.
+// "place"); very large libraries (Wikisource) are browsed through filters instead — a genre, a
+// title letter, both ("Poetry starting with A") or neither — because 18,000 works are far too many
+// to draw on a Quest. The visitor picks them at the kiosk. Pure helpers shared by main.js and
+// interaction.js.
+//
+// A room of a large library is `{ genre: string|null, letter: string|null }`.
 
 import { letterOf, sortBooks } from './util/books.js';
 
@@ -15,27 +18,44 @@ export function isFaceted(library, books) {
   return library.kind === 'wikisource' || (books?.length ?? 0) > FACET_MIN;
 }
 
-/** Genre and title-letter counts of a library's books. */
-export function facetsOf(books) {
+const genreOf = (b) => b.genre || b.shelf || 'Other works';
+
+/**
+ * A room in the current shape. Settings saved before the filters could be combined hold
+ * `{ type: 'genre' | 'letter', value }`.
+ */
+export function normRoom(room) {
+  if (!room) return null;
+  if (room.type === 'genre') return { genre: room.value, letter: null };
+  if (room.type === 'letter') return { genre: null, letter: room.value };
+  return { genre: room.genre ?? null, letter: room.letter ?? null };
+}
+
+/**
+ * Genre and title-letter counts of a library's books, genres largest first. Given the current
+ * room, each count is what the room would hold with that filter chosen and the other one kept: a
+ * genre counts only books with the room's letter, a letter only books of the room's genre.
+ */
+export function facetsOf(books, room = null) {
   const genres = new Map();
   const letters = new Map();
   for (const b of books) {
-    const g = b.genre || b.shelf || 'Other works';
-    genres.set(g, (genres.get(g) || 0) + 1);
+    const g = genreOf(b);
     const l = letterOf(b, 'title');
-    letters.set(l, (letters.get(l) || 0) + 1);
+    if (!genres.has(g)) genres.set(g, { name: g, count: 0, total: 0 });
+    if (!letters.has(l)) letters.set(l, { letter: l, count: 0 });
+    const ge = genres.get(g);
+    ge.total++;
+    if (!room?.letter || l === room.letter) ge.count++;
+    if (!room?.genre || g === room.genre) letters.get(l).count++;
   }
-  return {
-    genres: [...genres].sort((a, b) => b[1] - a[1]).map(([name, count]) => ({ name, count })),
-    letters: [...letters].map(([letter, count]) => ({ letter, count })),
-  };
+  return { genres: [...genres.values()].sort((a, b) => b.total - a.total), letters: [...letters.values()] };
 }
 
-/** Whether a book belongs to a room. */
+/** Whether a book belongs to a room (every filter that is set must match). */
 export function inRoom(book, room) {
   if (!room) return true;
-  if (room.type === 'letter') return letterOf(book, 'title') === room.value;
-  return (book.genre || book.shelf || 'Other works') === room.value;
+  return (!room.genre || genreOf(book) === room.genre) && (!room.letter || letterOf(book, 'title') === room.letter);
 }
 
 /** A sensible first room: Novels if there are any, else the largest genre that fits a room. */
@@ -44,24 +64,27 @@ export function defaultRoom(books) {
   if (!genres.length) return null;
   const novels = genres.find((g) => g.name === 'Novels');
   const pick = novels || genres.find((g) => g.count <= ROOM_CAP && g.name !== 'Other works') || genres[0];
-  return { type: 'genre', value: pick.name };
+  return { genre: pick.name, letter: null };
 }
 
-/** The room that shows a given book: its genre, or its title letter when the genre is too big. */
+/** The room that shows a given book: its genre, narrowed to its title letter when the genre is too big. */
 export function roomFor(book, books) {
-  const genre = book.genre || book.shelf || 'Other works';
-  const count = books.reduce((n, b) => n + ((b.genre || b.shelf || 'Other works') === genre ? 1 : 0), 0);
-  return count <= ROOM_CAP ? { type: 'genre', value: genre } : { type: 'letter', value: letterOf(book, 'title') };
+  const genre = genreOf(book);
+  const count = books.reduce((n, b) => n + (genreOf(b) === genre ? 1 : 0), 0);
+  return { genre, letter: count <= ROOM_CAP ? null : letterOf(book, 'title') };
 }
 
 /** Human label of a room. */
 export function roomLabel(room) {
-  if (!room) return 'All books';
-  return room.type === 'letter' ? `Titles starting with ${room.value}` : room.value;
+  if (!room?.genre && !room?.letter) return 'All books';
+  if (!room.letter) return room.genre;
+  return room.genre ? `${room.genre}, titles starting with ${room.letter}` : `Titles starting with ${room.letter}`;
 }
 
 export function sameRoom(a, b) {
-  return !!a && !!b && a.type === b.type && a.value === b.value;
+  const x = normRoom(a);
+  const y = normRoom(b);
+  return !!x && !!y && x.genre === y.genre && x.letter === y.letter;
 }
 
 /**
@@ -107,7 +130,7 @@ export function placeFor(book, libraries, booksByLib) {
  * ones (sorted and capped).
  * @param {object[]} libraries
  * @param {Record<string, object[]>} booksByLib
- * @param {Record<string, {type: string, value: string}>} rooms current room per faceted library (mutated: defaults filled in)
+ * @param {Record<string, {genre: string|null, letter: string|null}>} rooms current room per faceted library (mutated: defaults filled in, old shapes converted)
  * @param {string} sort
  * @returns {Array<{ library, books, room, total, capped }>}
  */
@@ -115,11 +138,9 @@ export function shelfCollections(libraries, booksByLib, rooms, sort) {
   return libraries.map((library) => {
     const all = booksByLib[library.id] || [];
     if (!isFaceted(library, all)) return { library, books: all, room: null, total: all.length, capped: false };
-    let room = rooms[library.id];
-    if (!room || !all.some((b) => inRoom(b, room))) {
-      room = defaultRoom(all);
-      if (room) rooms[library.id] = room;
-    }
+    let room = normRoom(rooms[library.id]);
+    if (!room || !all.some((b) => inRoom(b, room))) room = defaultRoom(all);
+    if (room) rooms[library.id] = room;
     const matching = room ? sortBooks(all.filter((b) => inRoom(b, room)), sort) : [];
     return {
       library, room, total: matching.length, capped: matching.length > ROOM_CAP,
