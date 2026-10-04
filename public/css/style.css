@@ -15,6 +15,8 @@
 }
 
 * { box-sizing: border-box; }
+/* Author `display` rules (e.g. .ov-loading's flex) would otherwise override the hidden attribute. */
+[hidden] { display: none !important; }
 html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--text); font: 15px/1.45 var(--font); }
 #app, #app canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
 button { font: inherit; color: inherit; cursor: pointer; }
@@ -22,7 +24,9 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .noscript { padding: 2rem; text-align: center; }
 
 #overlay { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
-#overlay > * { pointer-events: auto; }
+/* Zero specificity, so class rules like `.ov-loading.done { pointer-events: none }` can win:
+   an ID selector here once left the faded-out loading screen swallowing every click. */
+:where(#overlay) > * { pointer-events: auto; }
 #overlay.ov-hidden > :not(.ov-toasts) { display: none !important; }
 #overlay .ov-card, #overlay .ov-search, #overlay .ov-hint, #overlay .ov-bottom { transition: opacity .35s ease; }
 #overlay.ov-reading .ov-card, #overlay.ov-reading .ov-search, #overlay.ov-reading .ov-hint,
