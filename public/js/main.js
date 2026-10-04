@@ -1,7 +1,7 @@
 // Bootstrap (SPEC §5.7): renderer, camera rig, XR session, loading, frame loop.
 
 import * as THREE from 'three';
-import { getLibraries, getBooks } from './api.js';
+import { getCatalog, getBooks, rescan as requestRescan } from './api.js';
 import { World } from './world/world.js';
 import { Controls } from './xr/controls.js';
 import { Interaction, DEFAULT_SETTINGS } from './interaction.js';
@@ -9,6 +9,7 @@ import { Overlay } from './ui/overlay.js';
 import { audio } from './audio.js';
 import { load } from './util/storage.js';
 import { PLAYER } from './config.js';
+import { collectionsFor } from './rooms.js';
 
 const params = new URLSearchParams(location.search);
 const overlay = new Overlay({ root: document.getElementById('overlay') });
@@ -59,8 +60,10 @@ async function start() {
 
   // Catalogue.
   overlay.setLoading('Reading the catalogue…', 0.08);
-  const libraries = await getLibraries();
-  const booksByLib = {};
+  const catalog = await getCatalog();
+  let generation = catalog.generation;
+  let libraries = catalog.libraries;
+  let booksByLib = {};
   let done = 0;
   await Promise.all(libraries.map(async (lib) => {
     booksByLib[lib.id] = await getBooks(lib.id);
@@ -73,7 +76,7 @@ async function start() {
   overlay.setLoading('Shelving the books…', 0.55);
   await new Promise((r) => setTimeout(r, 0)); // let the overlay paint before the heavy build
   const world = new World({ renderer, scene });
-  await world.build(libraries.map((library) => ({ library, books: booksByLib[library.id] })), { sort: settings.sort });
+  await world.build(collectionsFor(libraries, booksByLib, settings), { sort: settings.sort });
 
   const controls = new Controls({ renderer, camera, rig, scene, world, domElement: renderer.domElement });
   controls.smoothMove = settings.smoothMove;
@@ -107,6 +110,65 @@ async function start() {
   });
   overlay.onEnterVR(enterVR);
   overlay.onSearchPick((book) => interaction.searchPick(book));
+
+  // Folder rescans: the server bumps `generation` when ZIM files are added or removed; poll it and
+  // re-shelve (the rebuild waits until no book is open).
+  let refreshing = false;
+  async function applyCatalog(next, { manual = false } = {}) {
+    if (refreshing) return;
+    refreshing = true;
+    try {
+      const oldById = new Map(libraries.map((l) => [l.id, l]));
+      const nextBooks = {};
+      for (const lib of next.libraries) {
+        const old = oldById.get(lib.id);
+        // Keep book lists of unchanged libraries; refetch new or replaced ones.
+        nextBooks[lib.id] = old && JSON.stringify(old) === JSON.stringify(lib) && booksByLib[lib.id]
+          ? booksByLib[lib.id] : await getBooks(lib.id);
+      }
+      const added = next.libraries.filter((l) => !oldById.has(l.id));
+      const removed = libraries.filter((l) => !next.libraries.some((n) => n.id === l.id));
+      generation = next.generation;
+      libraries = next.libraries;
+      booksByLib = nextBooks;
+      overlay.setLibraries(libraries, booksByLib);
+      for (const l of added) overlay.showToast(`New library: ${l.title} (${(nextBooks[l.id]?.length || 0).toLocaleString()} books) — shelving…`, 'info', 6000);
+      for (const l of removed) overlay.showToast(`Library removed: ${l.title}`, 'info', 5000);
+      if (manual && !added.length && !removed.length) overlay.showToast('No new ZIM files found.');
+      await new Promise((r) => setTimeout(r, 50)); // let the toast paint before the rebuild
+      const now = await interaction.setCatalog(libraries, booksByLib);
+      if (!now && (added.length || removed.length)) overlay.showToast('The shelves will be updated when you put the book back.');
+    } catch (err) {
+      console.warn('[vrlbry] catalogue refresh failed', err);
+      if (manual) overlay.showToast(`Rescan failed: ${err.message}`, 'error');
+    } finally {
+      refreshing = false;
+    }
+  }
+  async function rescanNow() {
+    overlay.showToast('Rescanning the folder…', 'info', 2000);
+    try {
+      const r = await requestRescan();
+      await applyCatalog({ generation: r.generation, libraries: r.libraries }, { manual: true });
+    } catch (err) {
+      overlay.showToast(`Rescan failed: ${err.message}`, 'error');
+    }
+  }
+  overlay.onRescan(rescanNow);
+  interaction.onRescan = rescanNow;
+  setInterval(async () => {
+    if (refreshing || (document.visibilityState !== 'visible' && !renderer.xr.isPresenting)) return;
+    try {
+      const c = await getCatalog();
+      if (c.generation !== generation) await applyCatalog(c);
+      else if (JSON.stringify(c.libraries) !== JSON.stringify(libraries)) {
+        // Same books, new details (e.g. indexing progress): refresh the texts only.
+        libraries = c.libraries;
+        overlay.setLibraries(libraries, booksByLib);
+        interaction.updateLibraries(libraries);
+      }
+    } catch { /* server briefly unavailable: try again next time */ }
+  }, 10000);
   if (navigator.xr?.isSessionSupported) {
     navigator.xr.isSessionSupported('immersive-vr').then((ok) => overlay.setVRSupported(ok)).catch(() => overlay.setVRSupported(false));
   }

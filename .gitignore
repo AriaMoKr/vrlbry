@@ -6,3 +6,5 @@ node_modules/
 .cert/
 .DS_Store
 Thumbs.db
+# derived indexes (Wikisource works), rebuilt on demand
+.cache/

@@ -49,7 +49,9 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
   background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 14px 12px; backdrop-filter: blur(8px); box-shadow: 0 10px 30px rgba(0,0,0,.35); }
 .ov-card header { display: flex; align-items: center; justify-content: space-between; }
 .ov-brand { font: 600 20px/1.2 var(--serif); letter-spacing: .05em; color: var(--accent); }
-.ov-collapse { background: none; border: 1px solid var(--line); border-radius: 8px; width: 28px; height: 28px; line-height: 1; color: var(--muted); }
+.ov-tools { display: flex; gap: 6px; }
+.ov-collapse, .ov-rescan { background: none; border: 1px solid var(--line); border-radius: 8px; width: 28px; height: 28px; line-height: 1; color: var(--muted); }
+.ov-rescan:hover, .ov-collapse:hover { color: var(--accent); border-color: var(--accent); }
 .ov-card.collapsed .ov-libs { display: none; }
 .ov-libs { margin-top: 8px; display: grid; gap: 10px; max-height: 40vh; overflow: auto; }
 .ov-lib { display: flex; gap: 10px; align-items: flex-start; }

@@ -235,7 +235,8 @@ export function spineTitle(book) {
 /** Short author for spines: surname (or "Anon."). */
 export function spineAuthor(book) {
   const a = (book.author || '').replace(/\([^)]*\)/g, ' ').replace(/\s+/g, ' ').trim();
-  if (!a || /^anonymous$/i.test(a)) return 'Anon.';
+  if (!a) return ''; // unknown (e.g. no Author: page links to the work)
+  if (/^anonymous$/i.test(a)) return 'Anon.';
   if (/^various$/i.test(a)) return 'Various';
   const parts = a.split(' ');
   return parts[parts.length - 1];

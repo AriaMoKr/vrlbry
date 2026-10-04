@@ -9,16 +9,23 @@
  */
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
+import { watch as fsWatch } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import zlib from 'node:zlib';
 import { parseEpub } from './content/epub.js';
 import { chunkBlocks, htmlToBlocks, imageSize } from './content/html.js';
 import { LRUCache } from './util/lru.js';
 import { ZimArchive } from './zim/reader.js';
+import {
+  isWikisource, buildIndex, indexPath, loadIndex, saveIndex, collectWork, partTitle, genreOf, cleanCategories,
+} from './wikisource.js';
 
 const gzipAsync = promisify(zlib.gzip);
 
+/** Where derived indexes (Wikisource works) are cached: <project>/.cache. */
+export const DEFAULT_CACHE_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.cache');
 /** Default byte budget for converted books, shared by all archives of a Library. */
 const CONTENT_CACHE_BYTES = 300 * 1024 * 1024;
 /**
@@ -220,7 +227,7 @@ class Chunk {
  */
 export class ArchiveLibrary {
   /** @private */
-  constructor({ id, filePath, archive, log, warn, maxGenericBooks, contentCache }) {
+  constructor({ id, filePath, archive, log, warn, maxGenericBooks, contentCache, cacheDir = DEFAULT_CACHE_DIR, onChange = null }) {
     /** URL-safe id (§3.6). */
     this.id = id;
     /** Basename of the ZIM file. */
@@ -228,7 +235,7 @@ export class ArchiveLibrary {
     this.filePath = filePath;
     /** @type {ZimArchive} */
     this.archive = archive;
-    /** @type {'gutenberg'|'generic'} */
+    /** @type {'gutenberg'|'wikisource'|'generic'} */
     this.kind = 'generic';
     this._log = log;
     this._warn = warn;
@@ -245,6 +252,11 @@ export class ArchiveLibrary {
     this._shelves = [];
     this._meta = {};
     this._conversions = 0;
+    this._cacheDir = cacheDir;
+    this._onChange = onChange; // called when the catalogue changes on its own (index finished)
+    this._indexing = null; // { stage, progress } while a Wikisource index is being built
+    this._indexTask = null;
+    this._closed = false;
   }
 
   /**
@@ -258,6 +270,8 @@ export class ArchiveLibrary {
    * @param {LRUCache} [opts.contentCache] shared converted-book cache (default: a private one)
    * @param {number} [opts.contentCacheBytes] budget of the private cache (default 300 MB)
    * @param {object} [opts.archiveOptions] passed to ZimArchive.open (default cluster cache 64 MB)
+   * @param {string} [opts.cacheDir] where derived indexes are cached (default <project>/.cache)
+   * @param {() => void} [opts.onChange] called when the catalogue changes later (index built)
    * @returns {Promise<ArchiveLibrary>}
    */
   static async open(filePath, {
@@ -268,11 +282,13 @@ export class ArchiveLibrary {
     contentCache,
     contentCacheBytes = CONTENT_CACHE_BYTES,
     archiveOptions,
+    cacheDir,
+    onChange,
   } = {}) {
     const archive = await ZimArchive.open(filePath, { clusterCacheBytes: ARCHIVE_CLUSTER_CACHE_BYTES, ...archiveOptions });
     try {
       const lib = new ArchiveLibrary({
-        id, filePath, archive, log, warn, maxGenericBooks,
+        id, filePath, archive, log, warn, maxGenericBooks, cacheDir, onChange,
         contentCache: contentCache ?? createContentCache(contentCacheBytes),
       });
       await lib.books(); // catalog now: `kind` is final and errors surface at scan time
@@ -293,6 +309,12 @@ export class ArchiveLibrary {
    * @returns {Promise<object>}
    */
   async info() {
+    const base = await this._baseInfo();
+    // Indexing progress is live; everything else is cached until the catalogue changes.
+    return this.kind === 'wikisource' ? { ...base, indexing: this._indexing ? { ...this._indexing } : null } : base;
+  }
+
+  _baseInfo() {
     if (!this._info) {
       this._info = (async () => {
         const books = await this.books();
@@ -318,6 +340,7 @@ export class ArchiveLibrary {
           bookCount: books.length,
           illustration: illustration ? zimUrl(this.id, illustration.path) : null,
           shelves: this._shelves.slice(),
+          ...(this.kind === 'wikisource' ? { genres: this._genres ?? [] } : {}),
         };
       })();
       this._info.catch(() => { this._info = null; });
@@ -395,6 +418,7 @@ export class ArchiveLibrary {
 
   /** Closes the archive. */
   async close() {
+    this._closed = true;
     for (const key of [...this._contentCache.keys()]) {
       if (key.startsWith(this._cacheKey(''))) this._contentCache.delete(key);
     }
@@ -427,8 +451,85 @@ export class ArchiveLibrary {
         this._byId.clear();
       }
     }
+    if (isWikisource(this._meta)) {
+      this.kind = 'wikisource';
+      return this._wikisourceCatalog();
+    }
     this.kind = 'generic';
     return this._genericCatalog();
+  }
+
+  // ------------------------------------------------------------------------------------------
+  // Wikisource: multi-part works from a cached index (built in the background on first open)
+
+  async _wikisourceCatalog() {
+    const file = indexPath(this._cacheDir, this.archive);
+    const idx = await loadIndex(file, this.archive);
+    if (idx) {
+      this._indexing = null;
+      return this._booksFromIndex(idx);
+    }
+    // No index yet: serve an empty shelf while it is built, then announce the new catalogue.
+    this._startIndexing(file);
+    this._shelves = [];
+    this._genres = [];
+    return [];
+  }
+
+  _startIndexing(file) {
+    if (this._indexTask) return;
+    const weights = { scan: [0, 0.25], works: [0.25, 0.3], authors: [0.55, 0.45], done: [1, 0] };
+    this._indexing = { stage: 'scan', progress: 0 };
+    this._log(`${this.file}: indexing Wikisource works in the background (first open only, a few minutes)…`);
+    const t0 = performance.now();
+    this._indexTask = buildIndex(this.archive, {
+      onProgress: (stage, f) => {
+        const [base, span] = weights[stage] ?? [0, 0];
+        this._indexing = { stage, progress: Math.min(1, base + span * f) };
+      },
+      log: (m) => this._log(`${this.file}:${m}`),
+    }).then(async (idx) => {
+      if (this._closed) return;
+      await saveIndex(file, idx).catch((err) => this._warn(`${this.file}: cannot cache the Wikisource index (${err.message})`));
+      this._indexing = null;
+      this._books = null;
+      this._info = null;
+      this._byId.clear();
+      const books = await this.books();
+      this._log(`${this.file}: Wikisource index ready: ${books.length} works (${Math.round((performance.now() - t0) / 1000)} s)`);
+      this._onChange?.();
+    }).catch((err) => {
+      if (this._closed) return;
+      this._indexing = { stage: 'failed', progress: 0, error: err.message };
+      this._warn(`${this.file}: Wikisource indexing failed: ${err.message}`);
+    }).finally(() => {
+      this._indexTask = null;
+    });
+  }
+
+  _booksFromIndex(idx) {
+    const m = this._meta;
+    const language = typeof m.Language === 'string' && m.Language.trim() ? m.Language.split(',')[0].trim() : null;
+    const books = [];
+    const counts = new Map();
+    for (const [url, title, index, parts, cover, year, cats, author] of idx.works) {
+      const id = `w${index}`;
+      const genre = genreOf(cleanCategories(cats ?? []));
+      counts.set(genre, (counts.get(genre) || 0) + 1);
+      const book = {
+        id, title, subtitle: null, fullTitle: title, author: author ?? null, authorId: null, rank: null,
+        shelf: genre, language, formats: { html: true, epub: false, pdf: false }, readable: true,
+        cover: cover ? zimUrl(this.id, cover) : null, epub: null,
+        // Thickness on the shelf follows length: ~30 KB of HTML per part.
+        size: (parts + 1) * 30000,
+        genre, year: year ?? null, parts,
+      };
+      books.push(book);
+      this._byId.set(id, { book, kind: 'wikisource', url, parts });
+    }
+    this._genres = [...counts].sort((a, b) => b[1] - a[1]).map(([name, count]) => ({ name, count }));
+    this._shelves = this._genres.map((g) => g.name);
+    return books;
   }
 
   /** Finds the gutenberg2zim JSON index (§2.2: namespaces C, A, -, J, optionally under js/). */
@@ -664,7 +765,28 @@ export class ArchiveLibrary {
     let blocks;
     let source;
     const epubRes = (p) => `/api/libraries/${encodeURIComponent(this.id)}/books/${encodeURIComponent(book.id)}/res/${encodePath(p)}`;
-    if (rec.html) {
+    if (rec.kind === 'wikisource') {
+      // A work = its main page + subpages in contents order, each part under its own heading.
+      const { parts, truncated, total } = await collectWork(this.archive, rec.url, { expectedParts: rec.parts });
+      if (!parts.length) throw new LibraryError(`book ${book.id}: the work's pages are missing from the archive`);
+      blocks = [];
+      for (const part of parts) {
+        const title = part.depth === 0 ? book.title : partTitle(part.url);
+        blocks.push({ t: 'h', l: Math.min(3, part.depth + 1), r: [[title, 0]] });
+        const out = htmlToBlocks(part.html, { docPath: part.path }).blocks;
+        for (const b of out) blocks.push(b);
+        part.html = null;
+      }
+      if (truncated) {
+        blocks.push({ t: 'hr' }, { t: 'p', a: 'c', r: [[`This edition includes the first ${parts.length} of ${total} parts of the work.`, 1]] });
+      }
+      source = 'html';
+      await this._fixImages(blocks, {
+        lookup: (p) => this._zimImage(p),
+        fallback: null,
+        url: (p) => zimUrl(this.id, p),
+      });
+    } else if (rec.html) {
       const content = await this.archive.getContent(rec.html);
       if (!content) throw new LibraryError(`book ${book.id}: HTML entry has no content`);
       // Relative links resolve against the entry that actually holds the HTML (after redirects).
@@ -836,13 +958,24 @@ export function createContentCache(maxBytes = CONTENT_CACHE_BYTES) {
 
 /** All ZIM libraries of one directory. Create with `Library.scan()`. */
 export class Library {
-  /** @private */
-  constructor(dir, libs, contentCache) {
+  /** @private Use Library.scan(). */
+  constructor(dir, contentCache, opts) {
     /** Absolute path of the scanned directory. */
     this.dir = dir;
-    this._libs = libs;
-    this._byId = new Map(libs.map((l) => [l.id, l]));
+    this._libs = [];
+    this._byId = new Map();
+    this._files = new Map(); // file name -> { lib, size, mtimeMs }
+    this._failed = new Map(); // file name -> "size:mtime" of the last failed attempt
+    this._splitWarned = new Set();
+    this._opts = opts;
+    this._scanning = null;
+    this._rescanAgain = false;
+    this._watcher = null;
+    this._debounce = null;
+    this._interval = null;
     this.contentCache = contentCache;
+    /** Increments whenever the set of libraries changes (clients poll it to re-shelve). */
+    this.generation = 0;
   }
 
   /**
@@ -856,6 +989,7 @@ export class Library {
    * @param {(msg: string) => void} [opts.warn=log] skipped files and problems with archive data
    * @param {number} [opts.contentCacheBytes=314572800] budget for converted books (all archives)
    * @param {object} [opts.archiveOptions] passed to ZimArchive.open (default cluster cache 64 MB)
+   * @param {string} [opts.cacheDir] where derived indexes are cached (default <project>/.cache)
    * @returns {Promise<Library>}
    */
   static async scan(dir, {
@@ -864,42 +998,163 @@ export class Library {
     warn = log,
     contentCacheBytes = CONTENT_CACHE_BYTES,
     archiveOptions,
+    cacheDir = DEFAULT_CACHE_DIR,
   } = {}) {
     const abs = path.resolve(dir);
-    const dirents = await fs.readdir(abs, { withFileTypes: true });
+    await fs.readdir(abs); // fail early (and loudly) on a missing or unreadable directory
+    const lib = new Library(abs, createContentCache(contentCacheBytes), { maxGenericBooks, log, warn, archiveOptions, cacheDir });
+    await lib.rescan({ quiet: true });
+    return lib;
+  }
+
+  /**
+   * Re-reads the directory: opens new `.zim` files, closes removed ones and reopens files whose
+   * size or modification time changed (a replaced archive keeps its library id). Concurrent calls
+   * share one scan; a call arriving during a scan triggers one more pass after it.
+   * @param {{ quiet?: boolean }} [opts] quiet: no summary line (used by the initial scan)
+   * @returns {Promise<{ generation: number, added: string[], removed: string[], reopened: string[], failed: string[] }>}
+   */
+  rescan(opts = {}) {
+    if (this._scanning) {
+      this._rescanAgain = true;
+      return this._scanning;
+    }
+    this._scanning = (async () => {
+      const total = { added: [], removed: [], reopened: [], failed: [] };
+      do {
+        this._rescanAgain = false;
+        const r = await this._rescanOnce(opts);
+        for (const k of Object.keys(total)) total[k].push(...r[k]);
+      } while (this._rescanAgain);
+      return { generation: this.generation, ...total };
+    })().finally(() => {
+      this._scanning = null;
+    });
+    return this._scanning;
+  }
+
+  async _rescanOnce({ quiet = false } = {}) {
+    const { log, warn, maxGenericBooks, archiveOptions, cacheDir } = this._opts;
+    const dirents = await fs.readdir(this.dir, { withFileTypes: true });
     const names = dirents.filter((d) => d.isFile() || d.isSymbolicLink()).map((d) => d.name)
       .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-    const cache = createContentCache(contentCacheBytes);
-    const libs = [];
-    const used = new Set();
-    const splitSets = new Set();
+    const present = new Map();
     for (const name of names) {
       if (/\.zim[a-z]{2}$/i.test(name)) {
         const stem = name.slice(0, -2);
-        if (!splitSets.has(stem)) {
-          splitSets.add(stem);
+        if (!this._splitWarned.has(stem)) {
+          this._splitWarned.add(stem);
           warn(`${stem}aa…: split ZIM archives are not supported (join the parts into one .zim file)`);
         }
         continue;
       }
       if (!/\.zim$/i.test(name)) continue;
-      const base = libraryIdFor(name);
-      let id = base;
-      for (let n = 2; used.has(id); n++) id = `${base}-${n}`;
+      const st = await fs.stat(path.join(this.dir, name)).catch(() => null);
+      if (st && st.isFile()) present.set(name, st);
+    }
+
+    const added = [];
+    const removed = [];
+    const reopened = [];
+    const failed = [];
+    const reuseIds = new Map(); // file name -> library id kept across a reopen
+    for (const [name, entry] of [...this._files]) {
+      const st = present.get(name);
+      if (st && st.size === entry.size && st.mtimeMs === entry.mtimeMs) continue;
+      this._files.delete(name);
+      this._libs = this._libs.filter((l) => l !== entry.lib);
+      this._byId.delete(entry.lib.id);
+      await entry.lib.close().catch(() => {});
+      if (st) reuseIds.set(name, entry.lib.id);
+      else {
+        removed.push(entry.lib.id);
+        log(`${name}: removed`);
+      }
+    }
+    for (const name of [...this._failed.keys()]) if (!present.has(name)) this._failed.delete(name);
+
+    for (const [name, st] of present) {
+      if (this._files.has(name)) continue;
+      const stamp = `${st.size}:${st.mtimeMs}`;
+      if (this._failed.get(name) === stamp) continue; // unchanged since it last failed: skip quietly
+      let id = reuseIds.get(name);
+      if (!id) {
+        const base = libraryIdFor(name);
+        id = base;
+        for (let n = 2; this._byId.has(id); n++) id = `${base}-${n}`;
+      }
       const t0 = performance.now();
       try {
-        const lib = await ArchiveLibrary.open(path.join(abs, name), {
-          id, maxGenericBooks, log, warn, contentCache: cache, archiveOptions,
+        const lib = await ArchiveLibrary.open(path.join(this.dir, name), {
+          id, maxGenericBooks, log, warn, contentCache: this.contentCache, archiveOptions, cacheDir,
+          // A background index finishing changes the catalogue: clients poll `generation`.
+          onChange: () => { this.generation++; },
         });
-        used.add(id);
-        libs.push(lib);
+        this._files.set(name, { lib, size: st.size, mtimeMs: st.mtimeMs });
+        this._byId.set(id, lib);
+        this._libs.push(lib);
+        this._failed.delete(name);
+        (reuseIds.has(name) ? reopened : added).push(id);
         const count = (await lib.books()).length;
         log(`${name}: ${lib.kind} library, ${count} book(s) (${Math.round(performance.now() - t0)} ms)`);
       } catch (err) {
+        // A file that is still being copied or downloaded fails here; it is retried as soon as
+        // its size or modification time changes.
+        this._failed.set(name, stamp);
+        failed.push(name);
         warn(`${name}: skipped, cannot open: ${err.message}`);
       }
     }
-    return new Library(abs, libs, cache);
+    // Keep file-name order, like the initial scan.
+    const rank = new Map([...this._files.keys()].sort().map((n, i) => [this._files.get(n).lib, i]));
+    this._libs.sort((a, b) => rank.get(a) - rank.get(b));
+    if (added.length || removed.length || reopened.length || this.generation === 0) this.generation++;
+    if (!quiet && (added.length || removed.length || reopened.length)) {
+      log(`Rescan: ${added.length} added, ${removed.length} removed, ${reopened.length} reopened (${this._libs.length} libraries)`);
+    }
+    return { added, removed, reopened, failed };
+  }
+
+  /**
+   * Rescans automatically when `.zim` files appear, change or disappear: a debounced fs.watch on
+   * the directory (a finished browser download is a rename to *.zim) plus a slow periodic pass in
+   * case the platform drops watch events (network drives).
+   * @param {{ debounceMs?: number, intervalMs?: number }} [opts]
+   * @returns {() => void} stops watching
+   */
+  watch({ debounceMs = 2500, intervalMs = 60000 } = {}) {
+    this.unwatch();
+    const schedule = () => {
+      clearTimeout(this._debounce);
+      this._debounce = setTimeout(() => {
+        this.rescan().catch((e) => this._opts.warn(`Rescan failed: ${e.message}`));
+      }, debounceMs);
+      this._debounce.unref?.();
+    };
+    try {
+      this._watcher = fsWatch(this.dir, { persistent: false }, (event, filename) => {
+        if (!filename || /\.zim([a-z]{2})?$/i.test(String(filename))) schedule();
+      });
+      this._watcher.on('error', () => {
+        this._watcher?.close();
+        this._watcher = null;
+      });
+    } catch (err) {
+      this._opts.warn(`Cannot watch ${this.dir} (${err.message}); rescanning every ${Math.round(intervalMs / 1000)} s instead`);
+    }
+    this._interval = setInterval(schedule, intervalMs);
+    this._interval.unref?.();
+    return () => this.unwatch();
+  }
+
+  /** Stops automatic rescans. */
+  unwatch() {
+    this._watcher?.close();
+    this._watcher = null;
+    clearTimeout(this._debounce);
+    clearInterval(this._interval);
+    this._debounce = null;
+    this._interval = null;
   }
 
   /** @returns {ArchiveLibrary[]} in file-name order */
@@ -915,8 +1170,10 @@ export class Library {
     return this._byId.get(libId);
   }
 
-  /** Closes every archive. */
+  /** Stops watching and closes every archive. */
   async close() {
+    this.unwatch();
+    if (this._scanning) await this._scanning.catch(() => {});
     await Promise.allSettled(this._libs.map((l) => l.close()));
     this.contentCache.clear();
   }

@@ -106,6 +106,12 @@ export function createApp(library, { publicDir = DEFAULT_PUBLIC_DIR, vendorDirs 
     res.setHeader('X-Content-Type-Options', 'nosniff');
     const { segments, trailingSlash } = parsePath(req.url);
     const area = segments[0];
+    // The one state-changing endpoint: re-read the ZIM folder (harmless if triggered by anyone).
+    if (req.method === 'POST' && area === 'api' && segments[1] === 'rescan' && segments.length === 2) {
+      const result = await library.rescan();
+      const libraries = await Promise.all(library.list().map((l) => l.info()));
+      return sendBody(req, res, serialize({ ...result, libraries }), { cacheControl: 'no-store' });
+    }
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       res.setHeader('Allow', 'GET, HEAD');
       if (area === 'api' || area === 'zim') return sendError(req, res, 405, 'method not allowed');
@@ -128,10 +134,14 @@ export function createApp(library, { publicDir = DEFAULT_PUBLIC_DIR, vendorDirs 
 
   async function api(req, res, segs) {
     if (segs.length && segs[segs.length - 1] === '' && segs.length > 1) segs = segs.slice(0, -1);
+    if (segs[0] === 'rescan' && segs.length === 1) {
+      res.setHeader('Allow', 'POST');
+      return sendError(req, res, 405, 'use POST to rescan');
+    }
     if (segs[0] !== 'libraries') return sendError(req, res, 404, 'unknown API endpoint');
     if (segs.length === 1) {
       const libraries = await Promise.all(library.list().map((l) => l.info()));
-      return sendBody(req, res, serialize({ libraries }), { cacheControl: 'no-cache' });
+      return sendBody(req, res, serialize({ generation: library.generation ?? 0, libraries }), { cacheControl: 'no-cache' });
     }
     const lib = library.get(segs[1]);
     if (segs.length < 3 || segs[2] !== 'books') return sendError(req, res, 404, 'unknown API endpoint');

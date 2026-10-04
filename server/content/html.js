@@ -61,6 +61,18 @@ const PAGE_CLASSES_INLINE = new Set(['page', 'pn']);
 // onto the heading text here.
 const NAV_CLASSES = new Set(['totoc', 'toclink', 'return', 'back', 'backlink', 'back-link', 'linkback', 'totop', 'gotop']);
 
+// MediaWiki / mwoffliner page chrome (Wikisource and other wiki ZIMs): navigation, edit links,
+// category boxes, licence banners, the ZIM footer. Class tokens (lower-cased) and element ids.
+const MW_CHROME_CLASSES = new Set([
+  'ws-noexport', 'noprint', 'mw-editsection', 'navbox', 'catlinks', 'printfooter', 'zim-footer',
+  'licensecontainer', 'licensebanner', 'pr_quality', 'mw-jump-link', 'mw-indicators', 'mw-cite-backlink',
+  'mw-empty-elt',
+]);
+const MW_CHROME_IDS = new Set([
+  'firstHeading', 'contentSub', 'mw-content-subtitle', 'siteSub', 'catlinks', 'jump-to-nav',
+  'mw-navigation', 'footer', 'mw-panel', 'mw-head', 'mw-page-base', 'mw-head-base', 'toc-toggle',
+]);
+
 const RE_VERSE = /^(poem|poetry|stanza|verse|linegroup|lines$|lines-container|lg-container)/i;
 const RE_STANZA = /^stanza/i;
 const RE_INDENT = /^(?:i|in|indent)(\d{1,2})$/;
@@ -247,7 +259,7 @@ function classInfo(name, cls, css) {
   for (const tok of cls.split(/\s+/)) {
     if (!tok) continue;
     const low = tok.toLowerCase();
-    if (low.startsWith('zim_')) { info.skip = 1; return info; }
+    if (low.startsWith('zim_') || MW_CHROME_CLASSES.has(low)) { info.skip = 1; return info; }
     if (pageMarkerTag && (PAGE_CLASSES.has(low) || (inline && PAGE_CLASSES_INLINE.has(low)))) {
       info.skip = 2; // keep collecting ids: they are link targets (#Page_12)
       return info;
@@ -519,7 +531,7 @@ class Converter {
       this.infoCache.set(key, info);
     }
     const style = attribs.style;
-    const hidden = attribs.hidden !== undefined;
+    const hidden = attribs.hidden !== undefined || (attribs.id !== undefined && MW_CHROME_IDS.has(attribs.id));
     const pgHeader = attribs.id === 'pg-header' || (info.boiler && attribs.id !== 'pg-footer');
     if (style || hidden || pgHeader) {
       info = { ...info };

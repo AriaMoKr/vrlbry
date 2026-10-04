@@ -3,7 +3,7 @@
  * vrlbry CLI (SPEC §3.7): scans a directory for ZIM files and serves the library over HTTP(S).
  *
  *   node server/index.js [--dir <path>] [--port 8080] [--host 0.0.0.0] [--https]
- *                        [--cert <file> --key <file>] [--max-generic 2000] [--quiet]
+ *                        [--cert <file> --key <file>] [--max-generic 2000] [--no-watch] [--quiet]
  */
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -36,6 +36,7 @@ Options:
   --cert <file>        PEM certificate for --https
   --key <file>         PEM private key for --https
   --max-generic <n>    max books listed from a non-Gutenberg ZIM (default 2000)
+  --no-watch           do not pick up added/removed .zim files while running
   --quiet              only print problems and the server URL
   -h, --help           show this help
 `;
@@ -44,7 +45,7 @@ Options:
  * Parses CLI arguments.
  * @param {string[]} argv arguments without node and script (process.argv.slice(2))
  * @returns {{ dir: string, port: number, host: string|undefined, https: boolean,
- *   cert: string|null, key: string|null, maxGeneric: number, quiet: boolean, help: boolean }}
+ *   cert: string|null, key: string|null, maxGeneric: number, watch: boolean, quiet: boolean, help: boolean }}
  * @throws {Error} with a user-facing message on invalid arguments
  */
 export function parseCliArgs(argv) {
@@ -59,6 +60,7 @@ export function parseCliArgs(argv) {
       cert: { type: 'string' },
       key: { type: 'string' },
       'max-generic': { type: 'string' },
+      'no-watch': { type: 'boolean', default: false },
       quiet: { type: 'boolean', default: false },
       help: { type: 'boolean', short: 'h', default: false },
     },
@@ -78,6 +80,7 @@ export function parseCliArgs(argv) {
     cert: values.cert ?? null,
     key: values.key ?? null,
     maxGeneric: values['max-generic'] === undefined ? 2000 : int('max-generic', values['max-generic'], 1, 10_000_000),
+    watch: !values['no-watch'],
     quiet: values.quiet,
     help: values.help,
   };
@@ -290,7 +293,7 @@ export async function main(argv = process.argv.slice(2), { out = console.log, er
   if (!opts.quiet) {
     out('');
     out(`vrlbry — ${libs.length} librar${libs.length === 1 ? 'y' : 'ies'} in ${library.dir}`);
-    if (!libs.length) out('  (no readable .zim files found; add some and restart)');
+    if (!libs.length) out(opts.watch ? '  (no readable .zim files found yet; add some and they are picked up automatically)' : '  (no readable .zim files found; add some and restart)');
     for (const lib of libs) {
       const i = await lib.info();
       out(`  ${lib.file}  —  ${i.title}  (${i.bookCount} book${i.bookCount === 1 ? '' : 's'}, ${lib.kind})`);
@@ -312,6 +315,9 @@ export async function main(argv = process.argv.slice(2), { out = console.log, er
   } else {
     out(`vrlbry listening on ${urls[0]}`);
   }
+
+  // New or removed .zim files are picked up while running (clients re-shelve on their own).
+  if (opts.watch) library.watch();
 
   let closing = null;
   const close = () => {

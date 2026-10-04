@@ -712,3 +712,115 @@ describe('ArchiveLibrary: real Gutenberg ZIM', { skip: !fs.existsSync(REAL_ZIM) 
     assert.ok(performance.now() - t1 < 50, 'cached');
   });
 });
+
+describe('Library.rescan / watch', () => {
+  const waitFor = async (cond, ms = 8000) => {
+    const t0 = Date.now();
+    while (!cond()) {
+      if (Date.now() - t0 > ms) throw new Error('timed out');
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  };
+
+  it('adds, removes and reopens archives, keeping ids and bumping the generation', async () => {
+    const dir = path.join(tmp, 'rescan');
+    fs.mkdirSync(dir);
+    writeGutenbergZim(path.join(dir, 'a.zim'));
+    const log = collectLog();
+    const warn = collectLog();
+    const library = await Library.scan(dir, { log, warn });
+    try {
+      assert.equal(library.generation, 1);
+      assert.deepEqual(library.list().map((l) => l.id), ['a']);
+
+      // Nothing changed: same generation, nothing reported.
+      let r = await library.rescan();
+      assert.deepEqual([r.added, r.removed, r.reopened, r.failed], [[], [], [], []]);
+      assert.equal(library.generation, 1);
+
+      writeGenericZim(path.join(dir, '0-first.zim'));
+      r = await library.rescan();
+      assert.deepEqual(r.added, ['0-first']);
+      assert.equal(r.generation, 2);
+      assert.deepEqual(library.list().map((l) => l.id), ['0-first', 'a'], 'file-name order');
+      assert.equal((await library.get('0-first').books()).length > 0, true);
+
+      // Replaced file (different size/mtime): reopened under the same id.
+      const old = library.get('a');
+      writeGenericZim(path.join(dir, 'a.zim'));
+      const later = new Date(Date.now() + 5000);
+      fs.utimesSync(path.join(dir, 'a.zim'), later, later);
+      r = await library.rescan();
+      assert.deepEqual(r.reopened, ['a']);
+      assert.notEqual(library.get('a'), old);
+      assert.equal(library.get('a').kind, 'generic');
+      assert.equal(library.generation, 3);
+
+      fs.rmSync(path.join(dir, '0-first.zim'));
+      r = await library.rescan();
+      assert.deepEqual(r.removed, ['0-first']);
+      assert.equal(library.get('0-first'), undefined);
+      assert.deepEqual(library.list().map((l) => l.id), ['a']);
+      assert.ok(log.lines.some((l) => /0-first\.zim: removed/.test(l)));
+    } finally {
+      await library.close();
+    }
+  });
+
+  it('retries a half-written file only after it changes', async () => {
+    const dir = path.join(tmp, 'rescan-partial');
+    fs.mkdirSync(dir);
+    const full = path.join(tmp, 'full-generic.zim');
+    writeGenericZim(full);
+    const bytes = fs.readFileSync(full);
+    const target = path.join(dir, 'growing.zim');
+    fs.writeFileSync(target, bytes.subarray(0, 100));
+    const warn = collectLog();
+    const library = await Library.scan(dir, { log: quietLog, warn });
+    try {
+      assert.equal(library.list().length, 0);
+      assert.equal(warn.lines.filter((l) => /growing\.zim: skipped/.test(l)).length, 1);
+      await library.rescan();
+      assert.equal(warn.lines.filter((l) => /growing\.zim: skipped/.test(l)).length, 1, 'unchanged file is not retried');
+      fs.writeFileSync(target, bytes);
+      const r = await library.rescan();
+      assert.deepEqual(r.added, ['growing']);
+    } finally {
+      await library.close();
+    }
+  });
+
+  it('shares one scan between concurrent calls', async () => {
+    const dir = path.join(tmp, 'rescan-concurrent');
+    fs.mkdirSync(dir);
+    writeGenericZim(path.join(dir, 'x.zim'));
+    const library = await Library.scan(dir, { log: quietLog });
+    try {
+      writeGenericZim(path.join(dir, 'y.zim'));
+      const [r1, r2] = await Promise.all([library.rescan(), library.rescan()]);
+      assert.equal(r1, r2);
+      assert.deepEqual(r1.added, ['y']);
+      assert.equal(library.list().length, 2);
+    } finally {
+      await library.close();
+    }
+  });
+
+  it('watch() picks up a new archive on its own', async () => {
+    const dir = path.join(tmp, 'rescan-watch');
+    fs.mkdirSync(dir);
+    const library = await Library.scan(dir, { log: quietLog });
+    try {
+      library.watch({ debounceMs: 100, intervalMs: 1000 });
+      const src = path.join(tmp, 'watch-src.zim');
+      writeGenericZim(src);
+      // Like a finished browser download: written under another name, then renamed.
+      fs.copyFileSync(src, path.join(dir, 'w.zim.crdownload'));
+      fs.renameSync(path.join(dir, 'w.zim.crdownload'), path.join(dir, 'w.zim'));
+      await waitFor(() => library.get('w'));
+      assert.equal(library.generation, 2);
+    } finally {
+      await library.close();
+    }
+  });
+});

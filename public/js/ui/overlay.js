@@ -46,7 +46,7 @@ export class Overlay {
         <div class="ov-progress"><div class="ov-progress-bar"></div></div>
       </div>
       <section class="ov-card" aria-label="Library">
-        <header><span class="ov-brand">vrlbry</span><button class="ov-collapse" aria-label="Collapse" title="Collapse">–</button></header>
+        <header><span class="ov-brand">vrlbry</span><span class="ov-tools"><button class="ov-rescan" aria-label="Rescan the ZIM folder" title="Rescan the ZIM folder">⟳</button><button class="ov-collapse" aria-label="Collapse" title="Collapse">–</button></span></header>
         <div class="ov-libs"></div>
       </section>
       <div class="ov-search" role="search">
@@ -71,6 +71,7 @@ export class Overlay {
       card.classList.toggle('collapsed');
       this.$('.ov-collapse').textContent = card.classList.contains('collapsed') ? '+' : '–';
     };
+    this.$('.ov-rescan').onclick = () => this._rescan?.();
     this.$('.ov-help-btn').onclick = () => this.showHelp(true);
     this.$('.ov-help-close').onclick = () => this.showHelp(false);
     this.$('.ov-help').onclick = (e) => {
@@ -124,7 +125,9 @@ export class Overlay {
           ${l.illustration ? `<img src="${esc(l.illustration)}" alt="" width="40" height="40">` : ''}
           <div><div class="ov-lib-title">${esc(l.title)}</div>
           <div class="ov-lib-desc">${esc(l.longDescription || l.description || '')}</div>
-          <div class="ov-lib-meta">${(booksByLib[l.id]?.length || 0).toLocaleString()} books · ${esc(l.file)}</div></div>
+          <div class="ov-lib-meta">${l.indexing && l.indexing.stage !== 'failed'
+            ? `indexing works… ${Math.round((l.indexing.progress || 0) * 100)}%`
+            : `${(booksByLib[l.id]?.length || 0).toLocaleString()} ${l.kind === 'wikisource' ? 'works' : 'books'}`} · ${esc(l.file)}</div></div>
         </div>`).join('') + (libraries.length > 1 ? `<div class="ov-lib-meta">${total.toLocaleString()} books in ${libraries.length} libraries</div>` : '')
       : '<div class="ov-lib-desc">No .zim files were found in the server folder. Add some and reload.</div>';
     this._index = [];
@@ -136,6 +139,7 @@ export class Overlay {
   }
 
   onSearchPick(cb) { this._pick = cb; }
+  onRescan(cb) { this._rescan = cb; }
   onEnterVR(cb) { this._enterVR = cb; }
 
   setVRSupported(ok) {

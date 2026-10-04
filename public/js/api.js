@@ -20,6 +20,19 @@ export async function getLibraries() {
   return (await getJSON('/api/libraries')).libraries;
 }
 
+/** @returns {Promise<{ generation: number, libraries: object[] }>} libraries + change counter */
+export async function getCatalog() {
+  const r = await getJSON('/api/libraries');
+  return { generation: r.generation ?? 0, libraries: r.libraries };
+}
+
+/** Asks the server to re-read its ZIM folder now. */
+export async function rescan() {
+  const res = await fetch('/api/rescan', { method: 'POST' });
+  if (!res.ok) throw new Error(`rescan: ${res.status} ${res.statusText}`);
+  return res.json(); // { generation, added, removed, reopened, failed, libraries }
+}
+
 /** @returns {Promise<Array<object>>} book descriptors for one library */
 export async function getBooks(libId) {
   return (await getJSON(`/api/libraries/${enc(libId)}/books`)).books;

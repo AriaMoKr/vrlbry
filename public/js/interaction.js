@@ -9,6 +9,7 @@ import { audio } from './audio.js';
 import { load, save } from './util/storage.js';
 import { letterOf, SORT_MODES } from './util/books.js';
 import { PAGE_PX, READ } from './config.js';
+import { collectionsFor, facetsOf, isFaceted, roomFor, roomLabel, sameRoom, ROOM_CAP } from './rooms.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 const THEME_ORDER = ['paper', 'sepia', 'night'];
@@ -49,6 +50,8 @@ export class Interaction {
     this._highlightUntil = 0;
     this._time = 0;
     this._grab = null;
+    /** Set by main.js: asks the server to rescan its ZIM folder and re-shelves. */
+    this.onRescan = null;
 
     this.tooltip = new Label({ width: 0.56, height: 0.13 });
     this.tooltip.visible = false;
@@ -72,59 +75,87 @@ export class Interaction {
   // Panels
 
   _buildKiosk() {
-    const p = new Panel({ width: 1.0, height: 0.9, pxPerMeter: 1000 });
+    const p = new Panel({ width: 1.0, height: 1.0, pxPerMeter: 1000 });
     this.kiosk = p;
-    const k = this.world.kiosk;
-    p.mesh.position.copy(k.position).setY(1.42);
-    p.mesh.rotation.set(0, k.yaw, 0, 'YXZ');
-    p.mesh.rotateX(-0.12);
+    this._kioskTab = 'shelves';
     p.mesh.name = 'kiosk';
     this.scene.add(p.mesh);
+    this.placeKiosk();
     this._fillKiosk();
   }
 
   /** Re-places the kiosk after a world rebuild. */
   placeKiosk() {
     const k = this.world.kiosk;
-    this.kiosk.mesh.position.copy(k.position).setY(1.42);
+    this.kiosk.mesh.position.copy(k.position).setY(1.47);
     this.kiosk.mesh.rotation.set(0, k.yaw, 0, 'YXZ');
     this.kiosk.mesh.rotateX(-0.12);
+  }
+
+  /** Libraries browsed by rooms (Wikisource), in catalogue order. */
+  _facetedLibraries() {
+    return this.libraries.filter((l) => isFaceted(l, this.booksByLib[l.id]));
   }
 
   _fillKiosk() {
     const p = this.kiosk;
     const W = p.w;
-    p.clear();
     const pad = 36;
+    p.clear();
     p.add({ type: 'text', x: pad, y: 26, w: W - 2 * pad, h: 54, text: 'Catalogue', size: 46, weight: '600', serif: true, color: UI.accent });
+    p.add({ id: 'rescan', type: 'button', x: W - pad - 230, y: 24, w: 230, h: 56, label: '⟳ Rescan folder', size: 24, onClick: () => this.onRescan?.() });
+    const faceted = this._facetedLibraries();
+    if (!faceted.length) this._kioskTab = 'shelves';
+    let y = 96;
+    if (faceted.length) {
+      const tabs = [['shelves', 'Shelves & settings'], ['rooms', `Rooms of ${faceted.length === 1 ? faceted[0].title : 'large libraries'}`]];
+      const tw = (W - 2 * pad - 12) / 2;
+      tabs.forEach(([id, label], i) => {
+        p.add({
+          id: `tab-${id}`, type: 'button', x: pad + i * (tw + 12), y, w: tw, h: 54, label, size: 25,
+          active: this._kioskTab === id, onClick: () => { this._kioskTab = id; this._fillKiosk(); },
+        });
+      });
+      y += 74;
+    }
+    if (this._kioskTab === 'rooms') this._fillRoomsTab(p, y, pad, faceted);
+    else this._fillShelvesTab(p, y, pad);
+  }
+
+  _fillShelvesTab(p, y0, pad) {
+    const W = p.w;
+    const shelved = this.world.shelves.books();
     const total = this.libraries.reduce((n, l) => n + (this.booksByLib[l.id]?.length || 0), 0);
     const libLine = this.libraries.length === 1
-      ? `${this.libraries[0].title} · ${total} books`
-      : `${total} books in ${this.libraries.length} libraries`;
-    p.add({ type: 'text', x: pad, y: 84, w: W - 2 * pad, h: 36, text: libLine, size: 26, color: UI.muted, maxLines: 1 });
+      ? `${this.libraries[0].title} · ${total.toLocaleString()} books`
+      : `${shelved.length.toLocaleString()} books on the shelves · ${total.toLocaleString()} in ${this.libraries.length} libraries`;
+    p.add({ type: 'text', x: pad, y: y0, w: W - 2 * pad, h: 36, text: libLine, size: 26, color: UI.muted, maxLines: 1 });
 
     // Sort toggle.
-    p.add({ type: 'text', x: pad, y: 138, w: 200, h: 34, text: 'Shelve by', size: 26, color: UI.muted });
+    let y = y0 + 52;
+    p.add({ type: 'text', x: pad, y: y + 10, w: 200, h: 34, text: 'Shelve by', size: 26, color: UI.muted });
     const labels = { title: 'Title', author: 'Author', popularity: 'Popularity' };
     SORT_MODES.forEach((m, i) => {
       p.add({
-        id: `sort-${m}`, type: 'button', x: pad + 160 + i * 205, y: 128, w: 190, h: 56, label: labels[m], size: 26,
+        id: `sort-${m}`, type: 'button', x: pad + 160 + i * 205, y, w: 190, h: 56, label: labels[m], size: 26,
         active: this.settings.sort === m, onClick: () => this.setSort(m),
       });
     });
 
-    // A–Z (or rank) jump grid.
+    // A–Z (or rank) jump grid over the books currently shelved.
     const sort = this.settings.sort;
     const keys = sort === 'popularity'
       ? ['#1', '#10', '#25', '#50', '#75', '#100', '#150', '#200', '#250', '#300', '#400', '#500', '#750', '#1000']
       : ['#', ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'];
     const present = new Set();
     let maxRank = 0;
-    for (const b of this.world.shelves.books()) {
+    for (const b of shelved) {
       if (sort === 'popularity') maxRank = Math.max(maxRank, b.rank || 0);
       else present.add(letterOf(b, sort));
     }
-    p.add({ type: 'text', x: pad, y: 206, w: W - 2 * pad, h: 34, text: sort === 'popularity' ? 'Go to rank' : `Go to ${sort === 'author' ? 'author' : 'title'} starting with`, size: 26, color: UI.muted });
+    y += 78;
+    p.add({ type: 'text', x: pad, y, w: W - 2 * pad, h: 34, text: sort === 'popularity' ? 'Go to rank' : `Go to ${sort === 'author' ? 'author' : 'title'} starting with`, size: 26, color: UI.muted });
+    y += 42;
     const cols = 9;
     const bw = (W - 2 * pad - (cols - 1) * 10) / cols;
     keys.forEach((key, i) => {
@@ -133,32 +164,127 @@ export class Interaction {
       const rank = sort === 'popularity' ? parseInt(key.slice(1), 10) : 0;
       const enabled = sort === 'popularity' ? rank <= maxRank : present.has(key);
       p.add({
-        id: `jump-${key}`, type: 'button', x: pad + c * (bw + 10), y: 248 + r * 66, w: bw, h: 56, label: key, size: 28,
+        id: `jump-${key}`, type: 'button', x: pad + c * (bw + 10), y: y + r * 66, w: bw, h: 56, label: key, size: 28,
         disabled: !enabled, onClick: () => this.jumpTo(key),
       });
     });
 
     // Actions + recent.
-    const y0 = 248 + 3 * 66 + 18;
-    p.add({ type: 'button', x: pad, y: y0, w: 300, h: 60, label: '✦ Surprise me', size: 28, onClick: () => this.surprise() });
+    y += 3 * 66 + 18;
+    p.add({ type: 'button', x: pad, y, w: 300, h: 60, label: '✦ Surprise me', size: 28, onClick: () => this.surprise() });
     p.add({
-      id: 'sound', type: 'button', x: pad + 320, y: y0, w: 220, h: 60, label: this.settings.sound ? 'Sound on' : 'Sound off', size: 26,
+      id: 'sound', type: 'button', x: pad + 320, y, w: 220, h: 60, label: this.settings.sound ? 'Sound on' : 'Sound off', size: 26,
       active: this.settings.sound, onClick: () => this.toggleSound(),
     });
     p.add({
-      id: 'smooth', type: 'button', x: pad + 560, y: y0, w: W - 2 * pad - 560, h: 60, label: this.settings.smoothMove ? 'Stick walking' : 'Teleport only', size: 26,
+      id: 'smooth', type: 'button', x: pad + 560, y, w: W - 2 * pad - 560, h: 60, label: this.settings.smoothMove ? 'Stick walking' : 'Teleport only', size: 26,
       active: this.settings.smoothMove, onClick: () => this.toggleSmooth(),
     });
     const recent = this._recentBooks().slice(0, 3);
-    p.add({ type: 'text', x: pad, y: y0 + 80, w: W - 2 * pad, h: 34, text: recent.length ? 'Recently read' : 'Pick any book from the shelves to start reading.', size: 26, color: UI.muted });
+    y += 80;
+    p.add({ type: 'text', x: pad, y, w: W - 2 * pad, h: 34, text: recent.length ? 'Recently read' : 'Pick any book from the shelves to start reading.', size: 26, color: UI.muted });
     if (recent.length) {
       p.add({
-        id: 'recent', type: 'list', x: pad, y: y0 + 118, w: W - 2 * pad, h: 3 * 62, rowH: 62, size: 26,
+        id: 'recent', type: 'list', x: pad, y: y + 38, w: W - 2 * pad, h: Math.min(3 * 62, p.h - y - 60), rowH: 62, size: 26,
         items: recent.map(({ book, pos }) => ({
           label: book.title, sub: book.author, right: pos?.label || '', onClick: () => this.openRecent(book),
         })),
       });
     }
+  }
+
+  _fillRoomsTab(p, y0, pad, faceted) {
+    const W = p.w;
+    if (!this._roomLibId || !faceted.some((l) => l.id === this._roomLibId)) this._roomLibId = faceted[0].id;
+    const lib = faceted.find((l) => l.id === this._roomLibId);
+    const books = this.booksByLib[lib.id] || [];
+    let y = y0;
+    if (faceted.length > 1) {
+      const i = faceted.indexOf(lib);
+      p.add({
+        type: 'button', x: W - pad - 260, y: y - 4, w: 260, h: 48, label: 'Next library ▸', size: 24,
+        onClick: () => { this._roomLibId = faceted[(i + 1) % faceted.length].id; this._fillKiosk(); },
+      });
+    }
+    const indexing = lib.indexing;
+    if (!books.length) {
+      const text = indexing && indexing.stage !== 'failed'
+        ? `${lib.title} is being indexed (${Math.round((indexing.progress || 0) * 100)}%). This happens once; its rooms appear here when it is done.`
+        : indexing?.stage === 'failed'
+          ? `Indexing ${lib.title} failed: ${indexing.error || 'unknown error'}`
+          : `${lib.title} has no books.`;
+      p.add({ type: 'text', x: pad, y, w: W - 2 * pad - 280, h: 160, text, size: 28, maxLines: 5 });
+      return;
+    }
+    const room = this.settings.rooms?.[lib.id];
+    p.add({ type: 'text', x: pad, y, w: W - 2 * pad - 280, h: 40, text: `${lib.title} · ${books.length.toLocaleString()} works`, size: 28, weight: '600', maxLines: 1 });
+    p.add({ type: 'text', x: pad, y: y + 40, w: W - 2 * pad, h: 34, text: `Now shelved: ${roomLabel(room)}`, size: 24, color: UI.muted, maxLines: 1 });
+    const { genres, letters } = facetsOf(books);
+    y += 88;
+    const cols = 3;
+    const gw = (W - 2 * pad - (cols - 1) * 10) / cols;
+    const shown = genres.slice(0, 21);
+    shown.forEach((g, i) => {
+      const r = Math.floor(i / cols);
+      const c = i % cols;
+      p.add({
+        id: `room-g-${i}`, type: 'button', x: pad + c * (gw + 10), y: y + r * 58, w: gw, h: 50,
+        label: `${g.name} · ${g.count > 999 ? (g.count / 1000).toFixed(1) + 'k' : g.count}`, size: 22,
+        active: sameRoom(room, { type: 'genre', value: g.name }),
+        onClick: () => this.setRoom(lib.id, { type: 'genre', value: g.name }),
+      });
+    });
+    y += Math.ceil(shown.length / cols) * 58 + 14;
+    p.add({ type: 'text', x: pad, y, w: W - 2 * pad, h: 32, text: `Or all works with titles starting with (rooms hold up to ${ROOM_CAP.toLocaleString()})`, size: 22, color: UI.muted, maxLines: 1 });
+    y += 38;
+    const keys = ['#', ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'];
+    const counts = new Map(letters.map((l) => [l.letter, l.count]));
+    const lc = 14;
+    const lw = (W - 2 * pad - (lc - 1) * 6) / lc;
+    keys.forEach((key, i) => {
+      const r = Math.floor(i / lc);
+      const c = i % lc;
+      p.add({
+        id: `room-l-${key}`, type: 'button', x: pad + c * (lw + 6), y: y + r * 56, w: lw, h: 48, label: key, size: 24,
+        disabled: !counts.get(key), active: sameRoom(room, { type: 'letter', value: key }),
+        onClick: () => this.setRoom(lib.id, { type: 'letter', value: key }),
+      });
+    });
+  }
+
+  /** Library info changed without a rebuild (e.g. indexing progress): refresh the kiosk text. */
+  updateLibraries(libraries) {
+    this.libraries = libraries;
+    if (this._kioskTab === 'rooms') this._fillKiosk();
+  }
+
+  /** Shelves another room of a large library and walks to it. */
+  async setRoom(libId, room, { walk = true } = {}) {
+    if (this.state !== 'browse') return;
+    this.settings.rooms ||= {};
+    if (sameRoom(this.settings.rooms[libId], room)) return;
+    this.settings.rooms[libId] = room;
+    save('settings', this.settings);
+    this.overlay?.showToast(`Shelving ${roomLabel(room)}…`, 'info', 2500);
+    await new Promise((r) => setTimeout(r, 30)); // let the toast show before the rebuild
+    await this._rebuildWorld();
+    if (walk) {
+      const first = this.world.shelves.books().find((b) => b.libId === libId);
+      if (first) {
+        const loc = this.world.shelves.locate(first);
+        if (loc) this.controls.teleportTo(loc.position, loc.yaw);
+      }
+    }
+  }
+
+  /** Makes sure a book is on the shelves (switching its library's room if needed). */
+  async ensureShelved(book) {
+    if (this.world.shelves.locate(book)) return true;
+    const lib = this.libraries.find((l) => l.id === book.libId);
+    const all = this.booksByLib[book.libId] || [];
+    if (!lib || !isFaceted(lib, all)) return false;
+    await this.setRoom(lib.id, roomFor(book, all), { walk: false });
+    return !!this.world.shelves.locate(book);
   }
 
   _buildInspectPanel() {
@@ -184,7 +310,7 @@ export class Interaction {
     p.add({ type: 'text', x: pad, y, w: W - 2 * pad, h: 40, text: book.author || 'Unknown author', size: 32, maxLines: 1 });
     y += 48;
     const lib = this.libraries.find((l) => l.id === book.libId);
-    const meta = [lib?.title, book.rank ? `#${book.rank} most read` : null].filter(Boolean).join(' · ');
+    const meta = [lib?.title, book.genre, book.year, book.rank ? `#${book.rank} most read` : null, book.parts ? `${book.parts} parts` : null].filter(Boolean).join(' · ');
     p.add({ type: 'text', x: pad, y, w: W - 2 * pad, h: 64, text: meta, size: 24, color: UI.muted, maxLines: 2 });
     const pos = load(`pos:${book.libId}:${book.id}`, null);
     const by = p.h - 230;
@@ -482,7 +608,8 @@ export class Interaction {
     this.book = null;
     this.state = 'browse';
     this.controls.locomotionEnabled = true;
-    this._fillKiosk(); // refresh "recently read"
+    if (this._pendingCatalog) await this._rebuildWorld(); // a rescan arrived while reading
+    else this._fillKiosk(); // refresh "recently read"
   }
 
   // ===========================================================================================
@@ -856,15 +983,42 @@ export class Interaction {
     if (mode === this.settings.sort || this.state !== 'browse') return;
     this.settings.sort = mode;
     save('settings', this.settings);
+    await this._rebuildWorld();
+  }
+
+  /**
+   * Replaces the catalogue (after a folder rescan). The shelves are rebuilt right away when
+   * browsing, otherwise as soon as the open book is put back.
+   * @returns {Promise<boolean>} true if rebuilt now
+   */
+  async setCatalog(libraries, booksByLib) {
+    this.libraries = libraries;
+    this.booksByLib = booksByLib;
+    if (this.state !== 'browse') {
+      this._pendingCatalog = true;
+      return false;
+    }
+    await this._rebuildWorld();
+    return true;
+  }
+
+  async _rebuildWorld() {
+    this._pendingCatalog = false;
     this.state = 'busy';
-    const viewer = this.controls.viewerPosition(new THREE.Vector3());
-    const collections = this.libraries.map((library) => ({ library, books: this.booksByLib[library.id] }));
-    await this.world.build(collections, { sort: mode });
-    this.placeKiosk();
-    // Stay where we were if that spot is still walkable.
-    if (!this.world.isWalkable(viewer.x, viewer.z)) this.controls.teleportTo(this.world.spawn.position, this.world.spawn.yaw);
-    this._fillKiosk();
-    this.state = 'browse';
+    try {
+      const viewer = this.controls.viewerPosition(new THREE.Vector3());
+      this._hoveredBook = null;
+      this._highlightUntil = 0;
+      this.tooltip.visible = false;
+      const collections = collectionsFor(this.libraries, this.booksByLib, this.settings);
+      await this.world.build(collections, { sort: this.settings.sort });
+      this.placeKiosk();
+      // Stay where we were if that spot is still walkable.
+      if (!this.world.isWalkable(viewer.x, viewer.z)) this.controls.teleportTo(this.world.spawn.position, this.world.spawn.yaw);
+      this._fillKiosk();
+    } finally {
+      this.state = 'browse';
+    }
   }
 
   /** Teleports in front of the first book with the given letter (or rank key "#N"). */
@@ -904,6 +1058,7 @@ export class Interaction {
   /** From the kiosk's recent list (or search): go to the book and open it for reading. */
   async openRecent(book) {
     if (this.state !== 'browse') return;
+    if (!(await this.ensureShelved(book))) return;
     this.showBook(book);
     await this._tween(0.4, () => {});
     await this.pick(book);
@@ -914,6 +1069,10 @@ export class Interaction {
   async searchPick(book) {
     if (this.state === 'inspect' || this.state === 'read') await this.putBack();
     if (this.state !== 'browse') return;
+    if (!(await this.ensureShelved(book))) {
+      this.overlay?.showToast('That book is not on the shelves.', 'error');
+      return;
+    }
     this.showBook(book);
     if (!this.controls.presenting) {
       await this._tween(0.5, () => {});

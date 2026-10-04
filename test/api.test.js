@@ -221,6 +221,7 @@ describe('HTTP API (synthetic library)', () => {
     const r = await get('/api/libraries');
     assert.equal(r.status, 200);
     assert.deepEqual(json(r), {
+      generation: 1,
       libraries: [{
         id: 'api-fixture', file: 'api fixture.zim', kind: 'gutenberg', title: 'API Fixture', description: null,
         longDescription: null, language: null, date: null, creator: null, publisher: null, name: null,
@@ -231,6 +232,33 @@ describe('HTTP API (synthetic library)', () => {
     assert.equal(ill.status, 200);
     assert.equal(ill.headers['content-type'], 'image/png');
     assert.deepEqual(ill.body, png(48, 48));
+  });
+
+  it('POST /api/rescan picks up added and removed archives', async () => {
+    const extra = path.join(tmp, 'zims', 'second.zim');
+    writeFixture(extra);
+    try {
+      const r = await get('/api/rescan', { method: 'POST' });
+      assert.equal(r.status, 200);
+      assert.equal(r.headers['content-type'], JSON_TYPE);
+      const body = json(r);
+      assert.deepEqual(body.added, ['second']);
+      assert.deepEqual(body.removed, []);
+      assert.equal(body.generation, 2);
+      assert.deepEqual(body.libraries.map((l) => l.id), ['api-fixture', 'second']);
+      const list = json(await get('/api/libraries'));
+      assert.equal(list.generation, 2);
+      assert.equal((await get('/api/libraries/second/books')).status, 200);
+    } finally {
+      fs.rmSync(extra);
+    }
+    const r2 = json(await get('/api/rescan', { method: 'POST' }));
+    assert.deepEqual(r2.removed, ['second']);
+    assert.equal(r2.generation, 3);
+    assert.equal((await get('/api/libraries/second/books')).status, 404);
+    const wrong = await get('/api/rescan');
+    assert.equal(wrong.status, 405);
+    assert.equal(wrong.headers.allow, 'POST');
   });
 
   it('GET /api/libraries/:lib/books', async () => {

@@ -25,6 +25,8 @@ const ROW_H = Math.ceil(0.31 * SPINE_PPM) + 4;
 const LABEL = { w: 440, h: 80 }; // label plate in the atlas (px)
 const PLATE = { w: 0.42, h: 0.064 }; // label plate on the bookcase (m)
 const Y90 = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2);
+const HIRES_BUDGET = 8; // full-resolution spine atlases kept at once in lazy mode (~16 MB each)
+const HIRES_RANGE = 12; // metres
 
 /** Height of the surface books stand on, for shelf row r counted from the top (0 = top row). */
 export function rowSurface(r) {
@@ -80,7 +82,7 @@ export function rangeLabel(items, sort) {
   if (!items.length) return '';
   const a = items[0].book;
   const b = items[items.length - 1].book;
-  if (sort === 'popularity') return `#${a.rank ?? '?'} – #${b.rank ?? '?'}`;
+  if (sort === 'popularity' && a.rank != null && b.rank != null) return `#${a.rank} – #${b.rank}`;
   const key = sort === 'author'
     ? (bk) => {
       // Various / Anonymous sort last under a 'zzzz' key; show the real word instead.
@@ -511,26 +513,26 @@ export class Bookshelves {
     return this.cases.map((cs) => ({ position: cs.position, yaw: cs.yaw, halfW: W / 2 + 0.05, halfD: D / 2 + 0.03 }));
   }
 
-  /** LOD for big libraries: sharpen nearby atlases, blur far ones (one swap per call). */
+  /**
+   * LOD for big libraries: only the HIRES_BUDGET nearest bookcases (within HIRES_RANGE) keep
+   * full-resolution spine atlases; the rest use 1/8-scale ones. At most one atlas is swapped per
+   * call, so walking never causes a burst of canvas work. Caps GPU texture memory on headsets.
+   */
   update(dt, camera) {
-    if (!this._lazy || !camera) return;
+    if (!this._lazy || !camera || !this.cases.length) return;
     this._lodTimer -= dt;
     if (this._lodTimer > 0) return;
-    this._lodTimer = 0.3;
+    this._lodTimer = 0.25;
     const cam = camera.getWorldPosition(this._tmp);
-    let swap = null;
-    let swapD = Infinity;
-    for (const cs of this.cases) {
-      const d = cs.position.distanceTo(cam);
-      if (cs.quality === 'low' && d < 9 && d < swapD) {
-        swap = cs;
-        swapD = d;
-      } else if (cs.quality === 'high' && d > 15 && !swap) {
-        this._setQuality(cs, 'low');
-        return;
-      }
-    }
-    if (swap) this._setQuality(swap, 'high');
+    const ranked = this.cases
+      .map((cs) => ({ cs, d: cs.position.distanceTo(cam) }))
+      .sort((a, b) => a.d - b.d);
+    const want = new Set(ranked.slice(0, HIRES_BUDGET).filter((r) => r.d < HIRES_RANGE).map((r) => r.cs));
+    // Free memory first (a far sharp atlas), then sharpen the nearest blurry one.
+    const drop = ranked.slice().reverse().find((r) => r.cs.quality === 'high' && !want.has(r.cs));
+    if (drop) return this._setQuality(drop.cs, 'low');
+    const add = ranked.find((r) => r.cs.quality === 'low' && want.has(r.cs));
+    if (add) this._setQuality(add.cs, 'high');
   }
 
   _setQuality(cs, q) {

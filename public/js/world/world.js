@@ -14,7 +14,9 @@ import { canvasTexture, makeSignCanvas } from './textures.js';
 
 const CASE_GAP = 0.06; // between neighbouring bookcases
 const ROTUNDA_MAX_CASES = 22;
-const LAZY_THRESHOLD = 3000; // books; above this, spine atlases are sharpened on approach
+// Books; above this (~10 bookcases) only the nearest bookcases get sharp spine atlases, which
+// keeps GPU texture memory bounded on headsets.
+const LAZY_THRESHOLD = 1200;
 
 export class World {
   /**
@@ -49,11 +51,11 @@ export class World {
     const cases = [];
     this.sections = [];
     let total = 0;
-    for (const { library, books } of collections) {
+    for (const { library, books, subtitle } of collections) {
       for (const b of books) b.libId = library.id;
       const packed = packBookcases(sortBooks(books, sort));
       if (!packed.length) continue;
-      this.sections.push({ library, first: cases.length, count: packed.length, books: books.length });
+      this.sections.push({ library, first: cases.length, count: packed.length, books: books.length, subtitle });
       for (const p of packed) cases.push({ ...p, label: rangeLabel(p.items, sort), libId: library.id });
       total += books.length;
     }
@@ -146,7 +148,7 @@ export class World {
       const cs = cases[sec.first];
       const lib = sec.library;
       const canvas = makeSignCanvas(lib.title || lib.name || lib.id,
-        [lib.description, `${sec.books} book${sec.books === 1 ? '' : 's'}`].filter(Boolean).join(' · '));
+        sec.subtitle ?? [lib.description, `${sec.books} book${sec.books === 1 ? '' : 's'}`].filter(Boolean).join(' · '));
       const mat = new THREE.MeshLambertMaterial({ map: canvasTexture(canvas, { anisotropy: 8 }), emissive: 0x221608 });
       const w = Math.min(2.2, BOOKCASE.width * Math.min(2, sec.count) - 0.1);
       const sign = new THREE.Mesh(new THREE.PlaneGeometry(w, w / 4), mat);
