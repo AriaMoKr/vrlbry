@@ -5,6 +5,7 @@
 // keeps the DOM overlay usable and works in embedded browsers where pointer lock is refused.
 
 import * as THREE from 'three';
+import { firstPad, readPad } from './gamepad.js';
 import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
 import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js';
 import { PLAYER } from '../config.js';
@@ -21,6 +22,8 @@ const _v = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 const _q = new THREE.Quaternion();
 const _up = new THREE.Vector3(0, 1, 0);
+const SCREEN_CENTRE = new THREE.Vector2(0, 0);
+const PAD_LOOK = { yaw: 2.4, pitch: 1.6 }; // rad/s at full right-stick deflection
 
 function makePointerVisual() {
   const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1)]);
@@ -91,6 +94,7 @@ export class Controls extends EventTarget {
       down: null,
     };
     this._touches = new Map();
+    this._pad = this._makePad();
     this._bindDom();
     this._teleport = this._makeTeleportVisual();
     scene.add(this._teleport.group);
@@ -427,6 +431,95 @@ export class Controls extends EventTarget {
     return p;
   }
 
+  // -------------------------------------------------------------------------------------------
+  // Gamepad (desktop & phone): left stick walks, right stick looks, a centre-of-screen pointer
+  // (with a crosshair) aims, and buttons become the events mouse, keyboard and VR controllers send.
+
+  _makePad() {
+    const crosshair = document.createElement('div');
+    crosshair.className = 'pad-crosshair';
+    crosshair.hidden = true;
+    (this.dom.parentElement || document.body).appendChild(crosshair);
+    const pointer = {
+      id: 'gamepad', kind: 'gamepad', hand: null, raycaster: new THREE.Raycaster(), object3D: null, hovering: false,
+      setHitDistance() {},
+      setHovering: (h) => {
+        pointer.hovering = h;
+        crosshair.classList.toggle('hover', h);
+      },
+    };
+    pointer.raycaster.far = 40;
+    return { pointer, crosshair, active: false, buttons: {}, state: null, wheelWait: 0 };
+  }
+
+  /** The pad takes over the pointer when used, and hands it back to the mouse when that moves. */
+  _setPadActive(on) {
+    const P = this._pad;
+    if (P.active === on) return;
+    P.active = on;
+    P.crosshair.hidden = !on;
+    if (!on) P.pointer.setHovering(false);
+    this._emit('gamepad', { active: on });
+  }
+
+  /** Polls the pad: looking and walking now; button events after the rays are updated. */
+  _pollPad(dt) {
+    const P = this._pad;
+    const gp = firstPad(navigator.getGamepads?.());
+    P.state = null;
+    if (!gp) {
+      P.buttons = {};
+      this._setPadActive(false);
+      return;
+    }
+    const s = readPad(gp, P.buttons);
+    P.buttons = s.buttons;
+    if (s.down.length || s.move.x || s.move.y || s.look.x || s.look.y || s.lt > 0.15 || s.rt > 0.15) this._setPadActive(true);
+    if (!P.active) return;
+    P.state = s;
+    if (this.lookEnabled !== false) {
+      this.yaw -= s.look.x * PAD_LOOK.yaw * dt;
+      this.pitch = Math.max(-1.35, Math.min(1.35, this.pitch - s.look.y * PAD_LOOK.pitch * dt));
+    }
+    const m = Math.hypot(s.move.x, s.move.y);
+    if (this.locomotionEnabled && m > 0) {
+      this.rig.rotation.y = this.yaw;
+      this.rig.updateMatrixWorld(true);
+      this._move(-s.move.y / m, s.move.x / m, PLAYER.walkSpeed * (s.buttons.ls ? 1.9 : 1) * Math.min(1, m) * dt);
+    }
+  }
+
+  _padEvents(dt) {
+    const P = this._pad;
+    const s = P.state;
+    if (!s) return;
+    P.pointer.raycaster.setFromCamera(SCREEN_CENTRE, this.camera);
+    const key = (k, code, pressed) => this._emit('key', { key: k, code, pressed });
+    const each = (names, pressed) => {
+      for (const name of names) {
+        if (name === 'a') {
+          if (pressed) this._emit('select', { pointer: P.pointer });
+          this._emit('button', { hand: 'right', name: 'a', pressed });
+        } else if (name === 'b' || name === 'back') this._emit('button', { hand: 'right', name: 'b', pressed });
+        else if (name === 'x') key('t', 'KeyT', pressed); // contents
+        else if (name === 'y') key('n', 'KeyN', pressed); // page theme
+        else if (name === 'lb' || name === 'left') key('ArrowLeft', 'ArrowLeft', pressed);
+        else if (name === 'rb' || name === 'right') key('ArrowRight', 'ArrowRight', pressed);
+        else if (name === 'up') key('+', 'Equal', pressed); // text size
+        else if (name === 'down') key('-', 'Minus', pressed);
+      }
+    };
+    each(s.down, true);
+    each(s.up, false);
+    // Triggers: book distance while reading, list scrolling at the kiosk; a wheel that repeats.
+    const t = s.rt - s.lt;
+    P.wheelWait -= dt;
+    if (Math.abs(t) > 0.15 && P.wheelWait <= 0) {
+      this._emit('wheel', { deltaY: 100 * t });
+      P.wheelWait = 0.12;
+    }
+  }
+
   _setNdc(clientX, clientY) {
     const r = this.dom.getBoundingClientRect();
     this._mouse.ndc.set(((clientX - r.left) / r.width) * 2 - 1, -((clientY - r.top) / r.height) * 2 + 1);
@@ -438,6 +531,7 @@ export class Controls extends EventTarget {
     el.addEventListener('contextmenu', (e) => e.preventDefault());
     el.addEventListener('pointerdown', (e) => {
       if (this.presenting) return;
+      this._setPadActive(false);
       el.setPointerCapture?.(e.pointerId);
       if (e.pointerType === 'touch') return this._touchDown(e);
       this._setNdc(e.clientX, e.clientY);
@@ -447,6 +541,7 @@ export class Controls extends EventTarget {
     });
     el.addEventListener('pointermove', (e) => {
       if (this.presenting) return;
+      if (e.movementX || e.movementY) this._setPadActive(false);
       if (e.pointerType === 'touch') return this._touchMove(e);
       this._setNdc(e.clientX, e.clientY);
       this._mouse.inside = true;
@@ -555,6 +650,7 @@ export class Controls extends EventTarget {
   }
 
   _desktopUpdate(dt) {
+    this._pollPad(dt);
     this.rig.rotation.y = this.yaw;
     this.camera.rotation.set(this.pitch, 0, 0);
     this.camera.position.set(0, PLAYER.eyeHeight, 0);
@@ -580,6 +676,7 @@ export class Controls extends EventTarget {
     }
     this.rig.updateMatrixWorld(true);
     this._updateScreenRay(this._mouse.pointer);
+    this._padEvents(dt);
   }
 
   /** Per frame: poll input, apply locomotion, refresh pointer rays and the active pointer list. */
@@ -590,11 +687,17 @@ export class Controls extends EventTarget {
       for (const e of this._xr) if (e.pointer) this.pointers.push(e.pointer);
     } else {
       this._desktopUpdate(dt);
-      if (this._mouse.inside) this.pointers.push(this._mouse.pointer);
+      if (this._pad.active) this.pointers.push(this._pad.pointer);
+      else if (this._mouse.inside) this.pointers.push(this._mouse.pointer);
     }
   }
 
   /** Called when an XR session ends: restore the desktop camera pose facing the same way. */
+  /** Whether a gamepad is driving the view (it is not polled in XR). */
+  get gamepadActive() {
+    return this._pad.active;
+  }
+
   onSessionEnd() {
     this.yaw = this.rig.rotation.y;
     this.pitch = 0;

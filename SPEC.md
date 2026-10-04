@@ -737,7 +737,18 @@ export class Controls extends EventTarget {
   **Touch:** drag to look, tap = select at touch point, two-finger drag = move, pinch = `wheel`,
   horizontal swipe = `swipe` `{ dir }`. Pointers also have `setHovering(bool)`; extra events
   `teleport` and `turn` report locomotion.
-- Gamepad index mapping per xr-standard: buttons 0 trigger, 1 squeeze, 3 thumbstick press,
+  **Gamepad** (`xr/gamepad.js`, W3C standard mapping, desktop and phone only; not polled in XR):
+  the first connected pad becomes active when used and inactive when the mouse moves, and emits
+  `gamepad { active }`, which the overlay uses for its hint and help. While it is active, a
+  pointer `gamepad` through the screen centre (crosshair `.pad-crosshair`) replaces the mouse
+  pointer. The left stick walks (2 m/s; clicking it runs), and the right stick looks (2.4 / 1.6
+  rad/s, radial dead zone 0.18). Buttons send the existing events, so `interaction.js` is
+  unchanged:
+  - A: `select` plus `button a`; B and Back: `button b`;
+  - LB / RB and D-pad ← / →: `key` ArrowLeft / ArrowRight; D-pad ↑ / ↓: `key` `+` / `-`;
+  - X: `key t` (contents); Y: `key n` (theme);
+  - the triggers: a repeating `wheel` (100 · (RT − LT) every 0.12 s).
+- XR controller gamepads follow xr-standard: buttons 0 trigger, 1 squeeze, 3 thumbstick press,
   4 A/X, 5 B/Y; axes 2/3 thumbstick.
 
 ### 5.5 Panels (`ui/panel.js`)

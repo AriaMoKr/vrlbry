@@ -2,24 +2,19 @@
 
 - **Load Wikipedia ZIMs.** A Wikipedia ZIM (mwoffliner, `Source` = `*.wikipedia.org`) currently
   falls back to generic mode: only its first 2,000 HTML articles in URL order (`--max-generic`).
-  Needed:
+  Planned look: Wikipedia is its own room of encyclopedia volumes. Each book covers a range of
+  titles (its spine shows the range, e.g. "Aachen – Abbey") with about 1,000 pages per volume.
+  Open questions are in the design discussion of 2026-10-04 (what a page is, which ZIM, title
+  order, links, search, the all-libraries hall). Needed:
   - detection, like `isWikisource`;
   - an article index built in the background and cached in `.cache/`, as for Wikisource.
     `wikipedia_en_all_maxi` has ~6.8 M articles (~100 GB), so expect a long first pass;
-  - server-side paging and search. The client loads every book descriptor today, which cannot
-    work for millions of articles: the catalogue, rooms, search and "recently read" all depend
-    on it;
-  - articles as short books (usually one chunk), with rooms by title letter or category. The
-    200-bookcase cap (`MAX_BOOKCASES`) applies.
-- **Gamepad support.** Only the gamepads built into the XR controllers are read (`src.gamepad` in
-  `xr/controls.js`). A standard controller (Xbox, PlayStation or another Bluetooth pad, through
-  `navigator.getGamepads()`) does nothing on desktop or phone. Map it like the VR controls:
-  - left stick to walk, right stick to look and turn;
-  - A to select or read, B to go back or put a book back;
-  - shoulder buttons or the D-pad to turn pages;
-  - a centre-of-screen pointer for picking books and using the kiosk panels.
-
-  Emit the same `Controls` events so `interaction.js` needs no changes.
+  - volumes as the books: the index stores each volume's first and last article, and reading a
+    volume streams its articles as chunks, each starting on a fresh page, with the article list
+    as its contents. English needs roughly 5,000–9,000 volumes, a catalogue the client can load
+    as it is, and at ~65 volumes per bookcase they may fit one room under the 200-bookcase cap;
+  - server-side article search (title → volume and page), since the client cannot hold millions
+    of article titles.
 - **Dropped frames while walking.** A Quest 3 still drops ~4 % of frames walking an ordinary room
   and ~8 % in the all-libraries hall, with no clear cause since atlas uploads were fixed. Next:
   record GC and long-task timing per scenario (`?perf`, `tools/quest-perf.mjs`).

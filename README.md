@@ -93,17 +93,20 @@ Then press **Enter VR**.
 
 ## Controls
 
-| | Desktop | Touch | VR |
-| --- | --- | --- | --- |
-| Look | drag the mouse | drag one finger | turn your head |
-| Move | W A S D / arrows, Q E to turn, Shift to hurry | drag two fingers | right stick forward: teleport arc · flick right stick: snap turn · left stick: walk |
-| Take a book | click it | tap it | point and pull the trigger (or pinch) |
-| Read | click the book or **Read** | tap **Read** | trigger on the book, or **A** |
-| Turn pages | ← → Space, or click a page | swipe, or tap a page | flick the right stick, or trigger on a page |
-| Text size, theme, contents | + / −, toolbar | toolbar | toolbar |
-| Book distance / size | mouse wheel | pinch | right stick up/down · left stick up/down · grip to move the book |
-| Close / put back | Esc | **✕** / **Put back** | **B** or **Y** |
-| Leave VR | | | hold **B** or **Y** for a second while browsing, or **Exit VR** on the catalogue stand (or the headset's Meta button) |
+| | Desktop | Touch | Gamepad | VR |
+| --- | --- | --- | --- | --- |
+| Look | drag the mouse | drag one finger | right stick | turn your head |
+| Move | W A S D / arrows, Q E to turn, Shift to hurry | drag two fingers | left stick (click it to hurry) | right stick forward: teleport arc · flick right stick: snap turn · left stick: walk |
+| Take a book | click it | tap it | aim the crosshair, **A** | point and pull the trigger (or pinch) |
+| Read | click the book or **Read** | tap **Read** | **A** | trigger on the book, or **A** |
+| Turn pages | ← → Space, or click a page | swipe, or tap a page | bumpers, or D-pad ← → | flick the right stick, or trigger on a page |
+| Text size, theme, contents | + / −, toolbar | toolbar | D-pad ↑ ↓ · **Y** · **X** | toolbar |
+| Book distance / size | mouse wheel | pinch | triggers | right stick up/down · left stick up/down · grip to move the book |
+| Close / put back | Esc | **✕** / **Put back** | **B** | **B** or **Y** |
+| Leave VR | | | | hold **B** or **Y** for a second while browsing, or **Exit VR** on the catalogue stand (or the headset's Meta button) |
+
+A gamepad (Xbox, PlayStation or another Bluetooth pad) works on a desktop or a phone; it takes
+over as soon as you use it, and moving the mouse hands control back.
 
 The catalogue stand next to where you start lets you re-shelve the books by title, author or
 popularity, jump to a letter, pick a book at random ("Surprise me"), reopen recently read books,

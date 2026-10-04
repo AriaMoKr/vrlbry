@@ -131,6 +131,7 @@ async function start() {
   }
   interaction.onExitVR = () => renderer.xr.getSession()?.end();
   interaction.onReload = () => location.reload();
+  controls.addEventListener('gamepad', (e) => overlay.setGamepad(e.detail.active));
   // When the website last changed, fetched once: it tells which version this page is running.
   let loadedVersion = null;
   getVersion().then(({ changed }) => {

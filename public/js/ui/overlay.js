@@ -19,6 +19,15 @@ const HELP = {
     ['Read', 'Tap “Read” · swipe or tap the page edges to turn'],
     ['Put it back', 'Tap “Put back”'],
   ],
+  gamepad: [
+    ['Look around', 'Right stick'],
+    ['Walk', 'Left stick · click it to hurry'],
+    ['Take a book', 'Aim the crosshair, press A'],
+    ['Read', 'A · turn pages with the bumpers or ← → on the D-pad'],
+    ['Text size, contents, theme', 'D-pad ↑ ↓ · X · Y'],
+    ['Book distance', 'Triggers'],
+    ['Put it back', 'B'],
+  ],
   vr: [
     ['Point & select', 'Aim the ray, pull the trigger (or pinch with hand tracking)'],
     ['Teleport', 'Push the right stick forward, aim the arc, release'],
@@ -154,14 +163,27 @@ export class Overlay {
 
   setMode(mode) {
     this.mode = mode;
-    this.$('.ov-hint').textContent = mode === 'touch'
-      ? 'Drag to look · two fingers to walk · tap a book'
-      : 'Drag to look · WASD to walk · click a book';
+    this._renderHint();
     this._renderHelp();
+  }
+
+  /** A gamepad is (or stops) driving the view: hint and help show its controls. */
+  setGamepad(on) {
+    this._pad = on;
+    if (on) this._padSeen = true;
+    this._renderHint();
+    this._renderHelp();
+  }
+
+  _renderHint() {
+    this.$('.ov-hint').textContent = this._pad ? 'Right stick to look · left stick to walk · A takes a book'
+      : this.mode === 'touch' ? 'Drag to look · two fingers to walk · tap a book'
+        : 'Drag to look · WASD to walk · click a book';
   }
 
   _renderHelp() {
     const sections = [[this.mode === 'touch' ? 'Touch' : 'Mouse & keyboard', HELP[this.mode]]];
+    if (this._padSeen) sections.push(['Gamepad', HELP.gamepad]);
     if (this._vr) sections.push(['VR headset', HELP.vr]);
     this.$('.ov-help-body').innerHTML = sections.map(([title, rows]) => `
       <h3>${title}</h3><dl>${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>`).join('');
