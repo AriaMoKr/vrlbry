@@ -543,7 +543,8 @@ describe('Library.scan', () => {
     fs.writeFileSync(path.join(dir, 'notes.txt'), 'x');
     fs.mkdirSync(path.join(dir, 'sub.zim'));
     const log = collectLog();
-    const library = await Library.scan(dir, { log });
+    const warn = collectLog();
+    const library = await Library.scan(dir, { log, warn });
     try {
       assert.equal(library.dir, path.resolve(dir));
       assert.deepEqual(library.list().map((l) => [l.file, l.id, l.kind]), [
@@ -553,9 +554,27 @@ describe('Library.scan', () => {
       ]);
       assert.equal(library.get('lib-one-2').file, 'lib-one.zim');
       assert.equal(library.get('nope'), undefined);
+      // Problems go to `warn`, progress to `log`.
+      assert.ok(warn.lines.some((l) => /broken\.zim: skipped/.test(l)), warn.lines.join('\n'));
+      assert.equal(warn.lines.filter((l) => /parts\.zimaa.*not supported/.test(l)).length, 1);
+      assert.ok(warn.lines.some((l) => /lib one\.zim: 1 book\(s\) have neither HTML nor EPUB/.test(l)), warn.lines.join('\n'));
+      assert.ok(log.lines.some((l) => /lib one\.zim: gutenberg library, 8 book\(s\)/.test(l)), log.lines.join('\n'));
+      assert.ok(!log.lines.some((l) => /skipped|not supported|neither/.test(l)), log.lines.join('\n'));
+      assert.ok(![...log.lines, ...warn.lines].some((l) => /notes\.txt/.test(l)));
+    } finally {
+      await library.close();
+    }
+  });
+
+  it('sends warnings to `log` when no `warn` is given', async () => {
+    const dir = path.join(tmp, 'scan-log-only');
+    fs.mkdirSync(dir);
+    fs.writeFileSync(path.join(dir, 'broken.zim'), Buffer.alloc(200, 7));
+    const log = collectLog();
+    const library = await Library.scan(dir, { log });
+    try {
+      assert.equal(library.list().length, 0);
       assert.ok(log.lines.some((l) => /broken\.zim: skipped/.test(l)), log.lines.join('\n'));
-      assert.equal(log.lines.filter((l) => /parts\.zimaa.*not supported/.test(l)).length, 1);
-      assert.ok(!log.lines.some((l) => /notes\.txt/.test(l)));
     } finally {
       await library.close();
     }

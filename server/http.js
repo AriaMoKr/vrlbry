@@ -116,9 +116,11 @@ export function createApp(library, { publicDir = DEFAULT_PUBLIC_DIR, vendorDirs 
     if (area === 'vendor') {
       const root = vendorRoots.get(segments[1]);
       if (!root || segments.length < 3) return sendText(req, res, 404, 'Not found');
-      return serveFile(req, res, root, segments.slice(2), { trailingSlash, cacheControl: VENDOR_CACHE });
+      return serveFile(req, res, root, segments.slice(2), {
+        trailingSlash, cacheControl: VENDOR_CACHE, urlPrefix: `/vendor/${encodeURIComponent(segments[1])}`,
+      });
     }
-    return serveFile(req, res, publicRoot, segments, { trailingSlash, cacheControl: 'no-cache', isRoot: true });
+    return serveFile(req, res, publicRoot, segments, { trailingSlash, cacheControl: 'no-cache', isRoot: true, urlPrefix: '' });
   }
 
   // ------------------------------------------------------------------------------------------
@@ -197,7 +199,7 @@ export function createApp(library, { publicDir = DEFAULT_PUBLIC_DIR, vendorDirs 
   // ------------------------------------------------------------------------------------------
   // Static files
 
-  async function serveFile(req, res, root, segs, { trailingSlash, cacheControl, isRoot = false }) {
+  async function serveFile(req, res, root, segs, { trailingSlash, cacheControl, isRoot = false, urlPrefix }) {
     const parts = segs.filter((s) => s !== '');
     for (const seg of parts) {
       // Decoded segments must be plain names: no traversal, no separators (either OS), no drive
@@ -212,6 +214,14 @@ export function createApp(library, { publicDir = DEFAULT_PUBLIC_DIR, vendorDirs 
 
     let stat = await fs.promises.stat(file).catch(() => null);
     if (stat && stat.isDirectory()) {
+      // '/dev' → '/dev/': relative links inside dev/index.html must resolve inside the folder.
+      // The target is rebuilt from the validated segments (never echoed from the raw URL, which
+      // could turn '//host' into an open redirect); the query string is kept.
+      if (!trailingSlash) {
+        const q = req.url.indexOf('?');
+        const location = `${urlPrefix}/${parts.map(encodeURIComponent).join('/')}/${q >= 0 ? req.url.slice(q) : ''}`;
+        return sendRedirect(req, res, location);
+      }
       file = path.join(file, 'index.html');
       stat = await fs.promises.stat(file).catch(() => null);
     }
@@ -445,6 +455,16 @@ function sendError(req, res, status, message) {
   res.setHeader('Content-Type', JSON_TYPE);
   res.setHeader('Content-Length', String(body.length));
   res.setHeader('Cache-Control', 'no-store');
+  res.end(req.method === 'HEAD' ? undefined : body);
+}
+
+function sendRedirect(req, res, location) {
+  const body = Buffer.from(`Moved to ${location}\n`, 'utf8');
+  res.statusCode = 301;
+  res.setHeader('Location', location);
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.setHeader('Content-Length', String(body.length));
+  res.setHeader('Cache-Control', 'no-cache');
   res.end(req.method === 'HEAD' ? undefined : body);
 }
 

@@ -21,6 +21,13 @@ const gzipAsync = promisify(zlib.gzip);
 
 /** Default byte budget for converted books, shared by all archives of a Library. */
 const CONTENT_CACHE_BYTES = 300 * 1024 * 1024;
+/**
+ * Decompressed-cluster budget per archive. Smaller than ZimArchive's own default (256 MB): a
+ * book's HTML cluster is needed once per conversion and the result is cached above, so a big
+ * cluster cache mostly holds dead text (measured on the reference ZIM: ~200 MB less RSS after
+ * converting every book, same conversion time).
+ */
+const ARCHIVE_CLUSTER_CACHE_BYTES = 64 * 1024 * 1024;
 /** Parsed EPUBs (zip buffer + decoded documents) kept for /res/ requests. */
 const EPUB_CACHE_BYTES = 96 * 1024 * 1024;
 /** Concurrent image reads while filling in image sizes. */
@@ -213,7 +220,7 @@ class Chunk {
  */
 export class ArchiveLibrary {
   /** @private */
-  constructor({ id, filePath, archive, log, maxGenericBooks, contentCache }) {
+  constructor({ id, filePath, archive, log, warn, maxGenericBooks, contentCache }) {
     /** URL-safe id (§3.6). */
     this.id = id;
     /** Basename of the ZIM file. */
@@ -224,6 +231,7 @@ export class ArchiveLibrary {
     /** @type {'gutenberg'|'generic'} */
     this.kind = 'generic';
     this._log = log;
+    this._warn = warn;
     this._maxGenericBooks = maxGenericBooks;
     this._contentCache = contentCache;
     this._inflight = new Map(); // bookId → Promise<content>
@@ -245,24 +253,26 @@ export class ArchiveLibrary {
    * @param {object} [opts]
    * @param {string} [opts.id] library id (default: from the file name)
    * @param {number} [opts.maxGenericBooks=2000]
-   * @param {(msg: string) => void} [opts.log=console.log]
+   * @param {(msg: string) => void} [opts.log=console.log] progress / information
+   * @param {(msg: string) => void} [opts.warn=log] problems with the archive's data
    * @param {LRUCache} [opts.contentCache] shared converted-book cache (default: a private one)
    * @param {number} [opts.contentCacheBytes] budget of the private cache (default 300 MB)
-   * @param {object} [opts.archiveOptions] passed to ZimArchive.open
+   * @param {object} [opts.archiveOptions] passed to ZimArchive.open (default cluster cache 64 MB)
    * @returns {Promise<ArchiveLibrary>}
    */
   static async open(filePath, {
     id = libraryIdFor(filePath),
     maxGenericBooks = 2000,
     log = console.log,
+    warn = log,
     contentCache,
     contentCacheBytes = CONTENT_CACHE_BYTES,
     archiveOptions,
   } = {}) {
-    const archive = await ZimArchive.open(filePath, archiveOptions);
+    const archive = await ZimArchive.open(filePath, { clusterCacheBytes: ARCHIVE_CLUSTER_CACHE_BYTES, ...archiveOptions });
     try {
       const lib = new ArchiveLibrary({
-        id, filePath, archive, log, maxGenericBooks,
+        id, filePath, archive, log, warn, maxGenericBooks,
         contentCache: contentCache ?? createContentCache(contentCacheBytes),
       });
       await lib.books(); // catalog now: `kind` is final and errors surface at scan time
@@ -403,7 +413,7 @@ export class ArchiveLibrary {
   async _buildCatalog() {
     this._byId.clear(); // a retry after a failed build starts clean
     this._meta = await this.archive.getMetadata().catch((err) => {
-      this._log(`${this.file}: cannot read metadata: ${err.message}`);
+      this._warn(`${this.file}: cannot read metadata: ${err.message}`);
       return {};
     });
     const index = await this._findIndex();
@@ -413,7 +423,7 @@ export class ArchiveLibrary {
         this.kind = 'gutenberg';
         return books;
       } catch (err) {
-        this._log(`${this.file}: Gutenberg index ${index.entry.path} is unusable (${err.message}); listing HTML articles instead`);
+        this._warn(`${this.file}: Gutenberg index ${index.entry.path} is unusable (${err.message}); listing HTML articles instead`);
         this._byId.clear();
       }
     }
@@ -445,7 +455,7 @@ export class ArchiveLibrary {
         const content = await this.archive.getContent(entry);
         return content ? parseIndexScript(content.data) : null;
       } catch (err) {
-        this._log(`${this.file}: cannot parse ${entry.path}: ${err.message}`);
+        this._warn(`${this.file}: cannot parse ${entry.path}: ${err.message}`);
         return null;
       }
     }
@@ -526,7 +536,7 @@ export class ArchiveLibrary {
     // Registered in rank order so iteration over the id map is deterministic.
     for (const rec of recs) this._byId.set(rec.book.id, rec);
     const unreadable = recs.filter((r) => !r.book.readable).length;
-    if (unreadable) this._log(`${this.file}: ${unreadable} book(s) have neither HTML nor EPUB in the archive`);
+    if (unreadable) this._warn(`${this.file}: ${unreadable} book(s) have neither HTML nor EPUB in the archive`);
 
     const books = recs.map((r) => r.book);
     if (Array.isArray(shelves)) {
@@ -842,12 +852,19 @@ export class Library {
    * @param {string} dir
    * @param {object} [opts]
    * @param {number} [opts.maxGenericBooks=2000]
-   * @param {(msg: string) => void} [opts.log=console.log]
+   * @param {(msg: string) => void} [opts.log=console.log] progress / information
+   * @param {(msg: string) => void} [opts.warn=log] skipped files and problems with archive data
    * @param {number} [opts.contentCacheBytes=314572800] budget for converted books (all archives)
-   * @param {object} [opts.archiveOptions] passed to ZimArchive.open
+   * @param {object} [opts.archiveOptions] passed to ZimArchive.open (default cluster cache 64 MB)
    * @returns {Promise<Library>}
    */
-  static async scan(dir, { maxGenericBooks = 2000, log = console.log, contentCacheBytes = CONTENT_CACHE_BYTES, archiveOptions } = {}) {
+  static async scan(dir, {
+    maxGenericBooks = 2000,
+    log = console.log,
+    warn = log,
+    contentCacheBytes = CONTENT_CACHE_BYTES,
+    archiveOptions,
+  } = {}) {
     const abs = path.resolve(dir);
     const dirents = await fs.readdir(abs, { withFileTypes: true });
     const names = dirents.filter((d) => d.isFile() || d.isSymbolicLink()).map((d) => d.name)
@@ -861,7 +878,7 @@ export class Library {
         const stem = name.slice(0, -2);
         if (!splitSets.has(stem)) {
           splitSets.add(stem);
-          log(`${stem}aa…: split ZIM archives are not supported (join the parts into one .zim file)`);
+          warn(`${stem}aa…: split ZIM archives are not supported (join the parts into one .zim file)`);
         }
         continue;
       }
@@ -871,13 +888,15 @@ export class Library {
       for (let n = 2; used.has(id); n++) id = `${base}-${n}`;
       const t0 = performance.now();
       try {
-        const lib = await ArchiveLibrary.open(path.join(abs, name), { id, maxGenericBooks, log, contentCache: cache, archiveOptions });
+        const lib = await ArchiveLibrary.open(path.join(abs, name), {
+          id, maxGenericBooks, log, warn, contentCache: cache, archiveOptions,
+        });
         used.add(id);
         libs.push(lib);
         const count = (await lib.books()).length;
         log(`${name}: ${lib.kind} library, ${count} book(s) (${Math.round(performance.now() - t0)} ms)`);
       } catch (err) {
-        log(`${name}: skipped, cannot open: ${err.message}`);
+        warn(`${name}: skipped, cannot open: ${err.message}`);
       }
     }
     return new Library(abs, libs, cache);

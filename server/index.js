@@ -36,7 +36,7 @@ Options:
   --cert <file>        PEM certificate for --https
   --key <file>         PEM private key for --https
   --max-generic <n>    max books listed from a non-Gutenberg ZIM (default 2000)
-  --quiet              only print errors and the server URL
+  --quiet              only print problems and the server URL
   -h, --help           show this help
 `;
 
@@ -131,7 +131,8 @@ function certSan(pem) {
  * @param {string|null} [opts.keyFile]
  * @param {string} [opts.certDir=<project>/.cert]
  * @param {(msg: string) => void} [opts.log]
- * @returns {Promise<{ key: string, cert: string, generated: boolean, names: { dns: string[], ips: string[] } | null }>}
+ * @returns {Promise<{ key: string, cert: string, generated: boolean, cached: boolean,
+ *   names: { dns: string[], ips: string[] } | null }>} `cached`: the certificate is (now) stored in certDir
  */
 export async function loadCertificate({ certFile = null, keyFile = null, certDir = CERT_DIR, log = () => {} } = {}) {
   if (certFile && keyFile) {
@@ -139,6 +140,7 @@ export async function loadCertificate({ certFile = null, keyFile = null, certDir
       cert: fs.readFileSync(certFile, 'utf8'),
       key: fs.readFileSync(keyFile, 'utf8'),
       generated: false,
+      cached: false,
       names: null,
     };
   }
@@ -155,7 +157,7 @@ export async function loadCertificate({ certFile = null, keyFile = null, certDir
     if (info && sameNames && info.validFrom <= now && info.validTo - now > CERT_RENEW_MS) {
       // The key must belong to the certificate (a half-written cache would fail at TLS time).
       if (new crypto.X509Certificate(cert).checkPrivateKey(crypto.createPrivateKey(key))) {
-        return { cert, key, generated: false, names };
+        return { cert, key, generated: false, cached: true, names };
       }
     }
     log(info && !sameNames ? 'Network addresses changed: regenerating the HTTPS certificate…' :
@@ -187,10 +189,18 @@ export async function loadCertificate({ certFile = null, keyFile = null, certDir
       ],
     },
   );
-  fs.mkdirSync(certDir, { recursive: true });
-  fs.writeFileSync(keyPath, pems.private, { mode: 0o600 });
-  fs.writeFileSync(certPath, pems.cert);
-  return { cert: pems.cert, key: pems.private, generated: true, names };
+  let cached = true;
+  try {
+    fs.mkdirSync(certDir, { recursive: true });
+    fs.writeFileSync(keyPath, pems.private, { mode: 0o600 });
+    fs.writeFileSync(certPath, pems.cert);
+  } catch (e) {
+    // A read-only install can still serve HTTPS; it just regenerates the certificate next start
+    // (and browsers will ask to accept it again).
+    log(`Cannot cache the HTTPS certificate in ${certDir} (${e.message}); using it for this run only.`);
+    cached = false;
+  }
+  return { cert: pems.cert, key: pems.private, generated: true, cached, names };
 }
 
 /** Listens on `port`, or on one of the next ports when it is taken. Resolves to the port used. */
@@ -243,13 +253,14 @@ export async function main(argv = process.argv.slice(2), { out = console.log, er
     throw new Error(`--dir ${opts.dir} is not a directory`);
   }
   info(`Scanning ${opts.dir} for .zim files…`);
-  const library = await Library.scan(opts.dir, { maxGenericBooks: opts.maxGeneric, log: info });
+  // Skipped files and broken archives go to stderr even with --quiet.
+  const library = await Library.scan(opts.dir, { maxGenericBooks: opts.maxGeneric, log: info, warn: err });
   const app = createApp(library, { log: err });
 
   let tls = null;
   if (opts.https) {
     tls = await loadCertificate({ certFile: opts.cert, keyFile: opts.key, log: info });
-    if (tls.generated) info(`Generated a self-signed HTTPS certificate in ${CERT_DIR}`);
+    if (tls.generated && tls.cached) info(`Generated a self-signed HTTPS certificate in ${CERT_DIR}`);
   }
   const server = tls ? https.createServer({ key: tls.key, cert: tls.cert }, app) : http.createServer(app);
   // Malformed requests and TLS handshake failures (e.g. a browser rejecting the self-signed

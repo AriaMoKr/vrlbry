@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
@@ -437,13 +438,24 @@ describe('HTTP API (synthetic library)', () => {
       '/blob.unknownext': 'application/octet-stream',
       '/index.html': 'text/html; charset=utf-8',
       '/sub/': 'text/html; charset=utf-8',
-      '/sub': 'text/html; charset=utf-8',
     };
     for (const [p, type] of Object.entries(types)) {
       const r = await get(p);
       assert.equal(r.status, 200, p);
       assert.equal(r.headers['content-type'], type, p);
       assert.equal(r.headers['cache-control'], 'no-cache', p);
+    }
+    // A folder without its trailing slash is redirected, so relative links inside it resolve.
+    const redirects = {
+      '/sub': '/sub/',
+      '/sub?x=1&y=%20': '/sub/?x=1&y=%20',
+      '//sub': '/sub/', // never '//sub/' (protocol-relative: an open redirect)
+      '/vendor/three/build': '/vendor/three/build/',
+    };
+    for (const [p, location] of Object.entries(redirects)) {
+      const r = await get(p);
+      assert.equal(r.status, 301, p);
+      assert.equal(r.headers.location, location, p);
     }
     const etag = root.headers.etag;
     assert.equal((await get('/', { headers: { 'if-none-match': etag } })).status, 304);
@@ -651,18 +663,22 @@ describe('CLI (server/index.js)', () => {
 
   it('prints only the URL with --quiet and returns null for --help', async () => {
     const out = [];
+    const err = [];
     const app = await main(['--dir', path.join(tmp, 'cli'), '--port', '0', '--host', '127.0.0.1', '--quiet'], {
-      out: (m) => out.push(m), handleSignals: false,
+      out: (m) => out.push(m), err: (m) => err.push(m), handleSignals: false,
     });
     try {
       assert.deepEqual(out, [`vrlbry listening on ${app.urls[0]}`]);
+      assert.deepEqual(err, ['cli.zim: 1 book(s) have neither HTML nor EPUB in the archive'], 'the fixture\'s "Ghost" book');
     } finally {
       await app.close();
     }
     const help = [];
     assert.equal(await main(['--help'], { out: (m) => help.push(m), handleSignals: false }), null);
     assert.match(help.join(''), /--max-generic/);
-    await assert.rejects(main(['--dir', path.join(tmp, 'does-not-exist'), '--port', '0'], { out: () => {}, handleSignals: false }), /not a directory/);
+    await assert.rejects(main(['--dir', path.join(tmp, 'does-not-exist'), '--port', '0'], {
+      out: () => {}, err: () => {}, handleSignals: false,
+    }), /not a directory/);
   });
 
   it('generates, caches and serves a self-signed certificate for --https', async () => {
@@ -673,8 +689,7 @@ describe('CLI (server/index.js)', () => {
     const second = await loadCertificate({ certDir });
     assert.equal(second.generated, false, 'cached');
     assert.equal(second.cert, first.cert);
-    const { X509Certificate } = await import('node:crypto');
-    const x = new X509Certificate(first.cert);
+    const x = new crypto.X509Certificate(first.cert);
     assert.match(x.subjectAltName, /DNS:localhost/);
     assert.match(x.subjectAltName, /IP Address:127\.0\.0\.1/);
     for (const ip of first.names.ips) assert.ok(x.subjectAltName.includes(`IP Address:${ip}`), ip);
@@ -707,5 +722,36 @@ describe('CLI (server/index.js)', () => {
     const given = await loadCertificate({ certFile: path.join(certDir, 'cert.pem'), keyFile: path.join(certDir, 'key.pem') });
     assert.equal(given.generated, false);
     assert.equal(given.cert, third.cert);
+  });
+
+  it('still serves HTTPS when the certificate cannot be cached', async () => {
+    const blocker = path.join(tmp, 'not-a-dir');
+    fs.writeFileSync(blocker, 'x');
+    const logged = [];
+    const r = await loadCertificate({ certDir: path.join(blocker, 'cert'), log: (m) => logged.push(m) });
+    assert.equal(r.generated, true);
+    assert.equal(r.cached, false);
+    assert.ok(new crypto.X509Certificate(r.cert).checkPrivateKey(crypto.createPrivateKey(r.key)), 'key matches certificate');
+    assert.match(logged.join('\n'), /Cannot cache the HTTPS certificate/);
+  });
+
+  it('reports skipped archives on stderr even with --quiet', async () => {
+    const dir = path.join(tmp, 'cli-quiet');
+    fs.mkdirSync(dir);
+    writeFixture(path.join(dir, 'good.zim'));
+    fs.writeFileSync(path.join(dir, 'bad.zim'), 'not a zim');
+    const out = [];
+    const err = [];
+    const app = await main(['--dir', dir, '--port', '0', '--host', '127.0.0.1', '--quiet'], {
+      out: (m) => out.push(m), err: (m) => err.push(m), handleSignals: false,
+    });
+    try {
+      assert.deepEqual(out, [`vrlbry listening on ${app.urls[0]}`]);
+      assert.equal(err.length, 2, err.join('\n'));
+      assert.match(err[0], /^bad\.zim: skipped, cannot open/);
+      assert.equal(err[1], 'good.zim: 1 book(s) have neither HTML nor EPUB in the archive');
+    } finally {
+      await app.close();
+    }
   });
 });
