@@ -25,7 +25,7 @@ Options:
   --open           open http://localhost:<port>/?perf in Quest Browser first (sets up adb reverse)
   --port <n>       the vrlbry server's local HTTP port for --open (default 8080)
   --only <a,b,…>   run only these scenarios (small-idle, room-walk, filters, all-enter, all-idle,
-                   all-walk, read)
+                   all-walk, read, wiki-walk, wiki-read)
   --enter-vr       try to start the immersive session from here instead of waiting for you
   --allow-2d       run the scenarios even when the page is not in VR
   --out <dir>      where to write the dump (default perf/)

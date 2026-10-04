@@ -35,6 +35,13 @@
   index would take roughly 1¾ hours, so consider speeding up the size pass (e.g. decompressing
   clusters in worker threads) and check the memory of the 6.8 M-title sort; trying a volume on
   the Quest.
+- **Wikipedia: infoboxes and sidebars come first.** Popular articles open with their infobox (a
+  table of facts with flags and icons) and sidebars such as the "African Americans" series box,
+  converted to tables and long lists. In "African Americans" that is 235 list items, 14 table
+  rows and 14 images, so the article text starts on page ~14 of 185. The converter strips
+  `navbox` but not `infobox` or `sidebar` (`MW_CHROME_CLASSES` in `server/content/html.js`).
+  Options: drop them, move them after the article, or keep only the infobox's main image and a
+  few facts.
 - **Wikipedia: follow links** (later). Tapping a link in an article goes to that article, taking
   its volume off the shelf if needed. The reader cannot follow links today.
 - **Wikipedia: article search.** Typing an article title opens the right volume at that article.

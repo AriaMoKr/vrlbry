@@ -6,7 +6,8 @@
 
 import { getBookMeta, getChunk, forgetBook } from '../api.js';
 import { PAGE_PX } from '../config.js';
-import { makeMetrics, layoutChunk, getMeasurer, FONTS, blockChars } from './layout.js';
+import { perf } from '../perf.js';
+import { makeMetrics, ChunkLayout, getMeasurer, FONTS, blockChars } from './layout.js';
 
 export const THEMES = {
   paper: { paper: '#f6efdf', ink: '#231d16', light: '#8a7a62', rule: '#b9a78a', grain: 0.045, vignette: 'rgba(120,90,40,0.16)', img: 1 },
@@ -16,6 +17,74 @@ export const THEMES = {
 
 const LAYOUT_CACHE = 16;    // chunk layouts kept per reader (Webster's has ~800 chunks)
 const IMAGE_TIMEOUT = 8000;
+// Layout work per step. Laying out a 240,000-character Wikipedia article in one go blocked a
+// Quest 3 for 370 ms; in steps, its first pages show at once and the rest follows between frames.
+const LAYOUT_STEP_MS = 4;
+
+/** Lets the browser render frames and handle input between layout steps. */
+const breathe = () => new Promise((r) => setTimeout(r, 0));
+
+/**
+ * One chunk being laid out a step at a time. `pages` holds the pages decided so far; `page(p)`
+ * and `complete()` wait for more.
+ */
+class ProgressiveLayout {
+  constructor(blocks, metrics, stepMs = LAYOUT_STEP_MS) {
+    this.blocks = blocks;
+    this.stepMs = stepMs;
+    this._layout = new ChunkLayout(blocks, metrics, getMeasurer());
+    this.pages = this._layout.pages;
+    this.done = false;
+    this.cancelled = false;
+    this.ms = 0; // layout time so far
+    this.steps = 0;
+    this.started = 0;
+    this._waiters = [];
+  }
+
+  /** Lays out the chunk in steps; the first step runs at once. */
+  async run(onDone) {
+    this.started = performance.now();
+    while (!this.cancelled) {
+      const t0 = performance.now();
+      this.done = this._layout.step(this.stepMs);
+      this.ms += performance.now() - t0;
+      this.steps++;
+      if (this.done) onDone?.(this);
+      this._wake();
+      if (this.done) return;
+      await breathe();
+    }
+  }
+
+  /** Stops laying out (the book closed, or the font size changed); waiters get what exists. */
+  cancel() {
+    this.cancelled = true;
+    this._wake();
+  }
+
+  /** Page p once it is decided, or null when the chunk has fewer pages. */
+  async page(p) {
+    while (p >= this.pages.length && !this.done && !this.cancelled) await this._step();
+    return this.pages[p] ?? null;
+  }
+
+  /** Resolves when the whole chunk is laid out. */
+  async complete() {
+    while (!this.done && !this.cancelled) await this._step();
+    return this;
+  }
+
+  _step() {
+    return new Promise((r) => this._waiters.push(r));
+  }
+
+  _wake() {
+    const waiters = this._waiters;
+    this._waiters = [];
+    for (const r of waiters) r();
+  }
+}
 
 const imageCache = new Map(); // src -> Promise<HTMLImageElement|null>
 
@@ -89,8 +158,9 @@ export class BookReader {
    * @param {number} [o.height] page canvas height
    * @param {number} [o.fontScale]
    * @param {'paper'|'sepia'|'night'} [o.theme]
+   * @param {number} [o.layoutStepMs] layout work per step (tests use 0: one block per step)
    */
-  constructor({ libId, book, width = PAGE_PX.w, height = PAGE_PX.h, fontScale = 1, theme = 'paper' }) {
+  constructor({ libId, book, width = PAGE_PX.w, height = PAGE_PX.h, fontScale = 1, theme = 'paper', layoutStepMs = LAYOUT_STEP_MS }) {
     this.libId = libId;
     this.book = book;
     this.width = width;
@@ -99,6 +169,7 @@ export class BookReader {
     this.theme = THEMES[theme] ? theme : 'paper';
     this.meta = null;
     this.metrics = makeMetrics({ width, height, fontScale });
+    this.layoutStepMs = layoutStepMs;
     this._layouts = new Map(); // chunk -> Promise<Page[]> (insertion order = LRU order)
     this._pageCounts = new Map(); // chunk -> page count, survives layout eviction
     this._loading = null;
@@ -125,7 +196,11 @@ export class BookReader {
     return { c: 0, p: 0 };
   }
 
-  /** @returns {Promise<object[]>} pages of chunk c (cached, LRU). */
+  /**
+   * Chunk c's layout (cached, LRU), started as soon as the chunk arrives. Its `pages` are only
+   * those decided so far: wait with `page(p)` or `complete()`.
+   * @returns {Promise<ProgressiveLayout>}
+   */
   _layout(c) {
     const key = c;
     let p = this._layouts.get(key);
@@ -135,6 +210,7 @@ export class BookReader {
       return p;
     }
     const fontScale = this.fontScale;
+    const metrics = this.metrics;
     p = (async () => {
       await this.load();
       const blocks = await getChunk(this.libId, this.book.id, c);
@@ -148,17 +224,23 @@ export class BookReader {
           b._h = img ? img.naturalHeight : 300;
         }));
       }
-      const t0 = performance.now();
-      const pages = layoutChunk(blocks, this.metrics, getMeasurer());
-      this.stats.lastLayoutMs = performance.now() - t0;
-      const L = { blocks, pages };
-      if (fontScale === this.fontScale) {
-        this._pageCounts.set(c, pages.length);
-        this._remember(c, L);
+      const L = new ProgressiveLayout(blocks, metrics, this.layoutStepMs);
+      if (this._disposed || fontScale !== this.fontScale) {
+        L.cancel(); // nobody will read it
+        return L;
       }
+      this._remember(c, L);
+      L.run((done) => {
+        this.stats.lastLayoutMs = done.ms;
+        perf.event('layout', {
+          t: done.started, ms: performance.now() - done.started, workMs: done.ms, steps: done.steps,
+          chunk: c, blocks: blocks.length, pages: done.pages.length,
+        });
+        if (fontScale === this.fontScale) this._pageCounts.set(c, done.pages.length);
+      });
       return L;
     })();
-    p.catch(() => this._layouts.delete(key));
+    p.catch(() => { if (this._layouts.get(key) === p) this._layouts.delete(key); });
     this._layouts.set(key, p);
     while (this._layouts.size > LAYOUT_CACHE) this._layouts.delete(this._layouts.keys().next().value);
     // Warm the network cache for the next chunk (layout stays lazy).
@@ -191,8 +273,8 @@ export class BookReader {
   async next(ref) {
     await this.load();
     const { c, p } = this._clampRef(ref);
-    const { pages } = await this._layout(c);
-    if (p + 1 < pages.length) return { c, p: p + 1 };
+    const L = await this._layout(c);
+    if (await L.page(p + 1)) return { c, p: p + 1 };
     if (c + 1 < this.chunkCount) return { c: c + 1, p: 0 };
     return null;
   }
@@ -203,8 +285,8 @@ export class BookReader {
     const { c, p } = this._clampRef(ref);
     if (p > 0) return { c, p: p - 1 };
     if (c > 0) {
-      const { pages } = await this._layout(c - 1);
-      return { c: c - 1, p: pages.length - 1 };
+      const L = await (await this._layout(c - 1)).complete();
+      return { c: c - 1, p: Math.max(0, L.pages.length - 1) };
     }
     return null;
   }
@@ -213,19 +295,26 @@ export class BookReader {
   async _page(ref) {
     const r = this._clampRef(ref);
     const L = await this._layout(r.c);
-    const p = Math.min(r.p, L.pages.length - 1);
-    return { L, page: L.pages[p], ref: { c: r.c, p } };
+    let p = r.p;
+    let page = await L.page(p);
+    if (!page) {
+      p = Math.max(0, L.pages.length - 1);
+      page = L.pages[p] ?? null;
+    }
+    return { L, page, ref: { c: r.c, p } };
+  }
+
+  /** The decided page of a remembered layout nearest to ref, or null. */
+  _knownPage(r) {
+    const known = this._settled?.get(r.c);
+    return known?.pages[Math.min(r.p, known.pages.length - 1)] ?? null;
   }
 
   /** First block of the page as a durable anchor. */
   anchorOf(ref) {
     const r = this._clampRef(ref);
-    const known = this._settled?.get(r.c);
-    if (known) {
-      const page = known.pages[Math.min(r.p, known.pages.length - 1)];
-      return { c: r.c, b: page.firstBlock };
-    }
-    return { c: r.c, b: 0 };
+    const page = this._knownPage(r);
+    return { c: r.c, b: page ? page.firstBlock : 0 };
   }
 
   /** Page containing the start of block b of chunk c. */
@@ -233,11 +322,12 @@ export class BookReader {
     await this.load();
     const c = Math.max(0, Math.min(this.chunkCount - 1, anchor?.c | 0));
     const b = Math.max(0, anchor?.b | 0);
-    const { pages } = await this._layout(c);
+    const L = await this._layout(c);
     let p = 0;
-    for (let i = 0; i < pages.length; i++) {
-      if (pages[i].firstBlock < b || (pages[i].firstBlock === b && pages[i].firstLine === 0)) p = i;
-      else if (pages[i].firstBlock > b) break;
+    for (let i = 0; ; i++) {
+      const page = await L.page(i);
+      if (!page || page.firstBlock > b) break;
+      if (page.firstBlock < b || page.firstLine === 0) p = i;
     }
     return { c, p };
   }
@@ -254,10 +344,14 @@ export class BookReader {
     for (let i = 0; i < meta.chunks.length; i++) {
       if (target < meta.chunks[i].start + meta.chunks[i].chars) { c = i; break; }
     }
-    const { pages } = await this._layout(c);
+    const L = await this._layout(c);
     const local = target - meta.chunks[c].start;
     let p = 0;
-    for (let i = 0; i < pages.length; i++) if (pages[i].charStart <= local) p = i;
+    for (let i = 0; ; i++) {
+      const page = await L.page(i);
+      if (!page || page.charStart > local) break;
+      p = i;
+    }
     return { c, p };
   }
 
@@ -266,10 +360,9 @@ export class BookReader {
     if (!this.meta || !this.meta.totalChars) return 0;
     const r = this._clampRef(ref);
     const ch = this.meta.chunks[r.c];
-    const known = this._settled?.get(r.c);
+    const page = this._knownPage(r);
     let local = 0;
-    if (known) {
-      const page = known.pages[Math.min(r.p, known.pages.length - 1)];
+    if (page) {
       local = page.charStart;
     } else {
       const n = this._pageCounts.get(r.c);
@@ -331,8 +424,14 @@ export class BookReader {
     if (s === this.fontScale) return;
     this.fontScale = s;
     this.metrics = makeMetrics({ width: this.width, height: this.height, fontScale: s });
-    this._layouts.clear();
+    this._cancelLayouts();
     this._pageCounts.clear();
+  }
+
+  /** Forgets every layout, stopping those still in progress. */
+  _cancelLayouts() {
+    for (const p of this._layouts.values()) p.then((L) => L.cancel(), () => {});
+    this._layouts.clear();
     this._settled?.clear();
   }
 
@@ -353,6 +452,7 @@ export class BookReader {
    */
   async render(ref, canvas, { side = null } = {}) {
     const { L, page, ref: r } = await this._page(ref);
+    if (!page) return this.renderBlank(canvas, { side }); // the layout was cancelled
     this._remember(r.c, L);
     // Load this page's images before drawing so a page is never half-painted.
     const imgs = new Map();
@@ -460,8 +560,8 @@ export class BookReader {
   }
 
   dispose() {
-    this._layouts.clear();
-    this._settled?.clear();
+    this._disposed = true;
+    this._cancelLayouts();
     forgetBook(this.libId, this.book.id);
   }
 }

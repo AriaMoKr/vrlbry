@@ -655,6 +655,31 @@ function tableBoxes(rows, firstIndex, ctx) {
 }
 
 /**
+ * Appends the boxes of block i (of a whole table group when it is a `tr`) to `boxes`.
+ * @returns {number} the index of the next block to lay out
+ */
+function blockBoxes(blocks, i, M, m, boxes) {
+  const b = blocks[i];
+  const ctx = { M, m, prev: i > 0 ? blocks[i - 1] : null };
+  let out;
+  let next = i + 1;
+  switch (b.t) {
+    case 'h': case 'p': case 'li': out = textBoxes(b, i, ctx); break;
+    case 'pre': out = preBoxes(b, i, ctx); break;
+    case 'img': out = imageBox(b, i, ctx); break;
+    case 'hr': out = hrBox(b, i, ctx); break;
+    case 'tr': {
+      while (next < blocks.length && blocks[next].t === 'tr' && blocks[next].g === b.g) next++;
+      out = tableBoxes(blocks.slice(i, next), i, ctx);
+      break;
+    }
+    default: out = [];
+  }
+  for (const box of out) boxes.push(box);
+  return next;
+}
+
+/**
  * Lays out the blocks of one chunk into boxes.
  * @param {object[]} blocks
  * @param {object} M metrics from makeMetrics
@@ -662,28 +687,7 @@ function tableBoxes(rows, firstIndex, ctx) {
  */
 export function layoutBoxes(blocks, M, m = getMeasurer()) {
   const boxes = [];
-  let prev = null;
-  for (let i = 0; i < blocks.length; i++) {
-    const b = blocks[i];
-    const ctx = { M, m, prev };
-    let out;
-    switch (b.t) {
-      case 'h': case 'p': case 'li': out = textBoxes(b, i, ctx); break;
-      case 'pre': out = preBoxes(b, i, ctx); break;
-      case 'img': out = imageBox(b, i, ctx); break;
-      case 'hr': out = hrBox(b, i, ctx); break;
-      case 'tr': {
-        let j = i;
-        while (j + 1 < blocks.length && blocks[j + 1].t === 'tr' && blocks[j + 1].g === b.g) j++;
-        out = tableBoxes(blocks.slice(i, j + 1), i, ctx);
-        i = j;
-        break;
-      }
-      default: out = [];
-    }
-    boxes.push(...out);
-    prev = b;
-  }
+  for (let i = 0; i < blocks.length;) i = blockBoxes(blocks, i, M, m, boxes);
   return boxes;
 }
 
@@ -704,82 +708,147 @@ export function layoutBoxes(blocks, M, m = getMeasurer()) {
  * @returns {Page[]}
  */
 export function paginate(boxes, blocks, M) {
-  const avail = M.textHeight;
-  const blockStart = new Array(blocks.length + 1);
-  blockStart[0] = 0;
-  for (let i = 0; i < blocks.length; i++) blockStart[i + 1] = blockStart[i] + blockChars(blocks[i]);
+  const pager = new Paginator(blocks, M);
+  pager.run(boxes, true);
+  return pager.pages;
+}
 
-  const pages = [];
-  let start = 0;
-  while (start < boxes.length) {
-    let y = 0;
-    let end = start;
-    let prevAfter = 0;
-    let filled = false; // page closed by shrinking an image into the remaining space
-    const placed = [];
-    for (; end < boxes.length; end++) {
-      const b = boxes[end];
-      const gap = placed.length ? Math.max(prevAfter, b.before) : 0;
-      if (y + gap + b.h <= avail || !placed.length) {
-        placed.push({ y: y + gap, box: b });
-        y += gap + b.h;
-        prevAfter = b.after;
-        continue;
+/**
+ * Pagination that can run while the boxes are still being laid out: `run` closes every page
+ * whose end is already decided and stops at the first page that needs more boxes, so the result
+ * is the same as paginating all the boxes at once.
+ */
+class Paginator {
+  constructor(blocks, M) {
+    this.blocks = blocks;
+    this.M = M;
+    this.blockStart = new Array(blocks.length + 1);
+    this.blockStart[0] = 0;
+    for (let i = 0; i < blocks.length; i++) this.blockStart[i + 1] = this.blockStart[i] + blockChars(blocks[i]);
+    /** @type {Page[]} */
+    this.pages = [];
+    this.start = 0; // first box of the next page
+  }
+
+  /**
+   * Closes the pages that `boxes` so far decide.
+   * @param {Box[]} boxes all boxes laid out so far (later calls pass the same, longer array)
+   * @param {boolean} final no more boxes will come: the last page closes too
+   */
+  run(boxes, final) {
+    const { blocks, M, blockStart, pages } = this;
+    const avail = M.textHeight;
+    let start = this.start;
+    while (start < boxes.length) {
+      let y = 0;
+      let end = start;
+      let prevAfter = 0;
+      let filled = false; // page closed by shrinking an image into the remaining space
+      const placed = [];
+      for (; end < boxes.length; end++) {
+        const b = boxes[end];
+        const gap = placed.length ? Math.max(prevAfter, b.before) : 0;
+        if (y + gap + b.h <= avail || !placed.length) {
+          placed.push({ y: y + gap, box: b });
+          y += gap + b.h;
+          prevAfter = b.after;
+          continue;
+        }
+        // An image that almost fits is scaled down instead of leaving a large hole.
+        if (b.img) {
+          const room = avail - y - gap;
+          const s = room / b.h;
+          if (s >= 0.62 && room > avail * 0.3) {
+            const img = b.items[0];
+            const w = Math.round(img.w * s);
+            const nb = { ...b, h: Math.floor(room), items: [{ ...img, w, h: Math.floor(room), x: img.x + (img.w - w) / 2 }] };
+            boxes[end] = nb;
+            placed.push({ y: y + gap, box: nb });
+            y = avail;
+            end++;
+            filled = true;
+          }
+        }
+        break;
       }
-      // An image that almost fits is scaled down instead of leaving a large hole.
-      if (b.img) {
-        const room = avail - y - gap;
-        const s = room / b.h;
-        if (s >= 0.62 && room > avail * 0.3) {
-          const img = b.items[0];
-          const w = Math.round(img.w * s);
-          const nb = { ...b, h: Math.floor(room), items: [{ ...img, w, h: Math.floor(room), x: img.x + (img.w - w) / 2 }] };
-          boxes[end] = nb;
-          placed.push({ y: y + gap, box: nb });
-          y = avail;
-          end++;
-          filled = true;
+      // Every box so far fits: the page stays open until more boxes (or the end) arrive.
+      if (!filled && end >= boxes.length && !final) break;
+      // Choose the break point (end = first box on the next page).
+      if (!filled && end < boxes.length && end - start > 1) {
+        let brk = end;
+        const nb = boxes[brk];
+        const pb = boxes[brk - 1];
+        // Widow: don't carry only the last line of a paragraph over.
+        if (nb.block === pb.block && nb.line === nb.lines - 1 && nb.lines >= 3 && pb.line >= 1) brk--;
+        // Orphan: don't leave only the first line of a paragraph at the bottom.
+        const ob = boxes[brk - 1];
+        if (brk - 1 > start && ob.line === 0 && ob.lines >= 2 && boxes[brk].block === ob.block) brk--;
+        // Keep headings (and table header rows) with what follows.
+        while (brk - 1 > start && boxes[brk - 1].keep) brk--;
+        if (brk > start) {
+          while (placed.length > brk - start) placed.pop();
+          end = brk;
         }
       }
-      break;
+      const first = placed[0].box;
+      const last = placed[placed.length - 1].box;
+      const bc = blockChars(blocks[first.block]);
+      pages.push({
+        boxes: placed,
+        firstBlock: first.block,
+        firstLine: first.line,
+        lastBlock: last.block,
+        charStart: blockStart[first.block] + (first.lines > 1 ? Math.round((bc * first.line) / first.lines) : 0),
+      });
+      start = end;
     }
-    // Choose the break point (end = first box on the next page).
-    if (!filled && end < boxes.length && end - start > 1) {
-      let brk = end;
-      const nb = boxes[brk];
-      const pb = boxes[brk - 1];
-      // Widow: don't carry only the last line of a paragraph over.
-      if (nb.block === pb.block && nb.line === nb.lines - 1 && nb.lines >= 3 && pb.line >= 1) brk--;
-      // Orphan: don't leave only the first line of a paragraph at the bottom.
-      const ob = boxes[brk - 1];
-      if (brk - 1 > start && ob.line === 0 && ob.lines >= 2 && boxes[brk].block === ob.block) brk--;
-      // Keep headings (and table header rows) with what follows.
-      while (brk - 1 > start && boxes[brk - 1].keep) brk--;
-      if (brk > start) {
-        while (placed.length > brk - start) placed.pop();
-        end = brk;
-      }
-    }
-    const first = placed[0].box;
-    const last = placed[placed.length - 1].box;
-    const bc = blockChars(blocks[first.block]);
-    pages.push({
-      boxes: placed,
-      firstBlock: first.block,
-      firstLine: first.line,
-      lastBlock: last.block,
-      charStart: blockStart[first.block] + (first.lines > 1 ? Math.round((bc * first.line) / first.lines) : 0),
-    });
-    start = end;
+    this.start = start;
+    if (final && !pages.length) pages.push({ boxes: [], firstBlock: 0, firstLine: 0, lastBlock: 0, charStart: 0 });
   }
-  if (!pages.length) pages.push({ boxes: [], firstBlock: 0, firstLine: 0, lastBlock: 0, charStart: 0 });
-  return pages;
+}
+
+/**
+ * One chunk's layout, done a few blocks at a time (`step`) so a long chunk (a Wikipedia article
+ * can be 240,000 characters, six times a normal chunk) never blocks a frame. `pages` grows as
+ * pages are decided, and ends up exactly as layoutChunk's.
+ */
+export class ChunkLayout {
+  constructor(blocks, M, m = getMeasurer()) {
+    this.blocks = blocks;
+    this.M = M;
+    this.m = m;
+    this.boxes = [];
+    this._next = 0; // next block to lay out
+    this._pager = new Paginator(blocks, M);
+    /** @type {Page[]} */
+    this.pages = this._pager.pages;
+    this.done = false;
+  }
+
+  /**
+   * Lays out blocks until `budgetMs` has passed (at least one block), then closes the pages
+   * they decide.
+   * @returns {boolean} true once the whole chunk is laid out
+   */
+  step(budgetMs = Infinity) {
+    if (this.done) return true;
+    const { blocks, M, m, boxes } = this;
+    const t0 = performance.now();
+    while (this._next < blocks.length) {
+      this._next = blockBoxes(blocks, this._next, M, m, boxes);
+      if (performance.now() - t0 >= budgetMs) break;
+    }
+    this.done = this._next >= blocks.length;
+    this._pager.run(boxes, this.done);
+    return this.done;
+  }
 }
 
 /** Convenience: blocks → pages. */
 export function layoutChunk(blocks, M, m = getMeasurer()) {
-  const boxes = layoutBoxes(blocks, M, m);
-  return paginate(boxes, blocks, M);
+  const L = new ChunkLayout(blocks, M, m);
+  L.step();
+  return L.pages;
 }
 
 export { NBSP };

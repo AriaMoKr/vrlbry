@@ -157,8 +157,9 @@ node tools/quest-perf.mjs run --open
 `--open` opens `http://localhost:8080/?perf` in Quest Browser (through `adb reverse`). Put the
 headset on and press **Enter VR**; the script then runs a fixed set of scenarios: standing in
 the smallest room, gliding along the aisles of a 3,000-book room, switching filters, entering,
-standing in and walking the all-libraries hall, and reading 20 pages. They take about four
-minutes, move you around smoothly, and put your settings back at the end. If the open page has
+standing in and walking the all-libraries hall, and reading 20 pages; with a Wikipedia, also
+walking its largest room and reading a volume, including its longest article. They take about
+five minutes, move you around smoothly, and put your settings back at the end. If the open page has
 no `?perf`, or was loaded before the app last changed, `run` reloads it first (you then press
 **Enter VR** again), so the numbers always describe the current version. Use `--only
 small-idle,read` to run some of them.

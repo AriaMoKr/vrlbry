@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { makeMetrics, layoutBoxes, layoutChunk, paginate, blockChars as clientChars } from '../public/js/reader/layout.js';
+import { makeMetrics, layoutBoxes, layoutChunk, paginate, ChunkLayout, blockChars as clientChars } from '../public/js/reader/layout.js';
 import { blockChars as serverChars } from '../server/content/html.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -114,6 +114,38 @@ describe('reader layout', () => {
     }
     const big = imgs.find((i) => i.src === '/a.png');
     assert.ok(Math.abs(big.w / big.h - 0.75) < 0.01, 'aspect kept');
+  });
+
+  it('lays out step by step to exactly the same pages, deciding early pages first', () => {
+    const mixed = [
+      { t: 'h', l: 1, r: [['Title', 0]] },
+      ...Array.from({ length: 12 }, (_, i) => p(words(40 + i * 9))),
+      { t: 'tr', c: [[['Name', 2]], [['Page', 2]]], g: 1, hd: true },
+      ...Array.from({ length: 40 }, (_, i) => ({ t: 'tr', c: [[[`Row ${i} ${words(6)}`, 0]], [[String(i * 3), 0]]], g: 1 })),
+      { t: 'img', src: '/tall.png', w: 800, h: 1300 }, // shrunk into the rest of a page
+      ...Array.from({ length: 30 }, (_, i) => (i % 9 === 4 ? { t: 'h', l: 2, r: [[`Section ${i}`, 0]] } : p(words(25 + (i % 4) * 40)))),
+      { t: 'pre', x: 'code\n'.repeat(80) },
+      { t: 'img', src: '/wide.png', w: 3000, h: 900 },
+      ...Array.from({ length: 20 }, (_, i) => ({ t: 'li', r: [[words(10 + i), 0]], d: 1, m: '•' })),
+    ];
+    const corpora = [mixed, [], [p('one line')], ...[31, 37, 44, 52].map((n) => [
+      ...Array.from({ length: n }, () => p(words(12))), { t: 'h', l: 2, r: [['Chapter Two', 0]] }, p(words(150)),
+    ])];
+    for (const blocks of corpora) {
+      const whole = layoutChunk(structuredClone(blocks), M, fake);
+      const L = new ChunkLayout(structuredClone(blocks), M, fake);
+      const decided = []; // the pages decided after each step, as JSON
+      let steps = 0;
+      while (!L.step(0)) {
+        steps++;
+        decided.push(JSON.stringify(L.pages));
+        assert.ok(steps <= blocks.length, 'at least one block per step');
+      }
+      assert.equal(JSON.stringify(L.pages), JSON.stringify(whole), 'same pages as one-shot layout');
+      // Pages once decided never change, and they come in before the chunk is finished.
+      for (const snap of decided) assert.ok(JSON.stringify(whole).startsWith(snap.slice(0, -1)), 'a decided page never changes');
+      if (whole.length > 3) assert.ok(JSON.parse(decided[Math.floor(decided.length / 2)]).length >= 1, 'early pages decided midway');
+    }
   });
 
   it('is deterministic and scales with fontScale', () => {

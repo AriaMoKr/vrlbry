@@ -1,14 +1,14 @@
 // Built-in performance scenarios (?perf), started by tools/quest-perf.mjs through
 // window.__vrlbry.perf.run(). Each one is a recorder segment, so the dump breaks the numbers down
 // per scenario. They drive the real app: room switches, walking (the rig glides along aisles),
-// filter changes, reading. Settings are restored afterwards.
+// filter changes, reading, and the largest Wikipedia room. Settings are restored afterwards.
 
 import { perf } from './perf.js';
 import { facetsOf, isFaceted, ALL_PLACE } from './rooms.js';
 import { BOOKCASE } from './config.js';
 import { save } from './util/storage.js';
 
-export const SCENARIOS = ['small-idle', 'room-walk', 'filters', 'all-enter', 'all-idle', 'all-walk', 'read'];
+export const SCENARIOS = ['small-idle', 'room-walk', 'filters', 'all-enter', 'all-idle', 'all-walk', 'read', 'wiki-walk', 'wiki-read'];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -79,7 +79,11 @@ export async function runScenarios(app, { only = null } = {}) {
   const saved = { place: settings.place, rooms: JSON.parse(JSON.stringify(settings.rooms || {})) };
   const libs = I.libraries.filter((l) => (I.booksByLib[l.id] || []).length);
   const bySize = [...libs].sort((a, b) => I.booksByLib[a.id].length - I.booksByLib[b.id].length);
-  const small = bySize[0];
+  // The small room and the reading test use an ordinary library, so runs stay comparable;
+  // Wikipedia has its own scenarios, in its largest room.
+  const isWiki = (l) => l.kind === 'wikipedia';
+  const small = bySize.find((l) => !isWiki(l)) ?? bySize[0];
+  const wiki = [...bySize].reverse().find(isWiki);
   const faceted = [...bySize].reverse().find((l) => isFaceted(l, I.booksByLib[l.id]));
 
   /** Runs fn as a recorder segment; setup runs first, outside the segment. */
@@ -156,6 +160,43 @@ export async function runScenarios(app, { only = null } = {}) {
       }
       await I.putBack();
     });
+
+    if (wiki) {
+      await scenario('wiki-walk', async () => {
+        await goTo(wiki.id);
+        await glide(C, walkPath(world));
+      });
+      await scenario('wiki-read', async () => {
+        if (settings.place !== wiki.id) await goTo(wiki.id);
+        const volumes = world.shelves.books();
+        const book = volumes[Math.floor(volumes.length / 2)];
+        if (!book) return log('no volume');
+        I.showBook(book);
+        await sleep(800);
+        await I.pick(book);
+        await sleep(600);
+        await I.read({ fromStart: true });
+        await sleep(2000);
+        for (let i = 0; i < 6; i++) {
+          await I.turn(1);
+          await sleep(400);
+        }
+        // Jump to the volume's longest article (by its estimated size), the slowest to lay out.
+        const meta = I.reader?.meta;
+        let longest = 0;
+        meta?.chunks.forEach((ch, i) => { if (ch.chars > meta.chunks[longest].chars) longest = i; });
+        const entry = meta?.toc.find((t) => t.c === longest);
+        if (entry) {
+          await I.jumpToToc(entry);
+          await sleep(2000);
+          for (let i = 0; i < 10; i++) {
+            await I.turn(1);
+            await sleep(400);
+          }
+        }
+        await I.putBack();
+      });
+    }
   } finally {
     // Back to where the visitor was.
     if (I.state === 'inspect' || I.state === 'read') await I.putBack();

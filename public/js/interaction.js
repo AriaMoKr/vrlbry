@@ -675,6 +675,9 @@ export class Interaction {
     if (this.state !== 'inspect' && this.state !== 'read') return;
     const book = this.book;
     const b3 = this.book3d;
+    // Forget the spreads, or the next book finds every page canvas still in use.
+    this._prepToken = (this._prepToken || 0) + 1;
+    this._cur = this._next = this._prev = null;
     this.state = 'busy';
     this.inspectPanel.visible = false;
     this.toolbar.visible = false;
@@ -1064,8 +1067,6 @@ export class Interaction {
   /** Closes the book and puts it back on the shelf. */
   async closeBook() {
     if (this.state !== 'read') return;
-    this._prepToken = (this._prepToken || 0) + 1;
-    this._cur = this._next = this._prev = null;
     await this.putBack();
   }
 

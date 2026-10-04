@@ -592,7 +592,7 @@ public/
 
 ```js
 export class BookReader {
-  constructor({ libId, book, width = PAGE_PX.w, height = PAGE_PX.h, fontScale = 1, theme = 'paper' })
+  constructor({ libId, book, width = PAGE_PX.w, height = PAGE_PX.h, fontScale = 1, theme = 'paper', layoutStepMs = 4 })
   async load(): Promise<meta>                    // §4 reading metadata (via api.getBookMeta)
   meta
   firstRef(): PageRef                           // { c: 0, p: 0 }
@@ -615,6 +615,14 @@ export class BookReader {
 ```
 - Each chunk is paginated independently (a chunk starts on a fresh page). Layout of a chunk is
   computed on first need and cached; neighbours are prefetched.
+- A chunk is laid out in steps of ~`layoutStepMs` (`ChunkLayout.step` in layout.js), with a
+  `setTimeout(0)` between steps so frames keep rendering. Each page is final as soon as it is
+  decided, and the result is identical to a one-shot `layoutChunk`. Callers wait only for what
+  they need: `render` and `next` for that page, `refForAnchor` / `refForProgress` until the
+  target page, `prev` into the previous chunk for that whole chunk. A Wikipedia article can be
+  240,000 characters (six normal chunks); laid out in one go it blocked a Quest 3 for 370 ms.
+  `dispose` and `setFontScale` stop layouts in progress. Each finished layout is a `layout`
+  perf event (wall time, work time, steps, pages).
 - Page look: paper background (subtle vignette/grain baked once), margins ~8%, running header
   (book title, small caps, light) and footer (page label). Body serif font stack
   `"Iowan Old Style", "Palatino Linotype", Palatino, Georgia, "Times New Roman", serif`, base size
@@ -923,14 +931,16 @@ States: `browse` → `inspect` → `read` (and back).
   - Per frame (ring buffer, 20 min at 72 Hz): start time, interval between frame timestamps (XR
     or rAF time), main-thread cost of the callback, draw calls, triangles (both eyes in VR).
   - Events with durations: `rebuild` (fade-out, synchronous build, waiting for the low atlases),
-    `lows`, `atlas` (per level, worker or main thread), `turn`.
+    `lows`, `atlas` (per level, worker or main thread), `turn`, `layout` (one chunk).
   - Segments (scenarios), long tasks and JS heap samples.
   - `summary()` gives frame statistics per segment (fps, interval percentiles, dropped frames
     against the session's frame rate, JS cost, draw calls) and each rebuild's worst frame gap;
     `dump()` returns everything as JSON.
   - `perf.run(only)` loads `perf-scenarios.js`: small-idle, room-walk, filters, all-enter,
-    all-idle, all-walk, read. The viewer glides along the aisles at 1.2 m/s, and the settings are
-    restored afterwards.
+    all-idle, all-walk, read (small-idle and read use the smallest library that is not a
+    Wikipedia), and, when a Wikipedia is present, wiki-walk and wiki-read in the largest one
+    (wiki-read opens the middle volume, then jumps to its longest article). The viewer glides
+    along the aisles at 1.2 m/s, and the settings are restored afterwards.
   - `tools/quest-perf.mjs` (Node, adb) forwards the Quest Browser's DevTools socket, runs or reads
     the recorder over CDP, adds the VrApi per-second log, `dumpsys meminfo` / `battery` snapshots
     (one at the end of each scenario) and device info, and writes `perf/quest-<time>.json`.

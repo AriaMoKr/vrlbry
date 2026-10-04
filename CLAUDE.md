@@ -77,6 +77,7 @@ client: api.js ─► rooms.js (what to shelve) ─► World/Bookshelves ─► 
 
 - **`reader/`**: `BookReader` paginates each chunk independently, so every chunk starts on a fresh page. It addresses pages as `PageRef = {c: chunk, p: pageInChunk}`, not as global page numbers, because only the chunks laid out so far have known page counts and the rest are estimated.
   - Durable positions (saved reading position, staying on the same text after a font change) use the block anchor `{c, b}` via `anchorOf` / `refForAnchor`.
+  - Chunks are laid out in ~4 ms steps (`ChunkLayout.step` in `layout.js`), so a page can be shown as soon as it is decided while the rest of the chunk follows between frames. The result is identical to a one-shot `layoutChunk` (a test checks this). A 240,000-character Wikipedia article laid out in one go blocked a Quest 3 for 370 ms. Wait only for what you need: `page(p)` for one page, `complete()` for the whole chunk.
 - **`world/`**: `World` builds the room and `Bookshelves`.
   - Each bookcase's books are one merged `BufferGeometry` whose spines use a per-bookcase canvas atlas, which keeps draw calls within the Quest budget (≤ ~150 per eye; in VR `renderer.info` counts both eyes).
   - **Quest 3 is the performance target; the development PC is far faster**, so anything that stutters on the PC is unusable on the headset. Confirm performance changes on the headset with the perf tool (see Commands). VR asks for 72 Hz (`XR_FRAME_RATE`); Quest Browser defaults to 90.
