@@ -35,4 +35,9 @@ export const PLAYER = {
   snapTurn: Math.PI / 6,   // radians per snap
 };
 
+// Display refresh rate asked for in VR (the nearest one the headset supports). Quest Browser
+// starts sessions at 90 Hz; 72 Hz gives each frame 13.9 ms instead of 11.1 ms, and the Quest 3
+// dropped 3–8 % of frames at 90 Hz even in ordinary rooms. ?hz=90 overrides it for experiments.
+export const XR_FRAME_RATE = 72;
+
 export const STORAGE_PREFIX = 'vrlbry:';

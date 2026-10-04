@@ -42,17 +42,51 @@ export function authorKey(author) {
 
 export const SORT_MODES = ['title', 'author', 'popularity'];
 
-/** Comparator for a sort mode. Ties are broken by title then id so order is total and stable. */
-export function compareBooks(mode) {
-  const byTitle = (a, b) => titleKey(a.title).localeCompare(titleKey(b.title)) || String(a.id).localeCompare(String(b.id));
-  if (mode === 'author') return (a, b) => authorKey(a.author).localeCompare(authorKey(b.author)) || byTitle(a, b);
-  if (mode === 'popularity') return (a, b) => (a.rank ?? 1e9) - (b.rank ?? 1e9) || byTitle(a, b);
+// Sort keys cost regexes and Unicode normalization, and a sort needs ~2·n·log n of them (a
+// 60,000-book library took 2 s to sort on a Quest), so each book's keys are computed once and
+// kept here, off the book objects (which get serialized). Recomputed if a title/author changes.
+const keyCache = new WeakMap();
+
+/** A book's cached sort keys: { t: titleKey, a: authorKey, id, book }. */
+function keysOf(book) {
+  let k = keyCache.get(book);
+  if (!k || k.title !== book.title || k.author !== book.author) {
+    k = { title: book.title, author: book.author, t: titleKey(book.title), a: authorKey(book.author), id: String(book.id), book };
+    keyCache.set(book, k);
+  }
+  return k;
+}
+
+// The same order as String#localeCompare without arguments, without its per-call setup.
+const collator = new Intl.Collator();
+
+function compareKeys(mode) {
+  const byTitle = (x, y) => collator.compare(x.t, y.t) || collator.compare(x.id, y.id);
+  if (mode === 'author') return (x, y) => collator.compare(x.a, y.a) || byTitle(x, y);
+  if (mode === 'popularity') return (x, y) => (x.book.rank ?? 1e9) - (y.book.rank ?? 1e9) || byTitle(x, y);
   return byTitle;
 }
 
-/** Returns a new array sorted by mode. */
+/** Comparator for a sort mode. Ties are broken by title then id so order is total and stable. */
+export function compareBooks(mode) {
+  const cmp = compareKeys(mode);
+  return (a, b) => cmp(keysOf(a), keysOf(b));
+}
+
+// Sorted copies of whole book lists, per list and mode: a library is sorted once, and its rooms
+// are filtered from that order instead of being sorted again on every room switch.
+const sortedCache = new WeakMap();
+
+/** Returns a new array sorted by mode (cached per input array, which must not be mutated). */
 export function sortBooks(books, mode) {
-  return [...books].sort(compareBooks(mode));
+  let byMode = sortedCache.get(books);
+  if (!byMode) sortedCache.set(books, (byMode = new Map()));
+  let hit = byMode.get(mode);
+  if (!hit || hit.length !== books.length) {
+    hit = books.map(keysOf).sort(compareKeys(mode)).map((k) => k.book);
+    byMode.set(mode, hit);
+  }
+  return hit.slice();
 }
 
 /**
@@ -61,7 +95,8 @@ export function sortBooks(books, mode) {
  */
 export function letterOf(book, mode) {
   if (mode === 'popularity') return null;
-  const key = mode === 'author' ? authorKey(book.author) : titleKey(book.title);
+  const k = keysOf(book);
+  const key = mode === 'author' ? k.a : k.t;
   const c = key.charAt(0).toUpperCase();
   return c >= 'A' && c <= 'Z' ? c : '#';
 }

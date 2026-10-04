@@ -511,7 +511,8 @@ public/
   js/
     api.js               (exists) fetch wrappers for §4.
     config.js            (exists) shared constants.
-    util/books.js        (exists) sorting, letters, bookDims, hashing.
+    util/books.js        (exists) sorting (keys cached per book, sorted lists cached per array and
+                         mode: never mutate a library's array), letters, bookDims, hashing.
     util/storage.js      safe localStorage get/set JSON (try/catch; namespaced STORAGE_PREFIX).
     reader/layout.js     text layout engine: blocks → positioned lines/items (pure, canvas measure).
     reader/reader.js     BookReader: chunk loading, pagination, page rendering to canvas.
@@ -816,7 +817,10 @@ States: `browse` → `inspect` → `read` (and back).
 
 - `WebGLRenderer({ antialias: true, powerPreference: 'high-performance' })`, `xr.enabled = true`,
   `setPixelRatio(min(devicePixelRatio, 2))`, `xr.setFramebufferScaleFactor(1.0)` (no
-  supersampling on the Quest), `xr.setFoveation(0.5)`, reference space `local-floor`. Only one
+  supersampling on the Quest), `xr.setFoveation(0.5)`, reference space `local-floor`. On session
+  start, `session.updateTargetFrameRate()` asks for `XR_FRAME_RATE` = 72 Hz (or `?hz=`), the
+  nearest supported rate: Quest Browser starts at 90 Hz, where the Quest 3 dropped 3–8 % of
+  frames even in ordinary rooms. Only one
   chandelier per room casts light (point lights cost per-pixel shading on the headset).
 - Camera rig: `rig = new Group()` (moved by locomotion) containing `camera`; desktop eye height
   `PLAYER.eyeHeight` applied as camera y when not presenting (XR provides real head height).

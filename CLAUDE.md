@@ -92,7 +92,8 @@ client: api.js ─► rooms.js (what to shelve) ─► World/Bookshelves ─► 
   - Kiosk-driven rebuilds keep the viewer's pose relative to the kiosk (`controls.followFrame`), not the spawn point: the kiosk moves when the room changes shape.
   - Always build the world through `collectionsFor()`.
   - Search and recently read cover all books, so call `interaction.ensureShelved(book)` before locating a book that may be in another place or room. Every loaded book carries `libId` (`withLib` in `main.js`).
-- **`util/books.js`**: holds the sort comparators, `letterOf` and `bookDims`. Both the shelf layout and the A–Z jump / interaction code **must** use these shared helpers so they agree on order and book sizes. Shared constants (dimensions, page size, reading pose) are in `config.js`.
+- **`util/books.js`**: holds the sort comparators, `letterOf` and `bookDims`. Both the shelf layout and the A–Z jump / interaction code **must** use these shared helpers so they agree on order and book sizes. Shared constants (dimensions, page size, reading pose, `XR_FRAME_RATE`) are in `config.js`.
+  - Sorting is cached, because libraries reach 60,000+ books (the Quest took 2 s per room switch before the caches). Each book's sort keys are computed once, and comparisons use one shared `Intl.Collator`, which gives the same order as `localeCompare`. `sortBooks` caches its result per input array and mode, and `shelfCollections` filters a room out of the library's sorted order. Never mutate a library's book array in place; replace it.
 
 ## Testing notes
 

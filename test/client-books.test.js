@@ -42,6 +42,25 @@ describe('util/books', () => {
     assert.deepEqual(tie.sort(compareBooks('popularity')).map((b) => b.id), ['a', 'b']);
   });
 
+  it('caches sorted lists per array and mode, and keys per book', () => {
+    const list = books.map((b) => ({ ...b }));
+    const a = sortBooks(list, 'title');
+    const b = sortBooks(list, 'title');
+    assert.deepEqual(a, b);
+    assert.notEqual(a, b, 'callers get their own copy');
+    a.reverse(); // mutating a returned copy does not touch the cache
+    assert.deepEqual(sortBooks(list, 'title').map((x) => x.id), ['5', '2', '6', '1', '3', '4']);
+    // A list that grew is sorted again.
+    list.push({ id: '7', title: 'Aardvarks', author: 'Zed' });
+    assert.deepEqual(sortBooks(list, 'title').map((x) => x.id), ['5', '7', '2', '6', '1', '3', '4']);
+    // A changed title is seen by the comparator and letterOf (the cached keys follow it).
+    const book = { id: '9', title: 'Zebra' };
+    assert.equal(letterOf(book, 'title'), 'Z');
+    book.title = 'The Apple';
+    assert.equal(letterOf(book, 'title'), 'A');
+    assert.ok(compareBooks('title')(book, { id: '10', title: 'Banana' }) < 0);
+  });
+
   it('letterOf gives A–Z, # for digits/other, null for popularity', () => {
     assert.equal(letterOf(books[0], 'title'), 'E');
     assert.equal(letterOf(books[4], 'title'), '#');

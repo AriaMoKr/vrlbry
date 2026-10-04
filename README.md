@@ -148,7 +148,9 @@ node tools/quest-perf.mjs run --open
 headset on and press **Enter VR**; the script then runs a fixed set of scenarios: standing in
 the smallest room, gliding along the aisles of a 3,000-book room, switching filters, entering,
 standing in and walking the all-libraries hall, and reading 20 pages. They take about four
-minutes, move you around smoothly, and put your settings back at the end. Use `--only
+minutes, move you around smoothly, and put your settings back at the end. If the open page has
+no `?perf`, or was loaded before the app last changed, `run` reloads it first (you then press
+**Enter VR** again), so the numbers always describe the current version. Use `--only
 small-idle,read` to run some of them.
 
 ```bash

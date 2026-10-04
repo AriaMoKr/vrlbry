@@ -159,7 +159,8 @@ export function shelfCollections(libraries, booksByLib, rooms, sort) {
     let room = normRoom(rooms[library.id]);
     if (!room || !all.some((b) => inRoom(b, room))) room = defaultRoom(all);
     if (room) rooms[library.id] = room;
-    const matching = room ? sortBooks(all.filter((b) => inRoom(b, room)), sort) : [];
+    // Filter the library's (cached) sorted order rather than sorting the room on every switch.
+    const matching = room ? sortBooks(all, sort).filter((b) => inRoom(b, room)) : [];
     return {
       library, room, total: matching.length, capped: matching.length > ROOM_CAP,
       books: matching.slice(0, ROOM_CAP),

@@ -8,7 +8,7 @@ import { Interaction, DEFAULT_SETTINGS } from './interaction.js';
 import { Overlay } from './ui/overlay.js';
 import { audio } from './audio.js';
 import { load } from './util/storage.js';
-import { PLAYER } from './config.js';
+import { PLAYER, XR_FRAME_RATE } from './config.js';
 import { collectionsFor } from './rooms.js';
 import { perf } from './perf.js';
 
@@ -113,17 +113,29 @@ async function start() {
   renderer.xr.addEventListener('sessionstart', () => {
     overlay.hide();
     interaction.onPresentingChange();
+    setFrameRate(renderer.xr.getSession());
   });
   renderer.xr.addEventListener('sessionend', () => {
     overlay.show();
     controls.onSessionEnd();
     interaction.onPresentingChange();
   });
+  /** Asks for XR_FRAME_RATE (or ?hz=), as the nearest rate the headset supports. */
+  function setFrameRate(s) {
+    const rates = s?.supportedFrameRates;
+    if (!s?.updateTargetFrameRate || !rates?.length) return;
+    const want = Number(params.get('hz')) || XR_FRAME_RATE;
+    const rate = [...rates].reduce((best, r) => (Math.abs(r - want) < Math.abs(best - want) ? r : best));
+    if (s.frameRate === rate) return;
+    s.updateTargetFrameRate(rate).catch((err) => console.warn(`vrlbry: cannot switch to ${rate} Hz: ${err.message}`));
+  }
   interaction.onExitVR = () => renderer.xr.getSession()?.end();
   interaction.onReload = () => location.reload();
   // When the website last changed, fetched once: it tells which version this page is running.
+  let loadedVersion = null;
   getVersion().then(({ changed }) => {
     if (!changed) return;
+    loadedVersion = changed;
     const text = `Updated ${new Date(changed).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}`;
     overlay.setVersion(text);
     interaction.setVersion(text);
@@ -221,6 +233,8 @@ async function start() {
 
   window.__vrlbry = {
     renderer, scene, camera, rig, world, controls, interaction, overlay, xrDevice, settings, enterVR,
+    /** When the site's files last changed as of this page load (GET /api/version), or null. */
+    get version() { return loadedVersion; },
     /** Advances the app by n frames of dt seconds and renders (for automated tests). */
     tick(dt = 1 / 60, n = 1) {
       for (let i = 0; i < n; i++) step(dt);

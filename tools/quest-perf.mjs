@@ -395,40 +395,59 @@ async function main() {
     }
     const fwd = useAdb ? await forwardDevtools(opts) : { endpoint: opts.cdp.replace(/\/$/, ''), release: async () => {} };
     release = fwd.release;
+    // Scenario progress from the page; a memory snapshot at the end of each scenario.
+    const attach = async (c) => {
+      await c.send('Runtime.enable');
+      c.on('Runtime.consoleAPICalled', (e) => {
+        const text = e.args.map((a) => a.value ?? a.description ?? '').join(' ');
+        if (!text.startsWith('[perf]')) return;
+        console.log(text);
+        const end = text.match(/^\[perf\] end (\S+)/);
+        if (end && useAdb) snapshot(opts, end[1]).then((s) => dump.snapshots.push(s));
+      });
+      return c;
+    };
     ({ cdp } = await connectPage(fwd.endpoint, { waitMs: opts.open ? 60000 : 0 }));
-    await cdp.send('Runtime.enable');
-    cdp.on('Runtime.consoleAPICalled', (e) => {
-      const text = e.args.map((a) => a.value ?? a.description ?? '').join(' ');
-      if (!text.startsWith('[perf]')) return;
-      console.log(text);
-      const end = text.match(/^\[perf\] end (\S+)/);
-      if (end && useAdb) snapshot(opts, end[1]).then((s) => dump.snapshots.push(s));
-    });
+    await attach(cdp);
 
-    let state = await cdp.eval(`(() => { const v = window.__vrlbry; return { url: location.href, perf: !!v.perf?.enabled, presenting: !!v.renderer.xr.isPresenting, place: v.settings.place }; })()`);
-    if (!state.perf && command === 'status') {
-      console.log(`Page: ${state.url}${state.presenting ? ' (in VR)' : ''} · not recording (open it with ?perf, or use run)`);
+    // Whether the page records (?perf) and runs the code the server has now: a page opened before
+    // the last change would measure the old version.
+    const pageState = () => cdp.eval(`(async () => {
+      const v = window.__vrlbry;
+      const server = await fetch('/api/version', { cache: 'no-store' }).then((r) => r.json()).catch(() => null);
+      return { url: location.href, perf: !!v.perf?.enabled, presenting: !!v.renderer.xr.isPresenting, loaded: v.version ?? null, current: server?.changed ?? null };
+    })()`);
+    const when = (iso) => (iso ? new Date(iso).toLocaleString() : 'unknown');
+    let state = await pageState();
+    const isStale = (st) => !!st.current && st.loaded !== st.current;
+    const stale = isStale(state);
+    const describe = (s) => `Page: ${s.url}${s.presenting ? ' (in VR)' : ''} · ${s.perf ? 'recording' : 'not recording'}`
+      + ` · version ${when(s.loaded)}${isStale(s) ? ` (older than the server's ${when(s.current)}: reload it)` : ''}`;
+
+    if (command === 'status') {
+      console.log(describe(state));
+      if (state.perf) console.log(await cdp.eval('JSON.stringify(window.__vrlbry.perf.summary().overall)'));
       return;
     }
-    if (!state.perf) {
-      if (command === 'dump') throw new Error('the page is not recording: open it with ?perf (or use run --open)');
+    if (command === 'dump') {
+      if (!state.perf) throw new Error('the page is not recording: open it with ?perf (or use run --open)');
+      if (stale) console.warn(`Note: the page runs an older version (${when(state.loaded)}) than the server has (${when(state.current)}).`);
+    }
+    if (command === 'run' && (!state.perf || stale)) {
       const url = new URL(state.url);
       url.searchParams.set('perf', '');
-      console.log(`Reloading the page with ?perf: ${url}`);
+      console.log(!state.perf ? `Reloading the page with ?perf: ${url}`
+        : `The page runs an older version (${when(state.loaded)}; the server has ${when(state.current)}): reloading ${url}`);
       await cdp.eval(`location.replace(${JSON.stringify(url.href)})`).catch(() => {});
       cdp.close();
       await sleep(2000);
       ({ cdp } = await connectPage(fwd.endpoint, { waitMs: 60000 }));
-      await cdp.send('Runtime.enable');
+      await attach(cdp);
       await waitFor(() => cdp.eval('!!window.__vrlbry?.perf?.enabled'), 60000, 'the page to load');
-      state = await cdp.eval(`({ url: location.href, perf: true, presenting: !!window.__vrlbry.renderer.xr.isPresenting })`);
+      await waitFor(() => cdp.eval('window.__vrlbry.version !== null'), 15000, 'the page version').catch(() => {});
+      state = await pageState();
     }
-    console.log(`Page: ${state.url}${state.presenting ? ' (in VR)' : ''}`);
-
-    if (command === 'status') {
-      console.log(await cdp.eval('JSON.stringify(window.__vrlbry.perf.summary().overall)'));
-      return;
-    }
+    console.log(describe(state));
 
     if (command === 'run') {
       if (!state.presenting && !opts['allow-2d']) {
