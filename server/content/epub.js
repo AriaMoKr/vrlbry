@@ -229,7 +229,7 @@ function isXhtml(path, type) {
 function isCoverWrapper(id, path, html) {
   if (id !== 'coverpage-wrapper' && !/(^|\/)wrap\d+\.x?html?$/i.test(path)) return false;
   const body = html.replace(/^[\s\S]*?<body[^>]*>/i, '').replace(/<(svg|script|style)[\s\S]*?<\/\1>/gi, '');
-  return !/[^\s ]/.test(body.replace(/<[^>]*>/g, '').replace(/&nbsp;|&#160;/g, ''));
+  return !/[^\s\u00a0]/.test(body.replace(/<[^>]*>/g, '').replace(/&nbsp;|&#160;/g, ''));
 }
 
 /**

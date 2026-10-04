@@ -10,17 +10,17 @@ export const STYLE = Object.freeze({
   italic: 1, bold: 2, mono: 4, sup: 8, sub: 16, smallcaps: 32, underline: 64, smaller: 128, larger: 256,
 });
 
-const NBSP = ' ';
+const NBSP = '\u00a0';
 const PLACEHOLDER_TEXT = '(This book has no readable text.)';
 
 // HTML collapses only ASCII whitespace; U+00A0 and other Unicode spaces must survive.
 const WS_TEST = /[\t\n\f\r ]/;
 const WS_RUN = /[\t\n\f\r ]+/g;
 const ALL_WS = /^[\t\n\f\r ]*$/;
-const SHY = /­/g;
+const SHY = /\u00ad/g;
 const INVISIBLE_CHARS = /[^\t\n\f\r ]/g;
 // "Visible" = anything but whitespace (incl. NBSP) and zero-width characters.
-const VISIBLE = /[^\s​-‍⁠﻿]/;
+const VISIBLE = /[^\s\u200b-\u200d\u2060\ufeff]/;
 
 // ---------------------------------------------------------------------------------------------
 // Element classification tables
@@ -202,8 +202,12 @@ function parseCss(css, map) {
 // Element info: everything the state machine needs to know about one start tag.
 
 const NO_INFO = Object.freeze({
-  skip: 0, set: 0, clear: 0, align: undefined, quote: 0, verse: false, stanza: false, indent: -1,
-  line: false, caption: false, nomarker: false, listType: null,
+  skip: 0, // 1 = drop the subtree, 2 = drop it but keep collecting its ids (page numbers)
+  set: 0, // style bits switched on
+  clear: 0, // style bits switched off (font-style: normal...)
+  align: undefined, // 'c' | 'r' | '' (explicit left/justify) | undefined (inherit)
+  quote: 0, verse: false, stanza: false, verseLine: false, indent: -1, line: false,
+  caption: false, blank: false, boiler: false, nomarker: false, listType: null,
 });
 
 /** Applies parsed CSS props onto a mutable info object. */
@@ -235,7 +239,8 @@ function classInfo(name, cls, css) {
     if (p) info.nomarker = p.nomarker;
   }
   if (!cls) return info;
-  const isCell = name === 'td' || name === 'th' || name === 'hr';
+  // Index tables put page references in td.pageno; hr.pb is a visible rule: keep those.
+  const pageMarkerTag = name !== 'td' && name !== 'th' && name !== 'hr';
   const inline = !BLOCK_TAGS.has(name);
   // Drop caps are often hidden and replaced by a CSS background image we cannot show.
   const dropcap = /drop-?cap/i.test(cls);
@@ -243,7 +248,7 @@ function classInfo(name, cls, css) {
     if (!tok) continue;
     const low = tok.toLowerCase();
     if (low.startsWith('zim_')) { info.skip = 1; return info; }
-    if (!isCell && (PAGE_CLASSES.has(low) || (inline && PAGE_CLASSES_INLINE.has(low)))) {
+    if (pageMarkerTag && (PAGE_CLASSES.has(low) || (inline && PAGE_CLASSES_INLINE.has(low)))) {
       info.skip = 2; // keep collecting ids: they are link targets (#Page_12)
       return info;
     }
@@ -709,18 +714,19 @@ class Converter {
   startRow(table, ctx) {
     if (table.row) this.endRow(table);
     const row = {
-      cells: [], th: true, q: ctx.q, id: this.pendingId, imgs: [], imgsBefore: [], flow: false,
+      cells: [], aligns: [], th: true, q: ctx.q, id: this.pendingId, imgs: [], imgsBefore: [],
+      flow: false,
     };
     this.pendingId = null;
     table.row = row;
     return row;
   }
 
-  startCell(table, ctx, isTh) {
+  startCell(table, ctx, isTh, align) {
     if (!table.row) this.startRow(table, ctx);
     this.endCell(table);
     const row = table.row;
-    const cell = { runs: new Runs(), table, row, blocks: 0, flow: row.flow };
+    const cell = { runs: new Runs(), table, row, align, blocks: 0, flow: row.flow };
     if (row.flow) return cell; // a cell of a flow row is a plain block container
     table.cell = cell;
     if (!isTh) row.th = false;
@@ -736,6 +742,7 @@ class Converter {
     if (!cell) return;
     table.cell = null;
     cell.row.cells.push(cell.runs.finish() ?? []);
+    cell.row.aligns.push(cell.align);
   }
 
   endRow(table) {
@@ -772,14 +779,15 @@ class Converter {
           this.emit(blk);
         }
       } else {
-        for (const c of row.cells) {
-          if (!c.length) continue;
+        row.cells.forEach((c, i) => {
+          if (!c.length) return;
           const blk = { t: 'p', r: c };
+          if (row.aligns[i]) blk.a = row.aligns[i];
           if (row.q) blk.q = row.q;
           if (id) blk.id = own(id);
           id = null;
           this.emit(blk);
-        }
+        });
       }
       for (const img of row.imgs) this.emit(img);
       if (id && !this.pendingId) this.pendingId = id;
@@ -796,12 +804,16 @@ class Converter {
     table.cell = null;
     if (cell) {
       const r = cell.runs.finish();
-      if (r) row.cells.push(r);
+      if (r) {
+        row.cells.push(r);
+        row.aligns.push(cell.align);
+      }
       cell.flow = true; // what is still to come in this cell becomes normal blocks
     }
     table.buf = [{ ...row }];
     this.emitRows(table, false);
     row.cells = [];
+    row.aligns = [];
     row.imgs = [];
     row.imgsBefore = [];
   }
@@ -972,7 +984,7 @@ class Converter {
         frame.row = this.startRow(table, pctx);
         return;
       }
-      const newCell = this.startCell(table, pctx, name === 'th');
+      const newCell = this.startCell(table, pctx, name === 'th', mut().align || '');
       frame.kind = K_CELL;
       frame.cell = newCell;
       const ctx = mut();
@@ -1030,7 +1042,7 @@ class Converter {
 
   nextMarker(pctx, attribs, info) {
     const list = pctx.list;
-    if (!list) return info.nomarker ? '' : '•';
+    if (!list) return info.nomarker ? '' : '\u2022';
     const value = parseInt(attribs.value, 10);
     if (list.ordered) {
       if (Number.isFinite(value)) list.next = value;
@@ -1038,7 +1050,7 @@ class Converter {
       if (list.nomarker || info.nomarker) return '';
       return listMarker(n, info.listType ?? list.type);
     }
-    return list.nomarker || info.nomarker ? '' : '•';
+    return list.nomarker || info.nomarker ? '' : '\u2022';
   }
 
   ontext(text) {
@@ -1048,7 +1060,7 @@ class Converter {
     }
     const ctx = this.top.ctx;
     if (ctx.skip) return;
-    if (text.indexOf('­') >= 0) text = text.replace(SHY, '');
+    if (text.indexOf('\u00ad') >= 0) text = text.replace(SHY, '');
     if (ctx.blank) text = text.replace(INVISIBLE_CHARS, NBSP);
     const cell = liveCell(ctx);
     if (cell) {
@@ -1188,6 +1200,7 @@ function expandTabs(x) {
  * @returns {{ title: string|null, blocks: object[] }}
  */
 export function htmlToBlocks(html, { docPath = '' } = {}) {
+  if (typeof html !== 'string') html = Buffer.from(html ?? '').toString('utf8');
   if (html.charCodeAt(0) === 0xfeff) html = html.slice(1);
   const conv = new Converter(docPath);
   const parser = new Parser(conv, { decodeEntities: true, recognizeSelfClosing: true, lowerCaseTags: true });
@@ -1277,7 +1290,7 @@ function tocTitle(block) {
   let s = '';
   for (const run of block.r) s += run[0];
   s = s.replace(/\n/g, ' ').replace(/ {2,}/g, ' ').trim();
-  if (s.length > TOC_TITLE_MAX) s = s.slice(0, TOC_TITLE_MAX - 1).trimEnd() + '…';
+  if (s.length > TOC_TITLE_MAX) s = s.slice(0, TOC_TITLE_MAX - 1).trimEnd() + '\u2026';
   return s;
 }
 
