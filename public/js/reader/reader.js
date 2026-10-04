@@ -6,7 +6,7 @@
 
 import { getBookMeta, getChunk, forgetBook } from '../api.js';
 import { PAGE_PX } from '../config.js';
-import { makeMetrics, layoutChunk, getMeasurer, FONTS } from './layout.js';
+import { makeMetrics, layoutChunk, getMeasurer, FONTS, blockChars } from './layout.js';
 
 export const THEMES = {
   paper: { paper: '#f6efdf', ink: '#231d16', light: '#8a7a62', rule: '#b9a78a', grain: 0.045, vignette: 'rgba(120,90,40,0.16)', img: 1 },
@@ -138,6 +138,7 @@ export class BookReader {
     p = (async () => {
       await this.load();
       const blocks = await getChunk(this.libId, this.book.id, c);
+      if (this.meta.lazy) this._exactChars(c, blocks);
       // Images without known size: load them first so the layout is exact.
       const missing = blocks.filter((b) => b.t === 'img' && !(b.w && b.h) && !b._w);
       if (missing.length) {
@@ -163,6 +164,22 @@ export class BookReader {
     // Warm the network cache for the next chunk (layout stays lazy).
     if (this.meta && c + 1 < this.meta.chunks.length) getChunk(this.libId, this.book.id, c + 1).catch(() => {});
     return p;
+  }
+
+  /**
+   * A lazy book's chunk sizes (Wikipedia volumes: one article per chunk) are estimates until the
+   * chunk arrives: replace one with its real character count, shifting the later starts. Only
+   * page-number estimates and progress move; positions are anchored by block.
+   */
+  _exactChars(c, blocks) {
+    const ch = this.meta.chunks[c];
+    if (ch.exact) return;
+    const chars = blocks.reduce((sum, b) => sum + blockChars(b), 0);
+    const delta = chars - ch.chars;
+    ch.chars = chars;
+    ch.exact = true;
+    for (let i = c + 1; i < this.meta.chunks.length; i++) this.meta.chunks[i].start += delta;
+    this.meta.totalChars += delta;
   }
 
   _clampRef(ref) {

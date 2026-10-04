@@ -85,16 +85,16 @@ export class World {
     this.sections = [];
     const sorted = collections.map((c) => {
       for (const b of c.books) b.libId = c.library.id;
-      return sortBooks(c.books, sort);
+      return c.ordered ? c.books : sortBooks(c.books, sort);
     });
     const quotas = shareBookcases(sorted.map(bookcasesNeeded), MAX_BOOKCASES);
-    collections.forEach(({ library, books, subtitle }, k) => {
+    collections.forEach(({ library, books, subtitle, ordered }, k) => {
       let packed = packBookcases(prefixForBookcases(sorted[k], quotas[k]));
       if (packed.length > quotas[k]) packed = packed.slice(0, quotas[k]);
       if (!packed.length) return;
       const shown = packed.reduce((n, p) => n + p.items.length, 0);
       this.sections.push({ library, first: cases.length, count: packed.length, books: books.length, shown, subtitle });
-      for (const p of packed) cases.push({ ...p, label: rangeLabel(p.items, sort), libId: library.id });
+      for (const p of packed) cases.push({ ...p, label: rangeLabel(p.items, ordered ? 'title' : sort), libId: library.id });
     });
 
     // Tear down the previous room.

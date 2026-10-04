@@ -176,10 +176,13 @@ export function createApp(library, { publicDir = DEFAULT_PUBLIC_DIR, vendorDirs 
     if (segs[4] === 'chunks' && segs.length === 6) {
       const raw = segs[5];
       if (!/^\d{1,9}$/.test(raw)) return sendError(req, res, 400, `invalid chunk index: ${raw}`);
-      const content = await lib.content(bookId);
       const n = Number(raw);
-      const chunk = content.chunks[n];
-      if (!chunk) return sendError(req, res, 404, `chunk ${n} out of range (0..${content.chunks.length - 1})`);
+      // Through chunk(): Wikipedia volumes convert their articles one by one, on demand.
+      const chunk = await lib.chunk(bookId, n);
+      if (!chunk) {
+        const { meta } = await lib.content(bookId);
+        return sendError(req, res, 404, `chunk ${n} out of range (0..${meta.chunks.length - 1})`);
+      }
       return sendBody(req, res, new Body(chunk.json, { etag: `W/${chunk.etag}`, gzip: () => chunk.gzip() }), { cacheControl: 'no-cache' });
     }
 

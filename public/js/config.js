@@ -4,6 +4,7 @@ export const BOOK = {
   minH: 0.23, maxH: 0.31,    // book height range
   minT: 0.026, maxT: 0.075,  // spine thickness range
   depthRatio: 0.7,           // depth = height * depthRatio
+  volume: { w: 0.05, h: 0.3 }, // an encyclopedia volume (Wikipedia, SPEC §2.5): one size for all
 };
 
 export const BOOKCASE = {

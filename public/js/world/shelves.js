@@ -198,8 +198,8 @@ export function rangeLabel(items, sort) {
       const k = authorKey(bk.author);
       return k.startsWith('zzzz ') ? cap(k.slice(5), 4) : cap(k.split(' ')[0], 3);
     }
-    : (bk) => cap(titleKey(bk.title), 2);
-  return `${key(a)} – ${key(b)}`;
+    : (bk, end) => cap(titleKey(bk.range ? bk.range[end ? 1 : 0] : bk.title), 2); // volumes: first/last article
+  return `${key(a, false)} – ${key(b, true)}`;
 }
 
 function cap(s, n) {

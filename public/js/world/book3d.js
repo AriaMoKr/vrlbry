@@ -25,6 +25,16 @@ function getEdgeTexture() {
 }
 
 const coverCache = new Map(); // url -> Promise<THREE.Texture|null>
+/** An image element for a URL, or null when it fails to load. */
+function loadImage(url) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => resolve(null);
+    img.src = url;
+  });
+}
+
 function loadCoverTexture(url) {
   if (!coverCache.has(url)) {
     coverCache.set(url, new Promise((resolve) => {
@@ -165,8 +175,21 @@ export class Book3D {
     return READ.pageWidth / this.dims.d;
   }
 
-  /** Loads the cover image (book.cover), keeping the generated cover on failure. Never rejects. */
+  /**
+   * Loads the cover image (book.cover), keeping the generated cover on failure; an encyclopedia
+   * volume instead redraws its generated cover with the archive's emblem. Never rejects.
+   */
   async loadCover() {
+    if (this.book.volume && this.book.emblem) {
+      const img = await loadImage(this.book.emblem);
+      if (img && this._coverMat) {
+        const tex = canvasTexture(makeCoverCanvas(this.book, { emblem: img }));
+        this._ownTextures.push(tex);
+        this._coverMat.map = tex;
+        this._coverMat.needsUpdate = true;
+      }
+      return;
+    }
     if (!this.book.cover) return;
     const tex = await loadCoverTexture(this.book.cover);
     if (tex && this._coverMat) {

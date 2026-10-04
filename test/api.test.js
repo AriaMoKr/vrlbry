@@ -580,7 +580,16 @@ describe('HTTP API (real Gutenberg ZIM)', { skip: !fs.existsSync(REAL_ZIM) && 'r
   let server;
   let get;
   before(async () => {
-    library = await Library.scan(REPO, { log: () => {} });
+    // Only the reference ZIM: the repo folder may hold other (huge) ZIMs, and scanning them would
+    // open each one and start background indexes that write to .cache/.
+    const dir = path.join(tmp, 'real');
+    fs.mkdirSync(dir);
+    try {
+      fs.linkSync(REAL_ZIM, path.join(dir, path.basename(REAL_ZIM)));
+    } catch {
+      fs.symlinkSync(REAL_ZIM, path.join(dir, path.basename(REAL_ZIM)));
+    }
+    library = await Library.scan(dir, { log: () => {}, cacheDir: path.join(tmp, 'real-cache') });
     server = await startServer(createApp(library, { log: () => {} }));
     get = (p, opts) => request(server.address().port, p, opts);
   });

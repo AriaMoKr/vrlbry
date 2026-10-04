@@ -12,7 +12,7 @@ import { load, save } from './util/storage.js';
 import { letterOf, SORT_MODES } from './util/books.js';
 import { PAGE_PX, READ } from './config.js';
 import {
-  ALL_PLACE, collectionsFor, currentPlace, facetsOf, isFaceted, normRoom, placeBookCount, placeFor, roomLabel, sameRoom, ROOM_CAP,
+  ALL_PLACE, collectionsFor, currentPlace, facetsOf, isFaceted, normRoom, placeBookCount, placeFor, roomLabel, sameRoom, unitOf, ROOM_CAP,
 } from './rooms.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
@@ -244,7 +244,7 @@ export class Interaction {
       const n = placeBookCount(lib, this.libraries, this.booksByLib);
       const busy = lib.indexing && lib.indexing.stage !== 'failed';
       const count = busy ? `indexing ${Math.round((lib.indexing.progress || 0) * 100)}%`
-        : `${n.toLocaleString()} ${lib.kind === 'wikisource' ? 'works' : 'books'}`;
+        : `${n.toLocaleString()} ${unitOf(lib)}`;
       p.add({
         id: lib === ALL_PLACE ? 'place-all' : `place-${i}`, type: 'button', x: pad + (i % libCols) * (lw + 10), y: y + Math.floor(i / libCols) * 62,
         w: lw, h: 54, label: `${lib.title} · ${count}`, size: 23, active: place?.id === lib.id, disabled: !n,

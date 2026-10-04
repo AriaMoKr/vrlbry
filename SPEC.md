@@ -127,6 +127,29 @@ mwoffliner 2.0). Facts verified by inspection:
 - Images are WebP files under `C/_assets_/<hash>/…`; a work's main page usually starts with its
   cover / title-page image.
 
+### 2.5 Wikipedia ZIMs (mwoffliner)
+
+Detected by metadata: `M/Source` ends with `wikipedia.org`, or `M/Tags` contains `wikipedia`.
+References: `wikipedia_en_100_2026-08.zim` ("Wikipedia 100", mwoffliner 1.17) and
+`wikipedia_en-simple_all_maxi_2026-09.zim` (Simple English, 2.9 GB, mwoffliner 2.0). The target
+is the maxi flavour (with images). A Wikipedia is its own room of encyclopedia volumes:
+
+- **Articles** are the non-redirect HTML entries of the article namespace (`C`, or `A` in the
+  old scheme), except the main page. Disambiguation and "List of …" pages are articles too.
+- mwoffliner stores redirects to a *section* as tiny HTML pages (`<meta http-equiv="refresh">`,
+  ~220 bytes), because ZIM redirects carry no fragment. They are redirects, not articles:
+  Simple English has 285,214 articles plus 4,819 such pages, Wikipedia 100 has 101 plus 1,221.
+- **Volumes** are runs of 1,000 consecutive articles (`VOLUME_SIZE`) in the app's title order
+  (`titleKey` + a default `Intl.Collator`, as `util/books.js` sorts book titles), numbered
+  1–N. Each article starts on a fresh page, as its own chunk.
+- The index (`server/wikipedia.js`) reads no article text. It scans the directory, then reads each
+  candidate's HTML size, decompressing every cluster once in cluster order: that recognises the
+  redirect pages, and the sizes estimate article lengths. Then it sorts the titles and cuts the
+  volumes. It is built in the background on first open and cached as
+  `.cache/wikipedia-<uuid>.v<INDEX_VERSION>.json`: the entry indices in title order and their
+  HTML sizes (both base64 `Uint32Array`s), and each volume's first and last title. Wikipedia
+  100 takes under a second, Simple English 56 s.
+
 ## 3. Server
 
 ```
@@ -338,11 +361,12 @@ export class ArchiveLibrary {
                         // characters outside [A-Za-z0-9._-] → '-'; de-duplicate with -2, -3…
   file: string          // basename
   archive: ZimArchive
-  kind: 'gutenberg' | 'wikisource' | 'generic'
+  kind: 'gutenberg' | 'wikisource' | 'wikipedia' | 'generic'
   async info(): Promise<LibraryInfo>                     // §4 shape, cached (indexing progress live)
   async books(): Promise<Book[]>                         // §4 shape, cached
   async book(bookId): Promise<Book | undefined>
   async content(bookId): Promise<{ meta, chunks }>       // converted + cached (byte LRU ~300 MB total)
+  async chunk(bookId, n): Promise<Chunk | null | undefined> // one chunk; Wikipedia articles on demand
   async resource(bookId, path): Promise<{ data, mime } | null>  // EPUB-internal files
 }
 ```
@@ -365,6 +389,15 @@ export class ArchiveLibrary {
   then `chunkBlocks`. Concurrent calls for the same book share one conversion (in-flight map).
   Conversion of a 30 MB book must not block the event loop for more than a few hundred ms at a
   time is NOT required — but it must complete (< ~5 s) and be cached.
+- Wikipedia volumes (§2.5): `content()` returns only the reading metadata. It has one chunk
+  per article, with sizes estimated from the HTML size (`CHARS_PER_HTML_BYTE`), the article
+  titles as `toc`, and `lazy: true`. `chunk(bookId, n)` converts article n when first asked for:
+  its title as an `h` level 1 block (the page's own `h1#firstHeading` is chrome), then the
+  article, with images fixed as above. It is cached in the same LRU under the book's key plus
+  `#n`, and concurrent requests share one conversion. The HTTP chunk route always goes through
+  `chunk()`.
+- Images whose width and height the page already gives are only checked for existence, not
+  read (`_zimImage(path, { size: false })`).
 - Book `size`: `getBlobSize(epubEntry ?? htmlEntry, { cheapOnly: true })` (null if unknown).
   Never decompress whole archives at startup; `books()` must be fast (< 1 s for this file).
 
@@ -473,7 +506,11 @@ dotfiles skipped), walked on every request since the files may change while the 
 `cover`/`epub` null when absent (verify existence with `findPath`). Ids are strings.
 `authorId`/`language`/`shelf` null when unknown. Wikisource books (§3.8) have `rank: null` and add
 `"genre": "Novels", "year": 1926, "parts": 44` (`year` may be null); the full list is returned
-(17,693 works ≈ 0.8 MB gzipped) and filtered into rooms by the client (§5.6).
+(17,693 works ≈ 0.8 MB gzipped) and filtered into rooms by the client (§5.6). Wikipedia volumes
+(§2.5) have `id: "v<N>"`, `title` = the range ("Aachen – Abbey", or one title),
+`subtitle: "Volume N of M"`, `rank: N`, `size: null`, and add `"volume": N, "volumes": M,
+"range": [first, last], "articles": 1000, "emblem": "<the archive's illustration URL>"`; the
+library info of a Wikipedia adds `"articles"` (the total) and, like Wikisource, `"indexing"`.
 
 **`GET /api/libraries/:lib/books/:id`** → reading metadata (triggers conversion):
 ```json
@@ -482,6 +519,8 @@ dotfiles skipped), walked on every request since the files may change while the 
   "chunks": [ { "start": 0, "chars": 40210, "blocks": 312 } ],
   "toc": [ { "title": "CONTENTS", "level": 2, "c": 0, "b": 14 } ], "tocTruncated": false }
 ```
+A Wikipedia volume's metadata adds `"lazy": true`: its chunk sizes are estimates, and the reader
+replaces each with the real character count when the chunk arrives (§5.2).
 
 **`GET /api/libraries/:lib/books/:id/chunks/:n`** → `{ "index": n, "blocks": [ … ] }`
 (400 for non-integer `n`, 404 out of range). Responses may be gzip-compressed when the request
@@ -812,8 +851,12 @@ States: `browse` → `inspect` → `read` (and back).
     walkable do they go to the spawn point.
 - **Rooms** (`rooms.js`): the hall shows one *place* at a time — each library is its own room
   (`settings.place`, default the first library with books); `collectionsFor()` returns that single
-  collection. With more than one library there is one more place, `ALL_PLACE`
-  (`settings.place = '*'`), that shelves every library in one hall, with no filters.
+  collection. A Wikipedia library is shelved whole as its volumes, in their own order
+  (`ordered`: never re-sorted, bookcase plates from the first and last article). It is never
+  split by filters, and its sign reads "N volumes · M articles". With more than one library
+  there is one more place, `ALL_PLACE`
+  (`settings.place = '*'`), that shelves every library except Wikipedias (for now) in one hall,
+  with no filters.
   - No room has more than `MAX_BOOKCASES` = 200 bookcases (`world.js`); in practice only this
     hall reaches the limit.
   - Libraries share the limit fairly (`shareBookcases`, max-min fair): each gets an equal share,

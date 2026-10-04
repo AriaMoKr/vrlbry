@@ -202,8 +202,12 @@ export function makePageEdgeCanvas({ w = 64, h = 256 } = {}) {
   return c;
 }
 
+/** The binding of an encyclopedia volume: the same for the whole set. */
+const VOLUME_COLORS = { cloth: '#1b2b52', gilt: '#d8b45a', style: 0, label: '#1b2b52', dark: shade('#1b2b52', 0.55), light: shade('#1b2b52', 1.35) };
+
 /** Colour scheme of a book's binding. */
 export function bookColors(book) {
+  if (book.volume) return VOLUME_COLORS;
   const key = String(book.id) + '|' + (book.title || '');
   const cloth = PALETTE[hashString(key + 'c') % PALETTE.length];
   const gilt = GILT[hashString(key + 'g') % GILT.length];
@@ -256,6 +260,7 @@ function wrapLines(g, text, width, max) {
  * 90° clockwise), as English books do.
  */
 export function drawSpine(g, book, x, y, w, h) {
+  if (book.volume) return drawVolumeSpine(g, book, x, y, w, h);
   const col = bookColors(book);
   const rnd = rng(hashString(String(book.id) + 'spine'));
   g.save();
@@ -374,6 +379,74 @@ export function drawSpine(g, book, x, y, w, h) {
   g.restore();
 }
 
+/** Shrinks the current font (keeping its weight) until text fits `width`, then ellipsizes. */
+function fitLine(g, text, width, size, minSize, weight = '600') {
+  let s = size;
+  g.font = `${weight} ${s}px ${SERIF}`;
+  while (s > minSize && g.measureText(text).width > width) {
+    s -= 1;
+    g.font = `${weight} ${s}px ${SERIF}`;
+  }
+  if (g.measureText(text).width <= width) return text;
+  let t = text;
+  while (t.length > 1 && g.measureText(t + '…').width > width) t = t.slice(0, -1);
+  return t.trimEnd() + '…';
+}
+
+/**
+ * The spine of an encyclopedia volume: gilt bands, the volume number at the head, the title range
+ * down the middle (first – / last, rotated like other titles), "WIKIPEDIA" at the foot.
+ */
+function drawVolumeSpine(g, book, x, y, w, h) {
+  const col = bookColors(book);
+  g.save();
+  g.translate(x, y);
+  g.beginPath();
+  g.rect(0, 0, w, h);
+  g.clip();
+  const shadeGrad = g.createLinearGradient(0, 0, w, 0);
+  shadeGrad.addColorStop(0, col.dark);
+  shadeGrad.addColorStop(0.3, col.cloth);
+  shadeGrad.addColorStop(0.55, col.light);
+  shadeGrad.addColorStop(0.8, col.cloth);
+  shadeGrad.addColorStop(1, col.dark);
+  g.fillStyle = shadeGrad;
+  g.fillRect(0, 0, w, h);
+  g.globalAlpha = 0.07;
+  g.fillStyle = '#000';
+  for (let yy = 0; yy < h; yy += 3) g.fillRect(0, yy, w, 1);
+  g.globalAlpha = 1;
+  const band = (f, thick = Math.max(1.5, h * 0.006)) => {
+    g.fillStyle = col.gilt;
+    g.fillRect(w * 0.08, h * f, w * 0.84, thick);
+  };
+  for (const f of [0.045, 0.2, 0.86, 0.955]) band(f);
+  for (const f of [0.06, 0.185, 0.875, 0.94]) band(f, Math.max(1, h * 0.003));
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  // The volume number, horizontal, as large as the spine allows.
+  const num = fitLine(g, String(book.volume), w * 0.84, Math.min(w * 0.5, 34), 8);
+  emboss(g, num, w / 2, h * 0.122, col.gilt);
+  // The range, rotated: "first –" over "last".
+  const [first, last] = book.range || [book.title, ''];
+  const len = h * 0.6;
+  g.save();
+  g.translate(w / 2, h * 0.53);
+  g.rotate(Math.PI / 2);
+  const size = Math.min(w * 0.3, 22);
+  const lines = last && last !== first ? [`${first} –`, last] : [first];
+  const lh = size * 1.15;
+  lines.forEach((line, i) => {
+    const text = fitLine(g, line, len, size, 8);
+    emboss(g, text, 0, -((i - (lines.length - 1) / 2) * lh), col.gilt);
+  });
+  g.restore();
+  // The set's name at the foot.
+  const name = fitLine(g, 'WIKIPEDIA', w * 0.84, Math.min(w * 0.17, 11), 5, '600');
+  emboss(g, name, w / 2, h * 0.908, col.gilt);
+  g.restore();
+}
+
 /**
  * Gilt text with a crisp dark offset copy beneath it. (Canvas shadowBlur looks the same at
  * spine sizes but blurs every glyph on the CPU, which made atlas painting slow.)
@@ -394,8 +467,54 @@ export function makeSpineCanvas(book, dims, ppm = SPINE_PPM) {
   return c;
 }
 
+/**
+ * The cover of an encyclopedia volume: the set's binding and gilt frame, its name, the volume
+ * number and range, and the archive's emblem (an image, once loaded) above them.
+ */
+function makeVolumeCover(book, { w, h, emblem }) {
+  const col = bookColors(book);
+  const c = newCanvas(w, h);
+  const g = c.getContext('2d');
+  const grd = g.createLinearGradient(0, 0, w, h);
+  grd.addColorStop(0, col.light);
+  grd.addColorStop(0.5, col.cloth);
+  grd.addColorStop(1, col.dark);
+  g.fillStyle = grd;
+  g.fillRect(0, 0, w, h);
+  grain(g, w, h, 0.1, 11);
+  g.strokeStyle = col.gilt;
+  g.lineWidth = 4;
+  g.strokeRect(28, 28, w - 56, h - 56);
+  g.lineWidth = 1.5;
+  g.strokeRect(40, 40, w - 80, h - 80);
+  g.fillStyle = col.gilt;
+  g.textAlign = 'center';
+  g.textBaseline = 'alphabetic';
+  g.fillText(fitLine(g, 'WIKIPEDIA', w - 120, 54, 20), w / 2, 130);
+  g.font = `italic 26px ${SERIF}`;
+  g.fillText('The Free Encyclopedia', w / 2, 172);
+  if (emblem) {
+    const s = 120;
+    g.save();
+    g.globalAlpha = 0.9;
+    g.drawImage(emblem, (w - s) / 2, 205, s, s);
+    g.restore();
+  } else {
+    g.font = `34px ${SERIF}`;
+    g.fillText('❦', w / 2, 270);
+  }
+  g.fillText(fitLine(g, `Volume ${book.volume}`, w - 120, 40, 18), w / 2, 400);
+  const [first, last] = book.range || [book.title, ''];
+  const lines = last && last !== first ? [`${first} –`, last] : [first];
+  lines.forEach((line, i) => g.fillText(fitLine(g, line, w - 120, 30, 14, ''), w / 2, 470 + i * 42));
+  g.font = `22px ${SERIF}`;
+  if (book.articles) g.fillText(`${book.articles.toLocaleString()} articles`, w / 2, h - 80);
+  return c;
+}
+
 /** Generated cover for books without a cover image: cloth, gilt frame, title, author. */
-export function makeCoverCanvas(book, { w = 512, h = 720 } = {}) {
+export function makeCoverCanvas(book, { w = 512, h = 720, emblem = null } = {}) {
+  if (book.volume) return makeVolumeCover(book, { w, h, emblem });
   const col = bookColors(book);
   const c = newCanvas(w, h);
   const g = c.getContext('2d');

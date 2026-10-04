@@ -106,6 +106,7 @@ export function letterOf(book, mode) {
  * Thickness grows with the logarithm of the book's byte size when known, else is hash-derived.
  */
 export function bookDims(book) {
+  if (book.volume) return { w: BOOK.volume.w, h: BOOK.volume.h, d: BOOK.volume.h * BOOK.depthRatio };
   const key = String(book.id) + '|' + (book.title || '');
   const r1 = hash01(key, 'h');
   const r2 = hash01(key, 't');

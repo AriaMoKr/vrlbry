@@ -12,9 +12,12 @@ It understands two kinds of [Kiwix ZIM files](https://library.kiwix.org/) especi
 - **Wikisource** (mwoffliner): every multi-part work — novels, collections, histories; 17,693 in
   the English ZIM — becomes one book with all its chapters in order, its cover, author, year and
   genre.
+- **Wikipedia** (mwoffliner): a room of encyclopedia volumes, each holding 1,000 articles in
+  title order with a matching blue-and-gilt binding, the volume number and title range on the
+  spine, and every article starting on a fresh page. The first time a Wikipedia ZIM is opened,
+  its articles are indexed in the background (about a minute for Simple English).
 
 Other ZIM files also work: their HTML articles become the books, up to 2,000 per file (`--max-generic`).
-That is only a sample of a Wikipedia ZIM; proper Wikipedia support is on the [TODO list](TODO.md).
 
 ## Run it
 

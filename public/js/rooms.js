@@ -18,10 +18,19 @@ export const ALL_PLACE = { id: '*', title: 'All libraries', kind: 'all' };
 /** Libraries with more books than this are browsed by rooms. */
 export const FACET_MIN = 3000;
 
-/** True when a library is browsed by rooms rather than shelved whole. */
+/** True when a library is browsed by rooms rather than shelved whole (never Wikipedia's volumes). */
 export function isFaceted(library, books) {
+  if (library.kind === 'wikipedia') return false;
   return library.kind === 'wikisource' || (books?.length ?? 0) > FACET_MIN;
 }
+
+/** What a library's books are called: works, volumes or books. */
+export function unitOf(library) {
+  return library.kind === 'wikisource' ? 'works' : library.kind === 'wikipedia' ? 'volumes' : 'books';
+}
+
+/** Libraries in the all-libraries hall: Wikipedia stays out of it for now. */
+const inAllPlace = (library) => library.kind !== 'wikipedia';
 
 const genreOf = (b) => b.genre || b.shelf || 'Other works';
 
@@ -116,7 +125,7 @@ export function collectionsFor(libraries, booksByLib, settings) {
   const lib = currentPlace(libraries, booksByLib, settings);
   if (!lib) return [];
   if (lib === ALL_PLACE) {
-    return libraries.filter((l) => booksByLib[l.id]?.length).map((library) => {
+    return libraries.filter((l) => inAllPlace(l) && booksByLib[l.id]?.length).map((library) => {
       const books = booksByLib[library.id];
       return { library, books, room: null, total: books.length, capped: false };
     });
@@ -125,13 +134,15 @@ export function collectionsFor(libraries, booksByLib, settings) {
     ...c,
     subtitle: c.room
       ? `${roomLabel(c.room)} · ${c.total.toLocaleString()} works${c.capped ? ` (first ${ROOM_CAP.toLocaleString()})` : ''}`
-      : undefined,
+      : lib.kind === 'wikipedia'
+        ? `${c.total.toLocaleString()} volume${c.total === 1 ? '' : 's'} · ${(lib.articles ?? 0).toLocaleString()} articles`
+        : undefined,
   }));
 }
 
 /** Number of books a place shelves in total (all libraries for ALL_PLACE). */
 export function placeBookCount(place, libraries, booksByLib) {
-  if (place === ALL_PLACE) return libraries.reduce((n, l) => n + (booksByLib[l.id]?.length || 0), 0);
+  if (place === ALL_PLACE) return libraries.reduce((n, l) => n + (inAllPlace(l) ? booksByLib[l.id]?.length || 0 : 0), 0);
   return booksByLib[place.id]?.length || 0;
 }
 
@@ -155,7 +166,8 @@ export function placeFor(book, libraries, booksByLib) {
 export function shelfCollections(libraries, booksByLib, rooms, sort) {
   return libraries.map((library) => {
     const all = booksByLib[library.id] || [];
-    if (!isFaceted(library, all)) return { library, books: all, room: null, total: all.length, capped: false };
+    // Wikipedia volumes come in their own order (numbered by title range): never re-sorted.
+    if (!isFaceted(library, all)) return { library, books: all, room: null, total: all.length, capped: false, ordered: library.kind === 'wikipedia' };
     let room = normRoom(rooms[library.id]);
     if (!room || !all.some((b) => inRoom(b, room))) room = defaultRoom(all);
     if (room) rooms[library.id] = room;

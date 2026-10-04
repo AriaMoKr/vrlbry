@@ -136,8 +136,8 @@ export class Overlay {
           <div><div class="ov-lib-title">${esc(l.title)}</div>
           <div class="ov-lib-desc">${esc(l.longDescription || l.description || '')}</div>
           <div class="ov-lib-meta">${l.indexing && l.indexing.stage !== 'failed'
-            ? `indexing works… ${Math.round((l.indexing.progress || 0) * 100)}%`
-            : `${(booksByLib[l.id]?.length || 0).toLocaleString()} ${l.kind === 'wikisource' ? 'works' : 'books'}`} · ${esc(l.file)}</div></div>
+            ? `indexing… ${Math.round((l.indexing.progress || 0) * 100)}%`
+            : `${(booksByLib[l.id]?.length || 0).toLocaleString()} ${l.kind === 'wikisource' ? 'works' : l.kind === 'wikipedia' ? `volumes (${(l.articles ?? 0).toLocaleString()} articles)` : 'books'}`} · ${esc(l.file)}</div></div>
         </div>`).join('') + (libraries.length > 1 ? `<div class="ov-lib-meta">${total.toLocaleString()} books in ${libraries.length} libraries</div>` : '')
       : '<div class="ov-lib-desc">No .zim files were found in the server folder. Add some and reload.</div>';
     this._index = [];

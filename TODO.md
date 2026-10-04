@@ -1,8 +1,7 @@
 # TODO
 
-- **Load Wikipedia ZIMs.** A Wikipedia ZIM (mwoffliner, `Source` = `*.wikipedia.org`) currently
-  falls back to generic mode: only its first 2,000 HTML articles in URL order (`--max-generic`).
-  Decided (2026-10-04):
+- **Wikipedia ZIMs** (mwoffliner, `Source` = `*.wikipedia.org`; SPEC §2.5). The core is built
+  (2026-10-04): detection, the index, volumes, articles converted on demand, the look. Decided:
   - Wikipedia is its own room of encyclopedia volumes. Each volume holds **1,000 consecutive
     articles**, and its spine shows its title range (e.g. "Aachen – Abbey").
   - Target the **maxi** ZIMs, which include images. English has ~6.8 M articles in ~110 GB,
@@ -11,15 +10,16 @@
     `util/books.js`), not the ZIM's byte order. The server sorts all titles once while indexing.
   - Each article starts on a **fresh page** (one chunk per article). A volume's contents list is
     its 1,000 article titles, so the contents panel needs a letter jump.
-  - The index needs titles only, no content pass: read every directory entry, skip redirects and
-    non-HTML entries, sort, cut into volumes, cache in `.cache/` like the Wikisource index.
-    Sorting ~6.8 M titles in the server costs memory and about a minute, once.
+  - The index reads no article text: it reads every directory entry, then each page's HTML size
+    (to drop mwoffliner's section-redirect pages and estimate lengths), sorts, cuts into
+    volumes and caches in `.cache/`. Simple English takes 56 s; sorting ~6.8 M English titles
+    costs memory and about a minute more.
   - **Articles = every non-redirect HTML entry** in the main namespace, except the ZIM's main
     page. That includes disambiguation pages (~4 %) and "List of …" pages. Skip images, CSS and
     scripts. Redirects stay out of the volumes, but article search could use them as aliases.
   - **The look:**
     - One uniform binding for the whole set (e.g. deep blue cloth with gilt bands).
-    - Uniform size: ~30 cm tall, 5 cm thick (~65 volumes per bookcase; English ≈ 105
+    - Uniform size: ~30 cm tall, 5 cm thick (~105 volumes per bookcase; English ≈ 65
       bookcases, one room under the 200 cap).
     - Spine: the volume number large at the top, the title range in the middle ("Aachen –
       Abbey", each end shortened to fit), "Wikipedia" at the foot.
@@ -27,6 +27,9 @@
       number and range, with the ZIM's globe illustration as an emblem.
     - Volumes are numbered 1–N in title order. Bookcase plates show their first and last
       article ("Aa – Ac"), and the section sign reads "Wikipedia (English) · 6,800 volumes".
+- **Wikipedia: still to do.** A letter jump in the contents panel (a volume lists 1,000
+  articles); trying the full English maxi (~6.8 M articles, ~119 GB; the index's directory scan,
+  size pass and 6.8 M-title sort take memory and time); trying a volume on the Quest.
 - **Wikipedia: follow links** (later). Tapping a link in an article goes to that article, taking
   its volume off the shelf if needed. The reader cannot follow links today.
 - **Wikipedia: article search.** Typing an article title opens the right volume at that article.

@@ -2,7 +2,8 @@
  * Library catalog and book content (SPEC §2.2, §2.3, §3.6).
  *
  * A `Library` is the set of ZIM files found in one directory; each file is an `ArchiveLibrary`.
- * A Gutenberg ZIM (gutenberg2zim) is catalogued from its own JSON index; any other ZIM becomes a
+ * A Gutenberg ZIM (gutenberg2zim) is catalogued from its own JSON index, a Wikisource ZIM from
+ * its works, a Wikipedia ZIM as volumes of 1,000 articles (§2.5); any other ZIM becomes a
  * "generic" library whose books are its HTML articles. Book content is converted on demand
  * (HTML or EPUB → blocks → chunks), serialized once and kept in a byte-budgeted LRU shared by all
  * archives, so the HTTP layer can send cached bytes without re-serializing.
@@ -15,12 +16,13 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import zlib from 'node:zlib';
 import { parseEpub } from './content/epub.js';
-import { chunkBlocks, htmlToBlocks, imageSize } from './content/html.js';
+import { blockChars, chunkBlocks, htmlToBlocks, imageSize } from './content/html.js';
 import { LRUCache } from './util/lru.js';
 import { ZimArchive } from './zim/reader.js';
 import {
   isWikisource, buildIndex, indexPath, loadIndex, saveIndex, collectWork, partTitle, genreOf, cleanCategories,
 } from './wikisource.js';
+import * as wikipedia from './wikipedia.js';
 
 const gzipAsync = promisify(zlib.gzip);
 
@@ -227,7 +229,7 @@ class Chunk {
  */
 export class ArchiveLibrary {
   /** @private */
-  constructor({ id, filePath, archive, log, warn, maxGenericBooks, contentCache, cacheDir = DEFAULT_CACHE_DIR, onChange = null }) {
+  constructor({ id, filePath, archive, log, warn, maxGenericBooks, contentCache, cacheDir = DEFAULT_CACHE_DIR, onChange = null, volumeSize = null }) {
     /** URL-safe id (§3.6). */
     this.id = id;
     /** Basename of the ZIM file. */
@@ -235,7 +237,7 @@ export class ArchiveLibrary {
     this.filePath = filePath;
     /** @type {ZimArchive} */
     this.archive = archive;
-    /** @type {'gutenberg'|'wikisource'|'generic'} */
+    /** @type {'gutenberg'|'wikisource'|'wikipedia'|'generic'} */
     this.kind = 'generic';
     this._log = log;
     this._warn = warn;
@@ -254,7 +256,9 @@ export class ArchiveLibrary {
     this._conversions = 0;
     this._cacheDir = cacheDir;
     this._onChange = onChange; // called when the catalogue changes on its own (index finished)
-    this._indexing = null; // { stage, progress } while a Wikisource index is being built
+    this._indexing = null; // { stage, progress } while a Wikisource/Wikipedia index is being built
+    this._wikipedia = null; // the Wikipedia article index (order + volumes)
+    this._volumeSize = volumeSize;
     this._indexTask = null;
     this._closed = false;
   }
@@ -284,11 +288,12 @@ export class ArchiveLibrary {
     archiveOptions,
     cacheDir,
     onChange,
+    volumeSize, // articles per Wikipedia volume (tests use small volumes)
   } = {}) {
     const archive = await ZimArchive.open(filePath, { clusterCacheBytes: ARCHIVE_CLUSTER_CACHE_BYTES, ...archiveOptions });
     try {
       const lib = new ArchiveLibrary({
-        id, filePath, archive, log, warn, maxGenericBooks, cacheDir, onChange,
+        id, filePath, archive, log, warn, maxGenericBooks, cacheDir, onChange, volumeSize,
         contentCache: contentCache ?? createContentCache(contentCacheBytes),
       });
       await lib.books(); // catalog now: `kind` is final and errors surface at scan time
@@ -311,7 +316,7 @@ export class ArchiveLibrary {
   async info() {
     const base = await this._baseInfo();
     // Indexing progress is live; everything else is cached until the catalogue changes.
-    return this.kind === 'wikisource' ? { ...base, indexing: this._indexing ? { ...this._indexing } : null } : base;
+    return this.kind === 'wikisource' || this.kind === 'wikipedia' ? { ...base, indexing: this._indexing ? { ...this._indexing } : null } : base;
   }
 
   _baseInfo() {
@@ -341,6 +346,7 @@ export class ArchiveLibrary {
           illustration: illustration ? zimUrl(this.id, illustration.path) : null,
           shelves: this._shelves.slice(),
           ...(this.kind === 'wikisource' ? { genres: this._genres ?? [] } : {}),
+          ...(this.kind === 'wikipedia' ? { articles: this._wikipedia?.count ?? 0 } : {}),
         };
       })();
       this._info.catch(() => { this._info = null; });
@@ -389,13 +395,44 @@ export class ArchiveLibrary {
     let pending = this._inflight.get(id);
     if (!pending) {
       pending = (async () => {
-        const content = await this._convert(rec);
+        const content = rec.kind === 'wikipedia' ? await this._volumeMeta(rec) : await this._convert(rec);
         this._contentCache.set(key, content);
         return content;
       })();
       const done = () => this._inflight.delete(id);
       pending.then(done, done);
       this._inflight.set(id, pending);
+    }
+    return pending;
+  }
+
+  /**
+   * One chunk of a book's content (§3.6). Most books are converted whole by content(); the
+   * articles of a Wikipedia volume are converted one by one, when first asked for, and cached
+   * in the same LRU.
+   * @param {string} bookId
+   * @param {number} n
+   * @returns {Promise<Chunk|null|undefined>} undefined for an unknown book, null when out of range
+   */
+  async chunk(bookId, n) {
+    const id = String(bookId);
+    const content = await this.content(id);
+    if (!content) return undefined;
+    if (!content.meta.lazy) return content.chunks[n] ?? null;
+    if (!Number.isInteger(n) || n < 0 || n >= content.meta.chunks.length) return null;
+    const key = `${this._cacheKey(id)}\n#${n}`;
+    const cached = this._contentCache.get(key);
+    if (cached) return cached.chunk;
+    let pending = this._inflight.get(key);
+    if (!pending) {
+      pending = (async () => {
+        const out = await this._convertArticle(this._byId.get(id), n, content.meta);
+        this._contentCache.set(key, out);
+        return out.chunk;
+      })();
+      const done = () => this._inflight.delete(key);
+      pending.then(done, done);
+      this._inflight.set(key, pending);
     }
     return pending;
   }
@@ -455,6 +492,10 @@ export class ArchiveLibrary {
       this.kind = 'wikisource';
       return this._wikisourceCatalog();
     }
+    if (wikipedia.isWikipedia(this._meta)) {
+      this.kind = 'wikipedia';
+      return this._wikipediaCatalog();
+    }
     this.kind = 'generic';
     return this._genericCatalog();
   }
@@ -470,19 +511,26 @@ export class ArchiveLibrary {
       return this._booksFromIndex(idx);
     }
     // No index yet: serve an empty shelf while it is built, then announce the new catalogue.
-    this._startIndexing(file);
+    this._startIndexing({
+      file, what: 'Wikisource works', unit: 'works', build: (opts) => buildIndex(this.archive, opts), save: saveIndex,
+      weights: { scan: [0, 0.25], works: [0.25, 0.3], authors: [0.55, 0.45], done: [1, 0] },
+    });
     this._shelves = [];
     this._genres = [];
     return [];
   }
 
-  _startIndexing(file) {
+  /**
+   * Builds a derived index in the background (first open only), caches it, then rebuilds the
+   * catalogue and announces it (onChange). Meanwhile books() is empty and info().indexing
+   * reports progress, weighted per stage.
+   */
+  _startIndexing({ file, what, unit, build, save, weights }) {
     if (this._indexTask) return;
-    const weights = { scan: [0, 0.25], works: [0.25, 0.3], authors: [0.55, 0.45], done: [1, 0] };
     this._indexing = { stage: 'scan', progress: 0 };
-    this._log(`${this.file}: indexing Wikisource works in the background (first open only, a few minutes)…`);
+    this._log(`${this.file}: indexing ${what} in the background (first open only)…`);
     const t0 = performance.now();
-    this._indexTask = buildIndex(this.archive, {
+    this._indexTask = build({
       onProgress: (stage, f) => {
         const [base, span] = weights[stage] ?? [0, 0];
         this._indexing = { stage, progress: Math.min(1, base + span * f) };
@@ -490,21 +538,108 @@ export class ArchiveLibrary {
       log: (m) => this._log(`${this.file}:${m}`),
     }).then(async (idx) => {
       if (this._closed) return;
-      await saveIndex(file, idx).catch((err) => this._warn(`${this.file}: cannot cache the Wikisource index (${err.message})`));
+      await save(file, idx).catch((err) => this._warn(`${this.file}: cannot cache the ${what} index (${err.message})`));
       this._indexing = null;
       this._books = null;
       this._info = null;
       this._byId.clear();
       const books = await this.books();
-      this._log(`${this.file}: Wikisource index ready: ${books.length} works (${Math.round((performance.now() - t0) / 1000)} s)`);
+      this._log(`${this.file}: ${what} index ready: ${books.length} ${unit} (${Math.round((performance.now() - t0) / 1000)} s)`);
       this._onChange?.();
     }).catch((err) => {
       if (this._closed) return;
       this._indexing = { stage: 'failed', progress: 0, error: err.message };
-      this._warn(`${this.file}: Wikisource indexing failed: ${err.message}`);
+      this._warn(`${this.file}: ${what} indexing failed: ${err.message}`);
     }).finally(() => {
       this._indexTask = null;
     });
+  }
+
+  // ------------------------------------------------------------------------------------------
+  // Wikipedia: volumes of 1,000 articles in title order, from a cached titles-only index
+
+  async _wikipediaCatalog() {
+    const file = wikipedia.indexPath(this._cacheDir, this.archive);
+    const idx = await wikipedia.loadIndex(file, this.archive);
+    this._shelves = [];
+    if (idx) {
+      this._indexing = null;
+      return this._volumesFromIndex(idx);
+    }
+    this._startIndexing({
+      file, what: 'Wikipedia articles', unit: 'volumes',
+      build: (opts) => wikipedia.buildIndex(this.archive, { ...opts, volumeSize: this._volumeSize ?? wikipedia.VOLUME_SIZE }),
+      save: wikipedia.saveIndex,
+      weights: { scan: [0, 0.2], sizes: [0.2, 0.7], sort: [0.9, 0.1], done: [1, 0] },
+    });
+    return [];
+  }
+
+  async _volumesFromIndex(idx) {
+    this._wikipedia = idx;
+    const m = this._meta;
+    const language = typeof m.Language === 'string' && m.Language.trim() ? m.Language.split(',')[0].trim() : null;
+    const author = [m.Creator, m.Publisher].find((v) => typeof v === 'string' && v.trim())?.trim() ?? 'Wikipedia';
+    const illustration = await this._findIllustration();
+    const emblem = illustration ? zimUrl(this.id, illustration.path) : null;
+    const n = idx.volumes.length;
+    return idx.volumes.map((range, v) => {
+      const id = `v${v + 1}`;
+      const from = v * idx.volumeSize;
+      const to = Math.min(idx.count, from + idx.volumeSize);
+      const title = wikipedia.volumeTitle(range);
+      const book = {
+        id, title, subtitle: `Volume ${v + 1} of ${n}`, fullTitle: title, author, authorId: null, rank: v + 1,
+        shelf: null, language, formats: { html: true, epub: false, pdf: false }, readable: true,
+        cover: null, epub: null, size: null,
+        // An encyclopedia volume (§2.5): uniform binding and size, spine with number and range.
+        volume: v + 1, volumes: n, range: [range[0], range[1]], articles: to - from, emblem,
+      };
+      this._byId.set(id, { book, kind: 'wikipedia', from, to });
+      return book;
+    });
+  }
+
+  /** Reading metadata of a volume: one chunk per article (sizes estimated), contents = titles. */
+  async _volumeMeta(rec) {
+    const { book, from, to } = rec;
+    const order = this._wikipedia.order;
+    const titles = new Array(to - from);
+    await mapLimit(titles, 16, async (_, i) => {
+      const e = await this.archive.getEntryByIndex(order[from + i]);
+      titles[i] = (e.title || e.url).replace(/\s+/g, ' ').trim();
+    });
+    // Sizes estimated from each article's HTML size (the reader corrects them once loaded).
+    const chunks = [];
+    let start = 0;
+    for (let i = 0; i < titles.length; i++) {
+      const chars = wikipedia.articleChars(this._wikipedia.sizes[from + i]);
+      chunks.push({ start, chars, blocks: 1 });
+      start += chars;
+    }
+    const meta = {
+      library: this.id, id: book.id, title: book.title, subtitle: book.subtitle, author: book.author, cover: null,
+      source: 'html', totalChars: start, chunks,
+      toc: titles.map((title, i) => ({ title, level: 1, c: i, b: 0 })),
+      tocTruncated: false,
+      // Chunks are articles, converted when first asked for (chunk()); their sizes are estimates.
+      lazy: true,
+    };
+    return { meta, chunks: [], bytes: 1024 + JSON.stringify(meta).length };
+  }
+
+  /** One article of a volume as a chunk: its title as a heading, then the converted article. */
+  async _convertArticle(rec, n, meta) {
+    const entry = await this.archive.getEntryByIndex(this._wikipedia.order[rec.from + n]);
+    const content = await this.archive.getContent(entry);
+    if (!content) throw new LibraryError(`book ${rec.book.id}: article ${entry.path} has no content`);
+    const title = (entry.title || entry.url).replace(/\s+/g, ' ').trim();
+    const blocks = [{ t: 'h', l: 1, r: [[title, 0]] }, ...htmlToBlocks(decodeHtml(content.data), { docPath: content.entry.path }).blocks];
+    await this._fixImages(blocks, { lookup: (p, opts) => this._zimImage(p, opts), fallback: null, url: (p) => zimUrl(this.id, p) });
+    const chars = blocks.reduce((s, b) => s + blockChars(b), 0);
+    const chunk = new Chunk(n, meta.chunks[n].start, chars, blocks);
+    this._conversions++;
+    return { chunk, bytes: Math.ceil(chunk.json.length * (1 + GZIP_RESERVE)) + 128 };
   }
 
   _booksFromIndex(idx) {
@@ -845,17 +980,23 @@ export class ArchiveLibrary {
     return { meta, chunks: out, bytes };
   }
 
-  /** Image facts for an archive path: exists (and is an image), natural size if sniffable. */
-  async _zimImage(archivePath) {
+  /**
+   * Image facts for an archive path: exists (and is an image), natural size if sniffable. With
+   * `size: false` (the page already gives width and height) the image is not read.
+   */
+  async _zimImage(archivePath, { size = true } = {}) {
     const cached = this._imageInfo.get(archivePath);
-    if (cached) return cached;
+    if (cached && (cached.sized || !size || !cached.ok)) return cached;
     let info = { ok: false };
     const entry = await this.archive.findPath(archivePath);
     if (entry) {
       const target = await this.archive.resolveRedirect(entry).catch(() => null);
       if (target && target.mime && /^image\//i.test(target.mime)) {
-        const content = await this.archive.getContent(target).catch(() => null);
-        if (content) info = { ok: true, ...(imageSize(content.data) ?? {}) };
+        if (!size) info = { ok: true, sized: false };
+        else {
+          const content = await this.archive.getContent(target).catch(() => null);
+          if (content) info = { ok: true, sized: true, ...(imageSize(content.data) ?? {}) };
+        }
       }
     }
     this._imageInfo.set(archivePath, info);
@@ -872,16 +1013,17 @@ export class ArchiveLibrary {
     for (let i = 0; i < blocks.length; i++) if (blocks[i].t === 'img') imgs.push(i);
     if (!imgs.length) return;
     const resolved = new Map(); // src → { path, info } (books repeat decorative images)
-    const resolve = async (src) => {
-      let r = resolved.get(src);
+    const resolve = async (src, size) => {
+      const key = `${size ? 1 : 0}${src}`;
+      let r = resolved.get(key);
       if (!r) {
         r = (async () => {
-          let info = await lookup(src);
+          let info = await lookup(src, { size });
           let p = src;
           if (!info.ok && fallback) {
             const alt = fallback(src);
             if (alt && alt !== src) {
-              const altInfo = await lookup(alt);
+              const altInfo = await lookup(alt, { size });
               if (altInfo.ok) {
                 info = altInfo;
                 p = alt;
@@ -890,7 +1032,7 @@ export class ArchiveLibrary {
           }
           return { path: p, info };
         })();
-        resolved.set(src, r);
+        resolved.set(key, r);
       }
       return r;
     };
@@ -904,7 +1046,7 @@ export class ArchiveLibrary {
         }
         return;
       }
-      const { path: p, info } = await resolve(blk.src);
+      const { path: p, info } = await resolve(blk.src, !(blk.w && blk.h));
       if (!info.ok) {
         if (blk.alt) {
           const para = { t: 'p', r: [[blk.alt, 1]] };
