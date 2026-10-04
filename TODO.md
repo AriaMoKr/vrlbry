@@ -12,8 +12,11 @@
     its 1,000 article titles, so the contents panel needs a letter jump.
   - The index reads no article text: it reads every directory entry, then each page's HTML size
     (to drop mwoffliner's section-redirect pages and estimate lengths), sorts, cuts into
-    volumes and caches in `.cache/`. Simple English takes 56 s; sorting ~6.8 M English titles
-    costs memory and about a minute more.
+    volumes and caches in `.cache/`. Measured on this PC (2026-10-04):
+    - Simple English maxi (2.9 GB, 285,214 articles): 56 s.
+    - English top 1M maxi (`wikipedia_en_top1m_maxi_2026-04`, 46 GB): 999,593 articles in
+      1,000 volumes, with 774,856 redirect pages skipped. 927 s (~15½ min): about 4 min for the
+      directory scan, the rest mostly the size pass. The cached index is 10.7 MB.
   - **Articles = every non-redirect HTML entry** in the main namespace, except the ZIM's main
     page. That includes disambiguation pages (~4 %) and "List of …" pages. Skip images, CSS and
     scripts. Redirects stay out of the volumes, but article search could use them as aliases.
@@ -28,8 +31,10 @@
     - Volumes are numbered 1–N in title order. Bookcase plates show their first and last
       article ("Aa – Ac"), and the section sign reads "Wikipedia (English) · 6,800 volumes".
 - **Wikipedia: still to do.** A letter jump in the contents panel (a volume lists 1,000
-  articles); trying the full English maxi (~6.8 M articles, ~119 GB; the index's directory scan,
-  size pass and 6.8 M-title sort take memory and time); trying a volume on the Quest.
+  articles); trying the full English maxi (~6.8 M articles, ~119 GB): at the top-1M rate its
+  index would take roughly 1¾ hours, so consider speeding up the size pass (e.g. decompressing
+  clusters in worker threads) and check the memory of the 6.8 M-title sort; trying a volume on
+  the Quest.
 - **Wikipedia: follow links** (later). Tapping a link in an article goes to that article, taking
   its volume off the shelf if needed. The reader cannot follow links today.
 - **Wikipedia: article search.** Typing an article title opens the right volume at that article.
