@@ -101,7 +101,8 @@ A ZIM with no Gutenberg JSON index that is not Wikisource (§2.4) is a *generic*
 books are its HTML article entries (mime `text/html`, namespace `C` or `A`, excluding redirects),
 in URL-pointer order, capped at `maxGenericBooks` (default 2000; log what was dropped). Book id =
 `e<entryIndex>`, title = entry title, author = ZIM `Creator`/`Publisher` metadata, no cover, rank
-= position, shelf = null.
+= position, shelf = null. Wikipedia ZIMs (mwoffliner, `Source` = `*.wikipedia.org`) end up here
+for now, which shows only their first 2,000 articles; proper support is in `TODO.md`.
 
 ### 2.4 Wikisource ZIMs (mwoffliner)
 
@@ -530,6 +531,8 @@ public/
     interaction.js       app state machine: browse → inspect → read; wires everything.
     rooms.js             which books are shelved: the current place (one library, or one room of a huge one).
     audio.js             tiny WebAudio synth: page turn, book slide/thud, UI click.
+    perf.js              ?perf recorder (frame timing, events, segments), a no-op unless started (§5.7).
+    perf-scenarios.js    built-in performance scenarios, loaded only by perf.run().
     main.js              bootstrap: renderer, scene, camera rig, XR session, loop, IWER dev flag.
 ```
 
@@ -667,8 +670,12 @@ export class Book3D {
   64 bookcases (only the all-libraries place) keeps mid atlases for the 64 nearest only, dropping
   one once it is more than 80th nearest. Every frame, the books of bookcases the viewer stands
   behind (behind the bookcase's mid-plane, where its back and side panels hide every book) are
-  not drawn: about half of a hall. Atlases are painted in a module worker on an OffscreenCanvas (`atlas-worker.js`), which returns a vertically flipped
-  `ImageBitmap` (WebGL ignores `flipY` for bitmaps); the main thread only uploads it. Main-thread
+  not drawn: about half of a hall. Atlases are painted in a module worker on an OffscreenCanvas
+  (`atlas-worker.js`), and the main thread only uploads them. The worker returns an `ImageBitmap`
+  in exactly the layout three.js uploads: `imageOrientation: 'flipY'` (WebGL ignores `flipY` for
+  bitmaps), `premultiplyAlpha: 'none'` and `colorSpaceConversion: 'none'`. With the defaults, the
+  browser converted each bitmap on the main thread at `texImage2D`, and on a Quest 3 half of the
+  uploads, small ones too, dropped a frame (3–4 % with matching options). Main-thread
   painting, even time-sliced, caused 15–80 ms frame spikes on a fast PC, because the browser
   defers canvas rasterization until the upload. The worker loads only relative modules
   (`atlas.js`, `textures.js`, `util/books.js`, `config.js`): module workers have no import map,

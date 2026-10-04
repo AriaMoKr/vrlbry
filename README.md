@@ -13,7 +13,8 @@ It understands two kinds of [Kiwix ZIM files](https://library.kiwix.org/) especi
   the English ZIM — becomes one book with all its chapters in order, its cover, author, year and
   genre.
 
-Other ZIM files also work; their HTML articles become the books.
+Other ZIM files also work: their HTML articles become the books, up to 2,000 per file (`--max-generic`).
+That is only a sample of a Wikipedia ZIM; proper Wikipedia support is on the [TODO list](TODO.md).
 
 ## Run it
 
@@ -62,7 +63,9 @@ buttons on the library card and on the catalogue stand rescan immediately.
 
 The first time a Wikisource ZIM is opened, the server indexes its works in the background (about
 two minutes for the 8.6 GB English one); the library card shows the progress, and the books appear
-when it is done. The index is cached in `.cache/`, so later starts are instant.
+when it is done. The index is cached in `.cache/`, so later starts are instant. A very large
+Gutenberg ZIM (all 56,000 English books) takes about half a minute to open before the server
+answers.
 
 Each library is its own **room**: the hall shows one collection at a time, and the **Rooms** tab of
 the catalogue stand switches between them. A library as large as Wikisource is narrowed down with
@@ -164,4 +167,5 @@ node tools/quest-perf.mjs dump
 `--remote-debugging-port=9222` (with `?xr=emulate&perf` for an emulated headset).
 
 [SPEC.md](SPEC.md) describes the module contracts (ZIM reader, content format, HTTP API, client
-modules); [CLAUDE.md](CLAUDE.md) is a shorter architecture overview.
+modules); [CLAUDE.md](CLAUDE.md) is a shorter architecture overview; [TODO.md](TODO.md) lists open
+work.

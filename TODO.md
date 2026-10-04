@@ -11,6 +11,15 @@
     on it;
   - articles as short books (usually one chunk), with rooms by title letter or category. The
     200-bookcase cap (`MAX_BOOKCASES`) applies.
+- **Gamepad support.** Only the gamepads built into the XR controllers are read (`src.gamepad` in
+  `xr/controls.js`). A standard controller (Xbox, PlayStation or another Bluetooth pad, through
+  `navigator.getGamepads()`) does nothing on desktop or phone. Map it like the VR controls:
+  - left stick to walk, right stick to look and turn;
+  - A to select or read, B to go back or put a book back;
+  - shoulder buttons or the D-pad to turn pages;
+  - a centre-of-screen pointer for picking books and using the kiosk panels.
+
+  Emit the same `Controls` events so `interaction.js` needs no changes.
 - **Dropped frames while walking.** A Quest 3 still drops ~4 % of frames walking an ordinary room
   and ~8 % in the all-libraries hall, with no clear cause since atlas uploads were fixed. Next:
   record GC and long-task timing per scenario (`?perf`, `tools/quest-perf.mjs`).
