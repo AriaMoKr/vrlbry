@@ -23,7 +23,12 @@ node --test --test-name-pattern="redirect" test/zim.test.js   # tests matching a
 - Node **≥ 22.15** is required, because the server uses the built-in `zlib.zstdDecompress`.
 - There is no build step, bundler, linter or TypeScript. The client is plain ES modules in `public/`. An import map resolves `three` → `/vendor/three/build/three.module.js` and `three/addons/` → `/vendor/three/examples/jsm/`. The server maps `/vendor/three/*` to `node_modules/three/*` and `/vendor/iwer/*` to `node_modules/iwer/build/*`.
 - WebXR needs a secure context. `http://localhost` works. A headset on the LAN needs `--https`, or `adb reverse tcp:8080 tcp:8080`.
-- Dev pages: `/reader-test.html` is a 2D harness for the page renderer, and `/dev/*` holds world/controls harnesses. Append `?xr=emulate` to the app URL to install Meta's IWER WebXR emulator, which lets you exercise VR code paths in a desktop browser. The app exposes `window.__vrlbry` (renderer, scene, world, controls, interaction, xrDevice, `enterVR()`) for scripted testing.
+- Dev pages: `/reader-test.html` is a 2D reader built on the page renderer, and `/dev/world-test.html` shows the room with an orbit camera.
+- **Scripted testing:**
+  - Append `?xr=emulate` to the app URL to install Meta's IWER WebXR emulator (a virtual Quest 3). It is installed with `forceInstall`, because Chromium exposes a native `navigator.xr` even without a headset.
+  - The app exposes `window.__vrlbry` (renderer, scene, camera, rig, world, controls, interaction, overlay, xrDevice, settings, `enterVR()`, `tick(dt, n)`).
+  - `requestAnimationFrame` does not fire while the page is not painted (e.g. a hidden embedded browser pane), so animations and tweens stall. Drive frames with `__vrlbry.tick()`, and never `await` an animated action (pick, read, turn, close) without ticking.
+  - In XR the XRSession drives frames. For tests in a hidden pane, replace `window.requestAnimationFrame` with a `setTimeout` version and restart the loop with `renderer.setAnimationLoop(() => __vrlbry.tick())`.
 
 ## Architecture: data flow end to end
 
@@ -61,13 +66,18 @@ client: api.js ─► World/Bookshelves (shelves) ─► interaction.js state ma
 - **`world/`**: `World` builds the room and `Bookshelves`.
   - Each bookcase's books are one merged `BufferGeometry` whose spines use a per-bookcase canvas atlas, which keeps draw calls within the Quest budget (≤ ~150).
   - Picking uses per-book bounding boxes. `hideBook` / `showBook` collapse or restore that book's vertices.
-  - `Book3D` is the free-floating book used in the inspect and read states.
-- **`xr/controls.js`**: unifies XR controllers and hands, desktop pointer-lock, and touch into `Pointer`s (each with a world-space `Raycaster`) plus events (`select`, `axis`, `flick`, `button`, `key`, `wheel`). It also does locomotion (teleport arc, snap turn, smooth move), which is turned off outside the browse state.
-- **`interaction.js`**: state machine `browse → inspect → read`. It owns the canvas-texture UI panels (`ui/panel.js`): the kiosk, the inspect panel, the reader toolbar and the table-of-contents list. The DOM overlay (`ui/overlay.js`) is only for non-VR use.
+  - `Book3D` is the free-floating book used in the inspect and read states. Its local frame: front cover +Z, spine −X. Reading mode sets `centerWhenOpen = false`, so the cover swings open around a fixed spine.
+- **`xr/controls.js`**: unifies XR controllers and hands, the mouse, and touch into `Pointer`s (each with a world-space `Raycaster`) plus events (`select`, `axis`, `flick`, `button`, `key`, `wheel`, `swipe`).
+  - The desktop uses drag-to-look, not pointer lock, so the DOM overlay stays usable.
+  - It also does locomotion (teleport arc, snap turn, smooth move), which is turned off outside the browse state.
+- **`interaction.js`**: state machine `browse → inspect → read` (plus `busy` during animations). It owns the canvas-texture UI panels (`ui/panel.js`): the kiosk, the inspect panel, the reader toolbar and the table-of-contents list. The DOM overlay (`ui/overlay.js`) is only for non-VR use.
+  - Page canvases come from a pool of 6: the shown spread plus the prepared next and previous spreads. `Book3D` keeps displaying (and turning) the canvases it was given, so never redraw a canvas that is on screen.
+  - Background neighbour preparation is cancelled by bumping `_prepToken`.
 - **`util/books.js`**: holds the sort comparators, `letterOf` and `bookDims`. Both the shelf layout and the A–Z jump / interaction code **must** use these shared helpers so they agree on order and book sizes. Shared constants (dimensions, page size, reading pose) are in `config.js`.
 
 ## Testing notes
 
 - Tests use `node:test` + `node:assert/strict`. Tests that need the real ZIM (`gutenberg_en_lcc-pe_2026-03.zim` in the repo root, ~795 MB, not committed) `skip` when it is absent.
 - Synthetic ZIMs for unit tests are written by `test/helpers/zimwriter.js`. It supports both namespace layouts, all cluster compressions, extended clusters and redirects.
+- `test/client-*.test.js` run the pure client modules (`util/books.js`, `reader/layout.js`, shelf packing) in Node. Layout tests use a fake text measurer, since Node has no canvas. Client `blockChars` must stay identical to the server's; a test checks this.
 - The xz test vectors in `test/fixtures/xz/` (`<name>.xz` + expected `<name>.sha256`) are regenerated with `python test/fixtures/xz/generate.py`, which uses Python's `lzma` module.

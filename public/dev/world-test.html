@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>vrlbry · world test</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #000; font: 13px system-ui, sans-serif; color: #eadfcb; }
+  #ui { position: fixed; top: 8px; left: 8px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; background: rgba(20,15,10,.8); padding: 6px 8px; border-radius: 8px; z-index: 2; }
+  button, select { background: #2c241c; color: inherit; border: 1px solid #4a3c2e; border-radius: 6px; padding: 4px 8px; font: inherit; cursor: pointer; }
+  #stats { font: 12px ui-monospace, Consolas, monospace; }
+  canvas { display: block; }
+</style>
+<script type="importmap">{"imports":{"three":"/vendor/three/build/three.module.js","three/addons/":"/vendor/three/examples/jsm/"}}</script>
+</head>
+<body>
+<div id="ui">
+  <select id="sort"><option value="title">Title</option><option value="author">Author</option><option value="popularity">Popularity</option></select>
+  <label><input type="checkbox" id="big"> ×20 books</label>
+  <select id="view"><option value="spawn">Spawn view</option><option value="shelf">Shelf close-up</option><option value="kiosk">Kiosk area</option><option value="top">Overview</option></select>
+  <button id="pick">Pick random book</button>
+  <button id="open">Open / close</button>
+  <button id="turn">Turn page ▶</button>
+  <button id="back">◀ Turn back</button>
+  <span id="stats"></span>
+</div>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { getLibraries, getBooks } from '/js/api.js';
+import { World } from '/js/world/world.js';
+import { Book3D } from '/js/world/book3d.js';
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0b0806);
+const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.05, 200);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+const world = new World({ renderer, scene });
+window.__world = { renderer, scene, camera, world, controls };
+
+const libs = await getLibraries();
+const base = await Promise.all(libs.map(async (library) => ({ library, books: await getBooks(library.id) })));
+
+async function build() {
+  let collections = base.map((c) => ({ library: c.library, books: c.books.map((b) => ({ ...b })) }));
+  if (document.getElementById('big').checked) {
+    collections = [];
+    for (let k = 0; k < 20; k++) for (const c of base) {
+      collections.push({ library: { ...c.library, id: c.library.id + '-' + k, title: c.library.title + ' ' + (k + 1) }, books: c.books.map((b) => ({ ...b })) });
+    }
+  }
+  const t0 = performance.now();
+  await world.build(collections, { sort: document.getElementById('sort').value });
+  console.log('build ms', Math.round(performance.now() - t0));
+  setView(document.getElementById('view').value);
+}
+
+function setView(v) {
+  const s = world.spawn.position;
+  if (v === 'spawn') { camera.position.set(s.x, 1.6, s.z); controls.target.set(s.x, 1.4, s.z - 2); }
+  else if (v === 'shelf') {
+    const b = world.shelves.books()[30];
+    const loc = world.shelves.locate(b);
+    const fwd = new THREE.Vector3(-Math.sin(loc.yaw), 0, -Math.cos(loc.yaw));
+    camera.position.copy(loc.position).addScaledVector(fwd, -0.1).setY(1.5);
+    controls.target.copy(loc.position).addScaledVector(fwd, 1.3).setY(1.4);
+  } else if (v === 'kiosk') {
+    const k = world.kiosk.position;
+    camera.position.set(k.x - 1.5, 1.7, k.z + 2); controls.target.set(k.x, 0.9, k.z);
+  } else { camera.position.set(0, 9, 6); controls.target.set(0, 0, -1); }
+  controls.update();
+}
+
+let book3d = null;
+const pageCanvas = (label, n) => {
+  const c = document.createElement('canvas'); c.width = 1024; c.height = 1448;
+  const g = c.getContext('2d'); g.fillStyle = '#f6efdf'; g.fillRect(0, 0, 1024, 1448);
+  g.fillStyle = '#231d16'; g.font = '30px Georgia, serif';
+  for (let i = 0; i < 34; i++) g.fillText(`${label} page ${n} — line ${i + 1} of sample text in the book`, 86, 140 + i * 36);
+  g.font = 'bold 120px Georgia'; g.fillText(String(n), 440, 1300); return c;
+};
+let page = 1;
+document.getElementById('pick').onclick = () => {
+  if (book3d) { world.shelves.showBook(book3d.book); book3d.dispose(); }
+  const books = world.shelves.books();
+  const b = books[(Math.random() * books.length) | 0];
+  const tr = world.shelves.getBookTransform(b);
+  world.shelves.hideBook(b);
+  book3d = new Book3D({ book: b, dims: tr.dims, spineCanvas: world.shelves.makeSpineCanvas(b), renderer });
+  book3d.loadCover();
+  scene.add(book3d.group);
+  // Fly the book in front of the camera.
+  const fwd = new THREE.Vector3(); camera.getWorldDirection(fwd);
+  book3d.group.position.copy(camera.position).addScaledVector(fwd, 0.6);
+  book3d.group.lookAt(camera.position);
+  book3d.group.scale.setScalar(1);
+  page = 1;
+  console.log('picked', b.title);
+};
+document.getElementById('open').onclick = async () => {
+  if (!book3d) return;
+  if (book3d.state === 'open') return book3d.close();
+  book3d.group.scale.setScalar(book3d.readingScale);
+  book3d.setPages(pageCanvas('L', page), pageCanvas('R', page + 1));
+  await book3d.open();
+};
+document.getElementById('turn').onclick = () => { if (!book3d) return; page += 2; book3d.turn(1, { left: pageCanvas('L', page), right: pageCanvas('R', page + 1) }); };
+document.getElementById('back').onclick = () => { if (!book3d || page < 3) return; page -= 2; book3d.turn(-1, { left: pageCanvas('L', page), right: pageCanvas('R', page + 1) }); };
+document.getElementById('sort').onchange = build;
+document.getElementById('big').onchange = build;
+document.getElementById('view').onchange = (e) => setView(e.target.value);
+addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+
+const timer = new THREE.Timer();
+let acc = 0, frames = 0;
+// Manual frame stepping for automated tests (rAF does not run while the page is not painted).
+window.__world.tick = (dt = 1 / 60, n = 1) => {
+  for (let i = 0; i < n; i++) { world.update(dt, camera); book3d?.update(dt); }
+  renderer.render(scene, camera);
+};
+window.__world.book = () => book3d;
+renderer.setAnimationLoop((time) => {
+  timer.update(time);
+  const dt = Math.min(0.1, timer.getDelta());
+  controls.update();
+  world.update(dt, camera);
+  book3d?.update(dt);
+  renderer.render(scene, camera);
+  acc += dt; frames++;
+  if (acc > 0.5) {
+    const i = renderer.info.render;
+    document.getElementById('stats').textContent = `${Math.round(frames / acc)} fps · ${i.calls} calls · ${(i.triangles / 1000).toFixed(0)}k tris · ${renderer.info.memory.textures} tex`;
+    acc = 0; frames = 0;
+  }
+});
+await build();
+</script>
+</body>
+</html>

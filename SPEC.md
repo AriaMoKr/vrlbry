@@ -426,7 +426,7 @@ public/
     world/world.js       World facade: builds room + shelves from libraries, layout, collisions.
     xr/controls.js       input: XR controllers/hands, desktop mouse+keyboard, touch; locomotion.
     ui/panel.js          canvas-texture UI panels with buttons/text, hover & click via UV.
-    ui/overlay.js        DOM overlay: library info, search, help, settings (non-VR).
+    ui/overlay.js        DOM overlay: library info, search, help (non-VR); setReading(bool) fades it while a book is open.
     interaction.js       app state machine: browse → inspect → read; wires everything.
     audio.js             tiny WebAudio synth: page turn, book slide/thud, UI click.
     main.js              bootstrap: renderer, scene, camera rig, XR session, loop, IWER dev flag.
@@ -455,8 +455,9 @@ export class BookReader {
   firstRef(): PageRef                           // { c: 0, p: 0 }
   async next(ref): Promise<PageRef|null>        // null at end of book
   async prev(ref): Promise<PageRef|null>        // null at start
-  async render(ref, canvas: HTMLCanvasElement|OffscreenCanvas): Promise<void> // draws the whole page
-  async renderBlank(canvas)                     // paper background only (e.g. left of page 1)
+  async render(ref, canvas, { side }?): Promise<void> // draws the whole page; side 'left'|'right' adds the gutter shadow
+  async renderBlank(canvas, { side }?)          // paper background only (e.g. left of page 1)
+  pageNumber(ref): { n, estimated }; totalPages(): { n, estimated }
   anchorOf(ref): { c, b }                       // first block (chunk-local index) starting on/at the page
   async refForAnchor({ c, b }): Promise<PageRef>
   async refForToc(entry): Promise<PageRef>
@@ -528,7 +529,10 @@ export class Book3D {
   open(): Promise<void>; close(): Promise<void>     // animated (~0.6 s); when open the spread faces +Z
   setPages(leftCanvas | null, rightCanvas | null)   // uploads canvases to the open pages (CanvasTexture.needsUpdate)
   turn(direction: 1 | -1, { left, right }): Promise<void>  // animated page turn ending on the new spread
-  pageSize: { w, h }                 // metres of one page when open (scales with READ.pageWidth)
+  pageSize: { w, h }                 // metres of one open page, unscaled (≈ dims.d × dims.h)
+  readingScale: number               // group scale that makes one page READ.pageWidth wide
+  centerWhenOpen: boolean            // true (default): content slides so the open spread is centred on
+                                     // the origin; false: the spine stays at x = −d/2 while opening
   hitTestPages(raycaster): { side: 'left'|'right', uv: Vector2 } | null
   update(dt)
   dispose()
@@ -587,9 +591,12 @@ export class Controls extends EventTarget {
   (release to teleport onto `world.teleportTargets`, validated by `world.isWalkable`), right stick
   left/right → snap turn (`PLAYER.snapTurn`), left stick → smooth move (optional setting, default
   on) constrained by `world.constrain`. When locomotion is disabled, sticks only emit events.
-- **Desktop:** click canvas → pointer lock; mouse look; WASD/arrows move (constrained); Shift run;
-  pointer ray from screen centre while locked (crosshair), from the mouse position when unlocked;
-  Esc releases lock. **Touch:** drag to look, tap = select at touch point, two-finger drag = move.
+- **Desktop:** drag (any mouse button) to look; a press that does not move more than a few pixels
+  is a click = select at the mouse position. No pointer lock: it fights the DOM overlay and is
+  refused in embedded browsers. WASD/arrows move (constrained), Q/E or ←/→ turn, Shift runs.
+  **Touch:** drag to look, tap = select at touch point, two-finger drag = move, pinch = `wheel`,
+  horizontal swipe = `swipe` `{ dir }`. Pointers also have `setHovering(bool)`; extra events
+  `teleport` and `turn` report locomotion.
 - Gamepad index mapping per xr-standard: buttons 0 trigger, 1 squeeze, 3 thumbstick press,
   4 A/X, 5 B/Y; axes 2/3 thumbstick.
 
@@ -645,9 +652,12 @@ States: `browse` → `inspect` → `read` (and back).
 - Session: `navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor',
   'bounded-floor', 'hand-tracking', 'layers'] })` from the Enter VR button; `renderer.xr.setSession`.
 - Dev flag: `?xr=emulate` (or `?emulate=quest3`) dynamically imports `/vendor/iwer/iwer.module.js`
-  and installs `new XRDevice(metaQuest3).installRuntime()` **before** anything queries
-  `navigator.xr`; expose `window.__vrlbry = { renderer, scene, camera, rig, world, controls,
-  interaction, xrDevice }` for automated testing in all modes.
+  and installs `new XRDevice(metaQuest3).installRuntime({ forceInstall: true })` **before**
+  anything queries `navigator.xr` (Chromium has a native `navigator.xr` even without a headset);
+  expose `window.__vrlbry = { renderer, scene, camera, rig, world, controls, interaction,
+  overlay, xrDevice, settings, enterVR(), tick(dt, n) }` for automated testing in all modes.
+  `tick` advances n frames manually (requestAnimationFrame does not run in a page that is not
+  painted).
 - Loading: fetch libraries → books (all libraries in parallel) → `world.build` → spawn → loop.
   Show progress in the overlay; on fatal errors show a readable message.
 - `renderer.setAnimationLoop(tick)`: `dt` clamped to 0.1 s; update order: controls → interaction →

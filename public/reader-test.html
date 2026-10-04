@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>vrlbry · reader</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cpath fill='%23c9a35b' d='M8 10h20a6 6 0 0 1 6 6v38a5 5 0 0 0-5-5H8zM56 10H36a6 6 0 0 0-6 6v38a5 5 0 0 1 5-5h21z'/%3E%3C/svg%3E">
+<style>
+  :root { color-scheme: dark; --bg: #17130f; --panel: #221c16; --line: #3a3027; --text: #eadfcb; --muted: #a8977c; --accent: #c9a35b; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  body { display: flex; flex-direction: column; }
+  header { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 12px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  header .brand { font-weight: 700; letter-spacing: .04em; color: var(--accent); margin-right: 6px; }
+  select, button, input[type=search] { background: #2c241c; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; font: inherit; }
+  button { cursor: pointer; min-width: 34px; }
+  button:hover, select:hover { border-color: var(--accent); }
+  button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  #book { max-width: 360px; }
+  #toc { max-width: 260px; }
+  .spacer { flex: 1; }
+  main { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 12px; gap: 0; }
+  .spread { display: flex; height: 100%; max-width: 100%; box-shadow: 0 18px 50px rgba(0,0,0,.55); }
+  canvas { height: 100%; width: auto; max-width: 50vw; aspect-ratio: 1024 / 1448; display: block; background: #f6efdf; }
+  footer { display: flex; gap: 10px; align-items: center; padding: 6px 12px 10px; color: var(--muted); }
+  #progress { flex: 1; accent-color: var(--accent); }
+  #label { min-width: 110px; text-align: right; font-variant-numeric: tabular-nums; color: var(--text); }
+  #stats { font: 12px ui-monospace, Consolas, monospace; min-width: 190px; }
+  #status { color: var(--muted); }
+</style>
+<script type="importmap">{"imports":{"three":"/vendor/three/build/three.module.js","three/addons/":"/vendor/three/examples/jsm/"}}</script>
+</head>
+<body>
+<header>
+  <span class="brand">vrlbry</span>
+  <select id="lib" aria-label="Library"></select>
+  <input id="filter" type="search" placeholder="Filter books…" aria-label="Filter books" size="16">
+  <select id="book" aria-label="Book"></select>
+  <select id="toc" aria-label="Contents"><option value="">Contents</option></select>
+  <span class="spacer"></span>
+  <button id="smaller" title="Smaller text (-)">A−</button>
+  <button id="larger" title="Larger text (+)">A+</button>
+  <select id="theme" aria-label="Theme"><option value="paper">Paper</option><option value="sepia">Sepia</option><option value="night">Night</option></select>
+  <button id="prev" title="Previous (←)">◀</button>
+  <button id="next" title="Next (→)">▶</button>
+</header>
+<main><div class="spread"><canvas id="left" width="1024" height="1448"></canvas><canvas id="right" width="1024" height="1448"></canvas></div></main>
+<footer>
+  <span id="status">Loading…</span>
+  <input id="progress" type="range" min="0" max="1000" value="0" aria-label="Position in book">
+  <span id="label"></span>
+  <span id="stats"></span>
+</footer>
+<script type="module">
+import { getLibraries, getBooks } from '/js/api.js';
+import { sortBooks } from '/js/util/books.js';
+import { load, save } from '/js/util/storage.js';
+import { BookReader } from '/js/reader/reader.js';
+
+const $ = (id) => document.getElementById(id);
+const leftCanvas = $('left');
+const rightCanvas = $('right');
+let libs = [];
+let books = [];
+let reader = null;
+let spread = { left: null, right: null }; // PageRefs; left null = blank endpaper
+let busy = Promise.resolve();
+const settings = load('reader-test', { fontScale: 1, theme: 'paper' });
+$('theme').value = settings.theme;
+
+function status(msg) { $('status').textContent = msg; }
+
+async function init() {
+  libs = await getLibraries();
+  $('lib').innerHTML = libs.map((l) => `<option value="${l.id}">${esc(l.title)} (${l.bookCount})</option>`).join('');
+  const last = load('reader-test-last', null);
+  if (last && libs.some((l) => l.id === last.lib)) $('lib').value = last.lib;
+  await pickLibrary(last?.id);
+}
+
+async function pickLibrary(bookId) {
+  books = sortBooks(await getBooks($('lib').value), 'title').filter((b) => b.readable);
+  fillBooks(bookId);
+  await openBook($('book').value);
+}
+
+function fillBooks(selected) {
+  const q = $('filter').value.trim().toLowerCase();
+  const list = q ? books.filter((b) => (b.title + ' ' + b.author).toLowerCase().includes(q)) : books;
+  $('book').innerHTML = list.map((b) => `<option value="${b.id}">${esc(b.title)} — ${esc(b.author || '')}</option>`).join('');
+  if (selected && list.some((b) => b.id === selected)) $('book').value = selected;
+}
+
+async function openBook(id) {
+  const book = books.find((b) => b.id === id);
+  if (!book) return;
+  reader?.dispose();
+  const lib = $('lib').value;
+  reader = new BookReader({ libId: lib, book, fontScale: settings.fontScale, theme: settings.theme });
+  status(`Loading “${book.title}”…`);
+  const t0 = performance.now();
+  const meta = await reader.load();
+  status(`${book.title} · ${meta.chunks.length} chunk(s) · ${(meta.totalChars / 1000).toFixed(0)}k chars · meta ${Math.round(performance.now() - t0)} ms`);
+  $('toc').innerHTML = '<option value="">Contents</option>' + meta.toc.map((e, i) =>
+    `<option value="${i}">${'  '.repeat(e.level - 1)}${esc(e.title)}</option>`).join('');
+  save('reader-test-last', { lib, id });
+  const pos = load(`pos:${lib}:${id}`, null);
+  if (pos) await goTo(await reader.refForAnchor(pos));
+  else await showSpread({ left: null, right: reader.firstRef() });
+}
+
+// Spreads: page refs in reading order; the left page of the first spread is a blank endpaper.
+async function showSpread(s) {
+  spread = s;
+  const t0 = performance.now();
+  await Promise.all([
+    s.left ? reader.render(s.left, leftCanvas, { side: 'left' }) : reader.renderBlank(leftCanvas, { side: 'left' }),
+    s.right ? reader.render(s.right, rightCanvas, { side: 'right' }) : reader.renderBlank(rightCanvas, { side: 'right' }),
+  ]);
+  const cur = s.left || s.right;
+  $('label').textContent = reader.labelOf(s.right || s.left);
+  $('progress').value = Math.round(reader.progressOf(cur) * 1000);
+  $('stats').textContent = `layout ${reader.stats.lastLayoutMs.toFixed(1)} ms · render ${reader.stats.lastRenderMs.toFixed(1)} ms · spread ${Math.round(performance.now() - t0)} ms`;
+  save(`pos:${$('lib').value}:${reader.book.id}`, { ...reader.anchorOf(cur), t: Date.now() });
+}
+
+/** Shows the spread that contains `ref`, keeping a stable left/right parity per chunk start. */
+async function goTo(ref) {
+  // Page parity: the first page of the book is on the right, so even global page numbers are left.
+  const num = reader.pageNumber(ref).n;
+  if (num % 2 === 0) await showSpread({ left: ref, right: await reader.next(ref) });
+  else await showSpread({ left: await reader.prev(ref), right: ref });
+}
+
+async function nextSpread() {
+  const from = spread.right || spread.left;
+  if (!from) return;
+  const l = await reader.next(from);
+  if (!l) return;
+  await showSpread({ left: l, right: await reader.next(l) });
+}
+
+async function prevSpread() {
+  const from = spread.left;
+  if (!from) return;
+  const r = await reader.prev(from);
+  if (!r) return showSpread({ left: null, right: from });
+  await showSpread({ left: await reader.prev(r), right: r });
+}
+
+function queue(fn) {
+  busy = busy.then(fn).catch((e) => { console.error(e); status('Error: ' + e.message); });
+  return busy;
+}
+
+async function changeFont(delta) {
+  const anchor = reader.anchorOf(spread.left || spread.right);
+  settings.fontScale = Math.round(Math.max(0.6, Math.min(2, settings.fontScale + delta)) * 10) / 10;
+  save('reader-test', settings);
+  reader.setFontScale(settings.fontScale);
+  await goTo(await reader.refForAnchor(anchor));
+}
+
+$('lib').onchange = () => queue(() => pickLibrary());
+$('filter').oninput = () => fillBooks($('book').value);
+$('book').onchange = () => queue(() => openBook($('book').value));
+$('next').onclick = () => queue(nextSpread);
+$('prev').onclick = () => queue(prevSpread);
+$('smaller').onclick = () => queue(() => changeFont(-0.1));
+$('larger').onclick = () => queue(() => changeFont(0.1));
+$('theme').onchange = () => queue(async () => {
+  settings.theme = $('theme').value;
+  save('reader-test', settings);
+  reader.setTheme(settings.theme);
+  await showSpread(spread);
+});
+$('toc').onchange = () => queue(async () => {
+  const i = $('toc').value;
+  if (i === '') return;
+  await goTo(await reader.refForToc(reader.meta.toc[+i]));
+  $('toc').value = '';
+});
+$('progress').onchange = () => queue(async () => goTo(await reader.refForProgress($('progress').value / 1000)));
+document.addEventListener('keydown', (e) => {
+  if (e.target.matches('input[type=search], select')) return;
+  if (['ArrowRight', 'PageDown', ' '].includes(e.key)) { e.preventDefault(); queue(nextSpread); }
+  else if (['ArrowLeft', 'PageUp'].includes(e.key)) { e.preventDefault(); queue(prevSpread); }
+  else if (e.key === '+' || e.key === '=') queue(() => changeFont(0.1));
+  else if (e.key === '-') queue(() => changeFont(-0.1));
+});
+
+function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
+queue(init);
+</script>
+</body>
+</html>
