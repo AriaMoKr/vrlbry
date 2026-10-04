@@ -72,7 +72,8 @@ client: api.js ─► rooms.js (what to shelve) ─► World/Bookshelves ─► 
   - Durable positions (saved reading position, staying on the same text after a font change) use the block anchor `{c, b}` via `anchorOf` / `refForAnchor`.
 - **`world/`**: `World` builds the room and `Bookshelves`.
   - Each bookcase's books are one merged `BufferGeometry` whose spines use a per-bookcase canvas atlas, which keeps draw calls within the Quest budget (≤ ~150).
-  - Above 1,200 shelved books, atlases start at 1/8 scale and only the 8 nearest bookcases get full-resolution ones (`HIRES_BUDGET` in `shelves.js`), to bound GPU memory on headsets.
+  - **Quest 3 is the performance target; the development PC is far faster**, so anything that stutters on the PC is unusable on the headset. Atlases have three levels (`LEVELS` in `shelves.js`): low is drawn at build time, mid for every bookcase nearest-first, and high only for at most 6 bookcases within 4.5 m, with 1.5 m of hysteresis. Painting is time-sliced at ~3 ms per frame (`atlasPainter`), and dropping a level is a texture swap.
+  - Never paint a whole atlas, or anything else heavy, in a single frame. Never use canvas `shadowBlur` on spine text.
   - More than 22 bookcases switches the rotunda to a hall with aisles.
   - Picking uses per-book bounding boxes. `hideBook` / `showBook` collapse or restore that book's vertices.
   - `Book3D` is the free-floating book used in the inspect and read states. Its local frame: front cover +Z, spine −X. Reading mode sets `centerWhenOpen = false`, so the cover swings open around a fixed spine.
@@ -82,7 +83,9 @@ client: api.js ─► rooms.js (what to shelve) ─► World/Bookshelves ─► 
 - **`interaction.js`**: state machine `browse → inspect → read` (plus `busy` during animations). It owns the canvas-texture UI panels (`ui/panel.js`): the kiosk, the inspect panel, the reader toolbar and the table-of-contents list. The DOM overlay (`ui/overlay.js`) is only for non-VR use.
   - Page canvases come from a pool of 6: the shown spread plus the prepared next and previous spreads. `Book3D` keeps displaying (and turning) the canvases it was given, so never redraw a canvas that is on screen.
   - Background neighbour preparation is cancelled by bumping `_prepToken`.
-- **`rooms.js`**: huge libraries (Wikisource, or more than 3,000 books) are never shelved whole. They show one *room* (a genre or a title letter, capped at 3,000 books), chosen on the kiosk's Rooms tab and saved in `settings.rooms`. Always build the world through `collectionsFor()`. Search and recently read cover all books, so call `interaction.ensureShelved(book)` before locating a book that may be in another room.
+- **`rooms.js`**: the hall shows one *place* at a time (`settings.place`): each library is its own room. Huge libraries (Wikisource, or more than 3,000 books) are further split into rooms of one genre or title letter (capped at 3,000 books, saved in `settings.rooms`). The place and room are chosen on the kiosk's Rooms tab.
+  - Always build the world through `collectionsFor()`.
+  - Search and recently read cover all books, so call `interaction.ensureShelved(book)` before locating a book that may be in another place or room. Every loaded book carries `libId` (`withLib` in `main.js`).
 - **`util/books.js`**: holds the sort comparators, `letterOf` and `bookDims`. Both the shelf layout and the A–Z jump / interaction code **must** use these shared helpers so they agree on order and book sizes. Shared constants (dimensions, page size, reading pose) are in `config.js`.
 
 ## Testing notes

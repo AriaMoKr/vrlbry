@@ -55,10 +55,11 @@ The first time a Wikisource ZIM is opened, the server indexes its works in the b
 two minutes for the 8.6 GB English one); the library card shows the progress, and the books appear
 when it is done. The index is cached in `.cache/`, so later starts are instant.
 
-A library that large is shown one **room** at a time: a genre (Novels, Poetry, Drama, History &
-biography, Court decisions, …) or all works whose title starts with a letter, up to 3,000 books
-on the shelves. Choose the room on the **Rooms** tab of the catalogue stand. Search still covers
-every book: picking one that is not on the shelves switches to its room.
+Each library is its own **room**: the hall shows one collection at a time, and the **Rooms** tab of
+the catalogue stand switches between them. A library as large as Wikisource is split further,
+into rooms of one genre (Novels, Poetry, Drama, History & biography, Court decisions, …) or of all
+works whose title starts with a letter, up to 3,000 books each. Search still covers every book of
+every library: picking one that is not on the shelves takes you to its room.
 
 ## Using a VR headset
 

@@ -14,9 +14,6 @@ import { canvasTexture, makeSignCanvas } from './textures.js';
 
 const CASE_GAP = 0.06; // between neighbouring bookcases
 const ROTUNDA_MAX_CASES = 22;
-// Books; above this (~10 bookcases) only the nearest bookcases get sharp spine atlases, which
-// keeps GPU texture memory bounded on headsets.
-const LAZY_THRESHOLD = 1200;
 
 export class World {
   /**
@@ -50,14 +47,12 @@ export class World {
     // Pack each library into its own run of bookcases.
     const cases = [];
     this.sections = [];
-    let total = 0;
     for (const { library, books, subtitle } of collections) {
       for (const b of books) b.libId = library.id;
       const packed = packBookcases(sortBooks(books, sort));
       if (!packed.length) continue;
       this.sections.push({ library, first: cases.length, count: packed.length, books: books.length, subtitle });
       for (const p of packed) cases.push({ ...p, label: rangeLabel(p.items, sort), libId: library.id });
-      total += books.length;
     }
 
     // Tear down the previous room.
@@ -73,7 +68,7 @@ export class World {
     const n = cases.length;
     if (n <= ROTUNDA_MAX_CASES) this._layoutRotunda(cases);
     else this._layoutHall(cases);
-    this.shelves.build(cases, { lazy: total > LAZY_THRESHOLD });
+    this.shelves.build(cases);
     this._footprints = this.shelves.footprints();
     this._makeSigns(cases);
     if (!n) this._emptySign();

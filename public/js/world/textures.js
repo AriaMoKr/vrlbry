@@ -353,45 +353,49 @@ export function drawSpine(g, book, x, y, w, h) {
       lines = wrapLines(g, title, len, 1);
     }
   }
-  g.fillStyle = col.gilt;
   g.textBaseline = 'middle';
   g.textAlign = 'left';
-  g.shadowColor = 'rgba(0,0,0,0.6)';
-  g.shadowBlur = 1.5;
-  g.shadowOffsetY = 1;
   const lh = size * 1.12;
   lines.forEach((line, i) => {
     const off = (i - (lines.length - 1) / 2) * lh;
-    g.fillText(line, 0, -off);
+    emboss(g, line, 0, -off, col.gilt);
   });
   g.restore();
 
   // Author at the tail, horizontal when the spine is thick enough, else rotated.
   const author = spineAuthor(book);
-  g.fillStyle = col.gilt;
-  g.shadowColor = 'rgba(0,0,0,0.6)';
-  g.shadowBlur = 1;
   g.textBaseline = 'middle';
   g.textAlign = 'center';
   let as = Math.min(w * 0.3, 15);
   g.font = `${as}px ${SERIF}`;
   if (g.measureText(author).width <= w * 0.82) {
-    g.fillText(author, w / 2, h * 0.865);
+    emboss(g, author, w / 2, h * 0.865, col.gilt);
   } else {
     g.save();
     g.translate(w / 2, h * 0.865);
     g.rotate(Math.PI / 2);
     as = Math.min(w * 0.42, 14);
     g.font = `${as}px ${SERIF}`;
-    g.fillText(author.length > 14 ? author.slice(0, 13) + '…' : author, 0, 0);
+    emboss(g, author.length > 14 ? author.slice(0, 13) + '…' : author, 0, 0, col.gilt);
     g.restore();
   }
   // A small ornament.
   if (rnd() < 0.5 && h > 200) {
     g.font = `${Math.min(w * 0.4, 16)}px ${SERIF}`;
-    g.fillText('❦', w / 2, h * 0.115);
+    emboss(g, '❦', w / 2, h * 0.115, col.gilt);
   }
   g.restore();
+}
+
+/**
+ * Gilt text with a crisp dark offset copy beneath it. (Canvas shadowBlur looks the same at
+ * spine sizes but blurs every glyph on the CPU, which made atlas painting slow.)
+ */
+function emboss(g, text, x, y, color) {
+  g.fillStyle = 'rgba(0,0,0,0.55)';
+  g.fillText(text, x + 0.7, y + 0.9);
+  g.fillStyle = color;
+  g.fillText(text, x, y);
 }
 
 /** Stand-alone canvas of one spine (for Book3D). */

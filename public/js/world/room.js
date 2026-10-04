@@ -202,7 +202,7 @@ function makePedestal(group, x, z, yaw) {
 }
 
 /** Chandelier: brass ring with glowing candles and a warm point light. */
-function makeChandelier(group, x, y, z, radius = 0.6) {
+function makeChandelier(group, x, y, z, radius = 0.6, { light: withLight = true } = {}) {
   const mats = materials();
   const g = new THREE.Group();
   g.position.set(x, y, z);
@@ -227,10 +227,11 @@ function makeChandelier(group, x, y, z, radius = 0.6) {
   }
   g.add(new THREE.Mesh(mergeGeometries(candles), new THREE.MeshLambertMaterial({ color: 0xf2e6cc, emissive: 0x3a2a14 })));
   g.add(new THREE.Mesh(mergeGeometries(flames), mats.glow));
+  group.add(g);
+  if (!withLight) return null;
   const light = new THREE.PointLight(0xffc98a, 9, 14, 1.2);
   light.position.y = 0.1;
   g.add(light);
-  group.add(g);
   return light;
 }
 
@@ -450,7 +451,8 @@ export function createHall({ minX, maxX, minZ, maxZ, kiosk }) {
   commonLights(group);
   const lights = [];
   const n = Math.max(1, Math.min(3, Math.round(d / 8)));
-  for (let i = 0; i < n; i++) lights.push(makeChandelier(group, cx, WALL_H - 0.6, maxZ - (i + 0.5) * (d / n), 0.6));
+  // Only the first chandelier casts light: every point light costs per-pixel shading on a Quest.
+  for (let i = 0; i < n; i++) lights.push(makeChandelier(group, cx, WALL_H - 0.6, maxZ - (i + 0.5) * (d / n), 0.6, { light: i === 0 }));
   const colliders = [];
   if (kiosk) colliders.push(makePedestal(group, kiosk.position.x, kiosk.position.z, kiosk.yaw));
   const dust = makeDust(group, cx, maxZ - 3, 3, WALL_H - 1);

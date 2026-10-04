@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  ROOM_CAP, isFaceted, facetsOf, inRoom, defaultRoom, roomFor, roomLabel, shelfCollections, collectionsFor,
+  ROOM_CAP, isFaceted, facetsOf, inRoom, defaultRoom, roomFor, roomLabel, shelfCollections, collectionsFor, currentPlace, placeFor,
 } from '../public/js/rooms.js';
 
 const works = (n, genreOf) => Array.from({ length: n }, (_, i) => ({
@@ -63,11 +63,33 @@ describe('rooms', () => {
     assert.ok(c3.books.length > 0);
   });
 
-  it('adds sign subtitles and keeps rooms in settings', () => {
+  it('shelves only the current place: one library, or one room of a large one', () => {
+    const books = { pg: pgBooks, ws: works(20, () => 'Poetry') };
     const settings = { sort: 'title' };
-    const cols = collectionsFor([pg, ws], { pg: pgBooks, ws: works(20, () => 'Poetry') }, settings);
+    // Default place: the first library that has books.
+    let cols = collectionsFor([pg, ws], books, settings);
+    assert.equal(cols.length, 1);
+    assert.equal(cols[0].library.id, 'pg');
+    assert.equal(cols[0].books.length, 10);
     assert.equal(cols[0].subtitle, undefined);
-    assert.equal(cols[1].subtitle, 'Poetry · 20 works');
+    assert.equal(settings.place, 'pg');
+    settings.place = 'ws';
+    cols = collectionsFor([pg, ws], books, settings);
+    assert.deepEqual(cols.map((c) => c.library.id), ['ws']);
+    assert.equal(cols[0].subtitle, 'Poetry · 20 works');
     assert.deepEqual(settings.rooms, { ws: { type: 'genre', value: 'Poetry' } });
+    // A place that disappeared (rescan) falls back; an empty library is skipped.
+    settings.place = 'gone';
+    assert.equal(currentPlace([ws, pg], { pg: pgBooks, ws: [] }, settings).id, 'pg');
+    assert.equal(settings.place, 'pg');
+    assert.deepEqual(collectionsFor([], {}, { sort: 'title' }), []);
+  });
+
+  it('knows where a book lives', () => {
+    const wsBooks = works(20, () => 'Poetry');
+    const books = { pg: pgBooks.map((b) => ({ ...b, libId: 'pg' })), ws: wsBooks };
+    assert.deepEqual(placeFor(books.pg[0], [pg, ws], books), { libId: 'pg', room: null });
+    assert.deepEqual(placeFor(wsBooks[3], [pg, ws], books), { libId: 'ws', room: { type: 'genre', value: 'Poetry' } });
+    assert.equal(placeFor({ id: 'x', libId: 'nope' }, [pg, ws], books), null);
   });
 });

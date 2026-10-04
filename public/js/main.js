@@ -28,6 +28,12 @@ if (params.get('xr') === 'emulate' || params.has('emulate')) {
   }
 }
 
+/** Tags each book with its library id (search and rooms need it for books not on the shelves). */
+function withLib(books, libId) {
+  for (const b of books) b.libId = libId;
+  return books;
+}
+
 async function start() {
   overlay.setLoading('Opening the library…', 0.02);
   let renderer;
@@ -42,8 +48,10 @@ async function start() {
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.xr.enabled = true;
   renderer.xr.setReferenceSpaceType('local-floor');
-  renderer.xr.setFramebufferScaleFactor(1.2); // crisper page text in the headset
-  renderer.xr.setFoveation(0.3);
+  // Quest 3 is the target: native resolution (no supersampling) and moderate fixed foveation keep
+  // the GPU within budget; the reading position is central, where foveation does not blur.
+  renderer.xr.setFramebufferScaleFactor(1.0);
+  renderer.xr.setFoveation(0.5);
   document.getElementById('app').appendChild(renderer.domElement);
 
   const scene = new THREE.Scene();
@@ -66,7 +74,7 @@ async function start() {
   let booksByLib = {};
   let done = 0;
   await Promise.all(libraries.map(async (lib) => {
-    booksByLib[lib.id] = await getBooks(lib.id);
+    booksByLib[lib.id] = withLib(await getBooks(lib.id), lib.id);
     done++;
     overlay.setLoading(`Reading the catalogue… (${done}/${libraries.length})`, 0.1 + 0.4 * (done / Math.max(1, libraries.length)));
   }));
@@ -124,7 +132,7 @@ async function start() {
         const old = oldById.get(lib.id);
         // Keep book lists of unchanged libraries; refetch new or replaced ones.
         nextBooks[lib.id] = old && JSON.stringify(old) === JSON.stringify(lib) && booksByLib[lib.id]
-          ? booksByLib[lib.id] : await getBooks(lib.id);
+          ? booksByLib[lib.id] : withLib(await getBooks(lib.id), lib.id);
       }
       const added = next.libraries.filter((l) => !oldById.has(l.id));
       const removed = libraries.filter((l) => !next.libraries.some((n) => n.id === l.id));

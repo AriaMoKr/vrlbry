@@ -9,7 +9,7 @@ import { audio } from './audio.js';
 import { load, save } from './util/storage.js';
 import { letterOf, SORT_MODES } from './util/books.js';
 import { PAGE_PX, READ } from './config.js';
-import { collectionsFor, facetsOf, isFaceted, roomFor, roomLabel, sameRoom, ROOM_CAP } from './rooms.js';
+import { collectionsFor, currentPlace, facetsOf, isFaceted, placeFor, roomLabel, sameRoom, ROOM_CAP } from './rooms.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 const THEME_ORDER = ['paper', 'sepia', 'night'];
@@ -92,9 +92,9 @@ export class Interaction {
     this.kiosk.mesh.rotateX(-0.12);
   }
 
-  /** Libraries browsed by rooms (Wikisource), in catalogue order. */
-  _facetedLibraries() {
-    return this.libraries.filter((l) => isFaceted(l, this.booksByLib[l.id]));
+  /** The library currently shown in the hall. */
+  _place() {
+    return currentPlace(this.libraries, this.booksByLib, this.settings);
   }
 
   _fillKiosk() {
@@ -104,11 +104,13 @@ export class Interaction {
     p.clear();
     p.add({ type: 'text', x: pad, y: 26, w: W - 2 * pad, h: 54, text: 'Catalogue', size: 46, weight: '600', serif: true, color: UI.accent });
     p.add({ id: 'rescan', type: 'button', x: W - pad - 230, y: 24, w: 230, h: 56, label: '⟳ Rescan folder', size: 24, onClick: () => this.onRescan?.() });
-    const faceted = this._facetedLibraries();
-    if (!faceted.length) this._kioskTab = 'shelves';
+    const place = this._place();
+    // Rooms exist when there is more than one library, or a library too big to shelve whole.
+    const hasRooms = this.libraries.length > 1 || (place && isFaceted(place, this.booksByLib[place.id]));
+    if (!hasRooms) this._kioskTab = 'shelves';
     let y = 96;
-    if (faceted.length) {
-      const tabs = [['shelves', 'Shelves & settings'], ['rooms', `Rooms of ${faceted.length === 1 ? faceted[0].title : 'large libraries'}`]];
+    if (hasRooms) {
+      const tabs = [['shelves', 'Shelves & settings'], ['rooms', 'Rooms']];
       const tw = (W - 2 * pad - 12) / 2;
       tabs.forEach(([id, label], i) => {
         p.add({
@@ -118,17 +120,18 @@ export class Interaction {
       });
       y += 74;
     }
-    if (this._kioskTab === 'rooms') this._fillRoomsTab(p, y, pad, faceted);
-    else this._fillShelvesTab(p, y, pad);
+    if (this._kioskTab === 'rooms') this._fillRoomsTab(p, y, pad, place);
+    else this._fillShelvesTab(p, y, pad, place);
   }
 
-  _fillShelvesTab(p, y0, pad) {
+  _fillShelvesTab(p, y0, pad, place) {
     const W = p.w;
     const shelved = this.world.shelves.books();
-    const total = this.libraries.reduce((n, l) => n + (this.booksByLib[l.id]?.length || 0), 0);
-    const libLine = this.libraries.length === 1
-      ? `${this.libraries[0].title} · ${total.toLocaleString()} books`
-      : `${shelved.length.toLocaleString()} books on the shelves · ${total.toLocaleString()} in ${this.libraries.length} libraries`;
+    const room = place && this.settings.rooms?.[place.id];
+    const libLine = !place ? 'No libraries'
+      : room && isFaceted(place, this.booksByLib[place.id])
+        ? `${place.title} · ${roomLabel(room)} · ${shelved.length.toLocaleString()} on the shelves`
+        : `${place.title} · ${shelved.length.toLocaleString()} books`;
     p.add({ type: 'text', x: pad, y: y0, w: W - 2 * pad, h: 36, text: libLine, size: 26, color: UI.muted, maxLines: 1 });
 
     // Sort toggle.
@@ -193,61 +196,65 @@ export class Interaction {
     }
   }
 
-  _fillRoomsTab(p, y0, pad, faceted) {
+  _fillRoomsTab(p, y0, pad, place) {
     const W = p.w;
-    if (!this._roomLibId || !faceted.some((l) => l.id === this._roomLibId)) this._roomLibId = faceted[0].id;
-    const lib = faceted.find((l) => l.id === this._roomLibId);
-    const books = this.booksByLib[lib.id] || [];
     let y = y0;
-    if (faceted.length > 1) {
-      const i = faceted.indexOf(lib);
+    // One room per library…
+    p.add({ type: 'text', x: pad, y, w: W - 2 * pad, h: 32, text: 'Libraries', size: 24, color: UI.muted });
+    y += 38;
+    const libCols = Math.min(2, Math.max(1, this.libraries.length));
+    const lw = (W - 2 * pad - (libCols - 1) * 10) / libCols;
+    this.libraries.forEach((lib, i) => {
+      const books = this.booksByLib[lib.id] || [];
+      const busy = lib.indexing && lib.indexing.stage !== 'failed';
+      const count = busy ? `indexing ${Math.round((lib.indexing.progress || 0) * 100)}%`
+        : `${books.length.toLocaleString()} ${lib.kind === 'wikisource' ? 'works' : 'books'}`;
       p.add({
-        type: 'button', x: W - pad - 260, y: y - 4, w: 260, h: 48, label: 'Next library ▸', size: 24,
-        onClick: () => { this._roomLibId = faceted[(i + 1) % faceted.length].id; this._fillKiosk(); },
+        id: `place-${i}`, type: 'button', x: pad + (i % libCols) * (lw + 10), y: y + Math.floor(i / libCols) * 62, w: lw, h: 54,
+        label: `${lib.title} · ${count}`, size: 23, active: place?.id === lib.id, disabled: !books.length,
+        onClick: () => this.setPlace(lib.id),
       });
-    }
-    const indexing = lib.indexing;
-    if (!books.length) {
-      const text = indexing && indexing.stage !== 'failed'
-        ? `${lib.title} is being indexed (${Math.round((indexing.progress || 0) * 100)}%). This happens once; its rooms appear here when it is done.`
-        : indexing?.stage === 'failed'
-          ? `Indexing ${lib.title} failed: ${indexing.error || 'unknown error'}`
-          : `${lib.title} has no books.`;
-      p.add({ type: 'text', x: pad, y, w: W - 2 * pad - 280, h: 160, text, size: 28, maxLines: 5 });
+    });
+    y += Math.ceil(this.libraries.length / libCols) * 62 + 12;
+    if (!place) return;
+    const books = this.booksByLib[place.id] || [];
+    if (!isFaceted(place, books)) {
+      p.add({ type: 'text', x: pad, y, w: W - 2 * pad, h: 90, text: `${place.title} is shelved whole in this room.`, size: 26, color: UI.muted, maxLines: 2 });
       return;
     }
-    const room = this.settings.rooms?.[lib.id];
-    p.add({ type: 'text', x: pad, y, w: W - 2 * pad - 280, h: 40, text: `${lib.title} · ${books.length.toLocaleString()} works`, size: 28, weight: '600', maxLines: 1 });
-    p.add({ type: 'text', x: pad, y: y + 40, w: W - 2 * pad, h: 34, text: `Now shelved: ${roomLabel(room)}`, size: 24, color: UI.muted, maxLines: 1 });
+    // …and a large library is split into rooms by genre or title letter.
+    const room = this.settings.rooms?.[place.id];
+    p.add({ type: 'text', x: pad, y, w: W - 2 * pad, h: 34, text: `${place.title} rooms · now: ${roomLabel(room)}`, size: 24, color: UI.muted, maxLines: 1 });
+    y += 40;
     const { genres, letters } = facetsOf(books);
-    y += 88;
     const cols = 3;
     const gw = (W - 2 * pad - (cols - 1) * 10) / cols;
-    const shown = genres.slice(0, 21);
+    const rowsLeft = Math.max(2, Math.floor((p.h - y - 150) / 54));
+    const shown = genres.slice(0, cols * rowsLeft);
     shown.forEach((g, i) => {
       const r = Math.floor(i / cols);
       const c = i % cols;
       p.add({
-        id: `room-g-${i}`, type: 'button', x: pad + c * (gw + 10), y: y + r * 58, w: gw, h: 50,
-        label: `${g.name} · ${g.count > 999 ? (g.count / 1000).toFixed(1) + 'k' : g.count}`, size: 22,
+        id: `room-g-${i}`, type: 'button', x: pad + c * (gw + 10), y: y + r * 54, w: gw, h: 48,
+        label: `${g.name} · ${g.count > 999 ? (g.count / 1000).toFixed(1) + 'k' : g.count}`, size: 21,
         active: sameRoom(room, { type: 'genre', value: g.name }),
-        onClick: () => this.setRoom(lib.id, { type: 'genre', value: g.name }),
+        onClick: () => this.setRoom(place.id, { type: 'genre', value: g.name }),
       });
     });
-    y += Math.ceil(shown.length / cols) * 58 + 14;
-    p.add({ type: 'text', x: pad, y, w: W - 2 * pad, h: 32, text: `Or all works with titles starting with (rooms hold up to ${ROOM_CAP.toLocaleString()})`, size: 22, color: UI.muted, maxLines: 1 });
-    y += 38;
+    y += Math.ceil(shown.length / cols) * 54 + 8;
+    p.add({ type: 'text', x: pad, y, w: W - 2 * pad, h: 30, text: `Or titles starting with (rooms hold up to ${ROOM_CAP.toLocaleString()})`, size: 21, color: UI.muted, maxLines: 1 });
+    y += 34;
     const keys = ['#', ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'];
     const counts = new Map(letters.map((l) => [l.letter, l.count]));
     const lc = 14;
-    const lw = (W - 2 * pad - (lc - 1) * 6) / lc;
+    const kw = (W - 2 * pad - (lc - 1) * 6) / lc;
     keys.forEach((key, i) => {
       const r = Math.floor(i / lc);
       const c = i % lc;
       p.add({
-        id: `room-l-${key}`, type: 'button', x: pad + c * (lw + 6), y: y + r * 56, w: lw, h: 48, label: key, size: 24,
+        id: `room-l-${key}`, type: 'button', x: pad + c * (kw + 6), y: y + r * 52, w: kw, h: 46, label: key, size: 22,
         disabled: !counts.get(key), active: sameRoom(room, { type: 'letter', value: key }),
-        onClick: () => this.setRoom(lib.id, { type: 'letter', value: key }),
+        onClick: () => this.setRoom(place.id, { type: 'letter', value: key }),
       });
     });
   }
@@ -258,32 +265,37 @@ export class Interaction {
     if (this._kioskTab === 'rooms') this._fillKiosk();
   }
 
-  /** Shelves another room of a large library and walks to it. */
-  async setRoom(libId, room, { walk = true } = {}) {
+  /**
+   * Shows another library (and, for a large one, a given room), then walks to its shelves.
+   * @param {string} libId
+   * @param {{type: string, value: string}|null} [room]
+   */
+  async setPlace(libId, room = null, { walk = true } = {}) {
     if (this.state !== 'browse') return;
     this.settings.rooms ||= {};
-    if (sameRoom(this.settings.rooms[libId], room)) return;
-    this.settings.rooms[libId] = room;
+    const same = this.settings.place === libId && (!room || sameRoom(this.settings.rooms[libId], room));
+    if (same) return;
+    this.settings.place = libId;
+    if (room) this.settings.rooms[libId] = room;
     save('settings', this.settings);
-    this.overlay?.showToast(`Shelving ${roomLabel(room)}…`, 'info', 2500);
+    const lib = this.libraries.find((l) => l.id === libId);
+    const label = room ? `${lib?.title ?? ''}: ${roomLabel(room)}` : lib?.title ?? '';
+    this.overlay?.showToast(`Opening ${label}…`, 'info', 2500);
     await new Promise((r) => setTimeout(r, 30)); // let the toast show before the rebuild
-    await this._rebuildWorld();
-    if (walk) {
-      const first = this.world.shelves.books().find((b) => b.libId === libId);
-      if (first) {
-        const loc = this.world.shelves.locate(first);
-        if (loc) this.controls.teleportTo(loc.position, loc.yaw);
-      }
-    }
+    await this._rebuildWorld({ walk });
   }
 
-  /** Makes sure a book is on the shelves (switching its library's room if needed). */
+  /** Shelves another room of a large library (and goes there). */
+  setRoom(libId, room, opts) {
+    return this.setPlace(libId, room, opts);
+  }
+
+  /** Makes sure a book is on the shelves, switching library / room if needed. */
   async ensureShelved(book) {
     if (this.world.shelves.locate(book)) return true;
-    const lib = this.libraries.find((l) => l.id === book.libId);
-    const all = this.booksByLib[book.libId] || [];
-    if (!lib || !isFaceted(lib, all)) return false;
-    await this.setRoom(lib.id, roomFor(book, all), { walk: false });
+    const where = placeFor(book, this.libraries, this.booksByLib);
+    if (!where) return false;
+    await this.setPlace(where.libId, where.room, { walk: false });
     return !!this.world.shelves.locate(book);
   }
 
@@ -1002,7 +1014,12 @@ export class Interaction {
     return true;
   }
 
-  async _rebuildWorld() {
+  /**
+   * Rebuilds the shelves for the current place/room/sort.
+   * @param {{ walk?: boolean }} [opts] walk: go to the room's spawn point (a new room); otherwise
+   *   stay where we are if that spot is still walkable
+   */
+  async _rebuildWorld({ walk = false } = {}) {
     this._pendingCatalog = false;
     this.state = 'busy';
     try {
@@ -1013,8 +1030,7 @@ export class Interaction {
       const collections = collectionsFor(this.libraries, this.booksByLib, this.settings);
       await this.world.build(collections, { sort: this.settings.sort });
       this.placeKiosk();
-      // Stay where we were if that spot is still walkable.
-      if (!this.world.isWalkable(viewer.x, viewer.z)) this.controls.teleportTo(this.world.spawn.position, this.world.spawn.yaw);
+      if (walk || !this.world.isWalkable(viewer.x, viewer.z)) this.controls.teleportTo(this.world.spawn.position, this.world.spawn.yaw);
       this._fillKiosk();
     } finally {
       this.state = 'browse';

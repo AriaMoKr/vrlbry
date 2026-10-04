@@ -515,7 +515,7 @@ public/
     ui/panel.js          canvas-texture UI panels with buttons/text, hover & click via UV.
     ui/overlay.js        DOM overlay: library info, search, help (non-VR); setReading(bool) fades it while a book is open.
     interaction.js       app state machine: browse → inspect → read; wires everything.
-    rooms.js             which books are shelved: all of ordinary libraries, one room of huge ones.
+    rooms.js             which books are shelved: the current place (one library, or one room of a huge one).
     audio.js             tiny WebAudio synth: page turn, book slide/thud, UI click.
     main.js              bootstrap: renderer, scene, camera rig, XR session, loop, IWER dev flag.
 ```
@@ -641,10 +641,16 @@ export class Book3D {
 - **Spines:** canvas-rendered into atlases (e.g. 2048² per bookcase): base colour per book
   (palette of cloth/leather colours by hash), gilt bands, title (vertical, auto-fit, wrapping to
   2 lines for wide spines), author short name near the bottom. Must be legible at ~1.5 m in VR.
-  With more than 1,200 shelved books (~10 bookcases) atlases start at 1/8 scale and only the 8
-  nearest bookcases within 12 m get full-resolution ones (≈ 16 MB each), swapped one per
-  quarter second as the viewer moves: GPU texture memory stays bounded on a headset. Smaller
-  collections are built at full resolution eagerly.
+  **Quest 3 is the performance target** (development PCs are far faster: anything that stutters
+  there is unusable on the headset). Atlases have three levels: *low* (1/8 scale, coloured bands,
+  drawn instantly by `build()`), *mid* (1/4 scale, small titles, ~1 MB, painted for every
+  bookcase, nearest first) and *high* (full scale, legible titles, ~16 MB) only for at most 6
+  bookcases within 4.5 m (horizontal), because spine titles are only legible that close on a
+  Quest. A sharp atlas is dropped beyond 4.5 + 1.5 m, or displaced only by a bookcase at least
+  1.5 m nearer (hysteresis: no repainting while standing or swaying). Painting is incremental,
+  ~3 ms per frame (`atlasPainter().step()`), one atlas at a time; changing level is a texture
+  swap (low and mid textures are kept). Spine text uses an offset dark copy, never `shadowBlur`
+  (it blurs every glyph on the CPU).
 - **Book3D:** cover image texture on the front (cover loaded from `book.cover`; fallback generated
   cover with title/author), spine artwork, page-edge texture, back cover. Opening rotates the front
   cover; when open, the two page planes show reader canvases, slightly curved/tilted is a bonus.
@@ -725,22 +731,25 @@ States: `browse` → `inspect` → `read` (and back).
   drag = reposition (bonus). Next spread is pre-rendered for instant turns. Saves position on every
   turn. Close/B/Esc → closes, flies back, → **browse**. Locomotion disabled while inspecting/reading.
 - **Kiosk panel** (at `world.kiosk`, always available in browse; 1.0 × 1.0 m): "⟳ Rescan folder"
-  button (`POST /api/rescan`); when a library is browsed by rooms, two tabs:
+  button (`POST /api/rescan`); when there is more than one library or the current one is browsed
+  by rooms, two tabs:
   - *Shelves & settings*: library summary, sort toggle Title/Author/Popularity (rebuilds shelves),
     A–Z letter grid over the shelved books (teleports to the first book with that letter via
     `shelves.locate` and highlights it for 4 s), "Surprise me" (random book), "Recently read"
     list (opens directly into read), settings toggles (sound, smooth move).
-  - *Rooms*: genre buttons with counts and a title-letter grid for the room-browsed library
-    ("Next library ▸" when there are several); picking one rebuilds the shelves and teleports to
-    that section. While the library is still indexing, its progress is shown instead.
-- **Rooms** (`rooms.js`): a library is browsed by rooms when `kind === 'wikisource'` or it has
-  more than 3,000 books. It then shelves one room at a time — a genre, or all works whose title
+  - *Rooms*: one button per library (with its book count, or indexing progress), and for a
+    library browsed by rooms its genre buttons with counts and a title-letter grid. Picking one
+    rebuilds the hall and moves the viewer to its spawn point.
+- **Rooms** (`rooms.js`): the hall shows one *place* at a time — each library is its own room
+  (`settings.place`, default the first library with books); `collectionsFor()` returns that single
+  collection. A library is further browsed by rooms when `kind === 'wikisource'` or it has more
+  than 3,000 books. It then shelves one room at a time — a genre, or all works whose title
   starts with a letter — sorted by the current sort and capped at `ROOM_CAP` = 3,000 books
   (the section sign says "(first 3,000)"). The default room is Novels if present, else the
   largest genre that fits. The current room per library is saved in `settings.rooms`. Ordinary
-  libraries are always shelved whole. Search results and "Recently read" entries that are not on
-  the shelves first switch to the book's room (`roomFor`: its genre, or its title letter when
-  the genre is over the cap).
+  libraries are shelved whole. Search results and "Recently read" entries that are not on the
+  shelves first switch to the book's place and room (`placeFor` / `roomFor`: its genre, or its
+  title letter when the genre is over the cap); every loaded book carries its `libId` for this.
 - DOM overlay (non-VR): see `ui/overlay.js` — title, library cards (with indexing progress), a
   ⟳ rescan button, search box (filters by title / author across *all* books of all libraries;
   picking a result = switch room if needed, teleport to it and select it), Enter VR button
@@ -749,8 +758,9 @@ States: `browse` → `inspect` → `read` (and back).
 ### 5.7 Bootstrap (`main.js`)
 
 - `WebGLRenderer({ antialias: true, powerPreference: 'high-performance' })`, `xr.enabled = true`,
-  `setPixelRatio(min(devicePixelRatio, 2))`, `xr.setFramebufferScaleFactor(1.2)` (crisper text),
-  `xr.setFoveation(0.3)`, reference space `local-floor`.
+  `setPixelRatio(min(devicePixelRatio, 2))`, `xr.setFramebufferScaleFactor(1.0)` (no
+  supersampling on the Quest), `xr.setFoveation(0.5)`, reference space `local-floor`. Only one
+  chandelier per room casts light (point lights cost per-pixel shading on the headset).
 - Camera rig: `rig = new Group()` (moved by locomotion) containing `camera`; desktop eye height
   `PLAYER.eyeHeight` applied as camera y when not presenting (XR provides real head height).
 - Session: `navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor',

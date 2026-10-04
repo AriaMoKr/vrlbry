@@ -1,7 +1,7 @@
-// "Rooms" for very large libraries (Wikisource): instead of shelving 18,000 works at once — far
-// too much to draw on a Quest — such a library shelves one selection at a time, a genre or the
-// titles starting with a letter, chosen at the kiosk. Pure helpers shared by main.js and
-// interaction.js.
+// Rooms: the library hall shows one collection at a time. Each library is its own room (its
+// "place"); very large libraries (Wikisource) are further split into rooms of one genre or of the
+// titles starting with a letter, because 18,000 works are far too many to draw on a Quest. The
+// visitor picks the room at the kiosk. Pure helpers shared by main.js and interaction.js.
 
 import { letterOf, sortBooks } from './util/books.js';
 
@@ -65,17 +65,41 @@ export function sameRoom(a, b) {
 }
 
 /**
- * shelfCollections() plus section-sign subtitles; `settings.rooms` holds (and receives default)
- * rooms per faceted library.
+ * The library currently shown (`settings.place`), falling back to the first library that has
+ * books (then the first library) when it is unset or gone. Writes the choice back.
+ * @returns {object|null} library descriptor
+ */
+export function currentPlace(libraries, booksByLib, settings) {
+  let lib = libraries.find((l) => l.id === settings.place);
+  if (!lib) lib = libraries.find((l) => (booksByLib[l.id] || []).length) || libraries[0] || null;
+  settings.place = lib?.id ?? null;
+  return lib;
+}
+
+/**
+ * What to shelve: the current place only — a whole ordinary library, or the current room of a
+ * large one — with its section-sign subtitle. `settings.place` / `settings.rooms` receive
+ * defaults.
+ * @returns {Array<{ library, books, room, total, capped, subtitle }>} zero or one collection
  */
 export function collectionsFor(libraries, booksByLib, settings) {
   settings.rooms ||= {};
-  return shelfCollections(libraries, booksByLib, settings.rooms, settings.sort).map((c) => ({
+  const lib = currentPlace(libraries, booksByLib, settings);
+  if (!lib) return [];
+  return shelfCollections([lib], booksByLib, settings.rooms, settings.sort).map((c) => ({
     ...c,
     subtitle: c.room
       ? `${roomLabel(c.room)} · ${c.total.toLocaleString()} works${c.capped ? ` (first ${ROOM_CAP.toLocaleString()})` : ''}`
       : undefined,
   }));
+}
+
+/** The place (and room, for large libraries) where a book is shelved. */
+export function placeFor(book, libraries, booksByLib) {
+  const lib = libraries.find((l) => l.id === book.libId);
+  if (!lib) return null;
+  const all = booksByLib[lib.id] || [];
+  return { libId: lib.id, room: isFaceted(lib, all) ? roomFor(book, all) : null };
 }
 
 /**

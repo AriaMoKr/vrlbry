@@ -25,8 +25,16 @@ const ROW_H = Math.ceil(0.31 * SPINE_PPM) + 4;
 const LABEL = { w: 440, h: 80 }; // label plate in the atlas (px)
 const PLATE = { w: 0.42, h: 0.064 }; // label plate on the bookcase (m)
 const Y90 = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2);
-const HIRES_BUDGET = 8; // full-resolution spine atlases kept at once in lazy mode (~16 MB each)
-const HIRES_RANGE = 12; // metres
+// Spine atlas levels of detail (scale of the full-resolution layout). Low is drawn instantly when a
+// room is built; mid (small but real titles) is painted for every bookcase, nearest first; high
+// (legible titles) only for the few bookcases near enough to read — on a Quest 3 spine titles are
+// legible within ~4 m. Painting is spread over frames (JOB_BUDGET_MS each), so walking or switching
+// rooms never stalls rendering; dropping a level is just a texture swap.
+const LEVELS = { low: 0.125, mid: 0.25, high: 1 };
+const HIGH_BUDGET = 6; // sharp atlases kept at once (~16 MB of GPU memory each)
+const HIGH_RANGE = 4.5; // metres (horizontal) within which a bookcase gets a sharp atlas
+const HYSTERESIS = 1.5; // metres of slack before a sharp atlas is dropped or displaced
+const JOB_BUDGET_MS = 3; // canvas painting per frame
 
 /** Height of the surface books stand on, for shelf row r counted from the top (0 = top row). */
 export function rowSurface(r) {
@@ -176,29 +184,47 @@ function atlasLayout(items) {
   return { cells, label, page, width: ATLAS_W, height };
 }
 
-/** Renders an atlas canvas at `scale` (1 = full resolution; small scale = cheap LOD version). */
-function renderAtlas(layout, items, labelText, scale) {
+let pageEdge = null;
+
+/**
+ * Paints an atlas at `scale` (1 = full resolution) incrementally: `step(budgetMs)` paints spines
+ * until the time budget is used and returns true once the atlas is complete.
+ */
+function atlasPainter(layout, items, labelText, scale) {
   const c = newCanvas(Math.max(4, Math.round(layout.width * scale)), Math.max(4, Math.round(layout.height * scale)));
   const g = c.getContext('2d');
   g.scale(scale, scale);
   g.fillStyle = '#2a1a10';
   g.fillRect(0, 0, layout.width, layout.height);
-  items.forEach((it, i) => {
-    const cell = layout.cells[i];
-    const col = bookColors(it.book);
-    g.fillStyle = col.cloth;
-    g.fillRect(cell.x + cell.w, cell.y, STRIPE, cell.h);
-    if (scale >= 0.5) drawSpine(g, it.book, cell.x, cell.y, cell.w, cell.h);
-    else {
-      g.fillStyle = col.cloth;
-      g.fillRect(cell.x, cell.y, cell.w, cell.h);
-      g.fillStyle = col.gilt;
-      g.fillRect(cell.x + cell.w * 0.15, cell.y + cell.h * 0.2, cell.w * 0.7, cell.h * 0.55);
-    }
-  });
-  drawPlate(g, layout.label.x, layout.label.y, layout.label.w, layout.label.h, labelText || '');
-  g.drawImage(makePageEdgeCanvas({ w: 64, h: 64 }), layout.page.x, layout.page.y, layout.page.w, layout.page.h);
-  return c;
+  const detailed = scale >= 0.2;
+  let i = 0;
+  let done = false;
+  return {
+    canvas: c,
+    step(budgetMs = Infinity) {
+      if (done) return true;
+      const t0 = performance.now();
+      while (i < items.length) {
+        const it = items[i];
+        const cell = layout.cells[i++];
+        const col = bookColors(it.book);
+        g.fillStyle = col.cloth;
+        g.fillRect(cell.x + cell.w, cell.y, STRIPE, cell.h);
+        if (detailed) drawSpine(g, it.book, cell.x, cell.y, cell.w, cell.h);
+        else {
+          g.fillRect(cell.x, cell.y, cell.w, cell.h);
+          g.fillStyle = col.gilt;
+          g.fillRect(cell.x + cell.w * 0.15, cell.y + cell.h * 0.2, cell.w * 0.7, cell.h * 0.55);
+        }
+        if (performance.now() - t0 > budgetMs) return false;
+      }
+      drawPlate(g, layout.label.x, layout.label.y, layout.label.w, layout.label.h, labelText || '');
+      pageEdge ||= makePageEdgeCanvas({ w: 64, h: 64 });
+      g.drawImage(pageEdge, layout.page.x, layout.page.y, layout.page.w, layout.page.h);
+      done = true;
+      return true;
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -271,8 +297,8 @@ export class Bookshelves {
     this._records = new Map(); // key -> record
     this._order = [];
     this._highlight = null;
-    this._lazy = false;
     this._lodTimer = 0;
+    this._job = null; // atlas being painted: { cs, level, painter }
     this._ray = new THREE.Ray();
     this._inv = new THREE.Matrix4();
     this._tmp = new THREE.Vector3();
@@ -282,13 +308,10 @@ export class Bookshelves {
    * Builds bookcases.
    * @param {Array<{ items, position: THREE.Vector3, yaw: number, label: string }>} cases packed
    *   bookcases (packBookcases) with their placement
-   * @param {{ lazy?: boolean }} [opts] lazy: low-res atlases until the camera comes near
    */
-  build(cases, { lazy = false } = {}) {
+  build(cases) {
     this.dispose();
-    this._lazy = lazy;
     const woodParts = [];
-    const maxAniso = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
     cases.forEach((cs, ci) => {
       const g = new THREE.Group();
       g.position.copy(cs.position);
@@ -299,8 +322,10 @@ export class Bookshelves {
       woodParts.push(wood);
 
       const layout = atlasLayout(cs.items);
-      const canvas = renderAtlas(layout, cs.items, cs.label, lazy ? 0.125 : 1);
-      const tex = canvasTexture(canvas, { anisotropy: maxAniso });
+      // Low level now (cheap: coloured bands); mid/high are painted progressively by update().
+      const low = atlasPainter(layout, cs.items, cs.label, LEVELS.low);
+      low.step();
+      const tex = canvasTexture(low.canvas, { anisotropy: 1 });
       const mat = new THREE.MeshLambertMaterial({ map: tex, vertexColors: true });
       const arr = { pos: [], nrm: [], uv: [], col: [], idx: [] };
       const pageUV = uvRect(layout.page, layout.width, layout.height, 2);
@@ -351,8 +376,8 @@ export class Bookshelves {
       this.group.add(g);
       const original = geo.attributes.position.array.slice();
       this.cases.push({
-        index: ci, group: g, mesh, material: mat, texture: tex, layout, items: cs.items, label: cs.label,
-        records, original, quality: lazy ? 'low' : 'high', position: cs.position.clone(), yaw: cs.yaw,
+        index: ci, group: g, mesh, material: mat, layout, items: cs.items, label: cs.label,
+        textures: { low: tex, mid: null, high: null }, records, original, position: cs.position.clone(), yaw: cs.yaw,
         box: new THREE.Box3(new THREE.Vector3(-W / 2, 0, -D / 2), new THREE.Vector3(W / 2, H, D / 2 + 0.05)),
         back: new THREE.Box3(new THREE.Vector3(-W / 2, 0, -D / 2), new THREE.Vector3(W / 2, H, -D / 2 + 0.02)),
       });
@@ -514,44 +539,79 @@ export class Bookshelves {
   }
 
   /**
-   * LOD for big libraries: only the HIRES_BUDGET nearest bookcases (within HIRES_RANGE) keep
-   * full-resolution spine atlases; the rest use 1/8-scale ones. At most one atlas is swapped per
-   * call, so walking never causes a burst of canvas work. Caps GPU texture memory on headsets.
+   * Spine-atlas level of detail (see LEVELS). Each call advances the atlas being painted by
+   * JOB_BUDGET_MS; between jobs it picks the next one: a sharp atlas for the nearest bookcase in
+   * reading range (displacing the farthest sharp one only when clearly nearer), else a mid atlas
+   * for the nearest bookcase still without one. Sharp atlases far out of range are dropped.
    */
   update(dt, camera) {
-    if (!this._lazy || !camera || !this.cases.length) return;
+    if (!camera || !this.cases.length) return;
+    if (this._job) {
+      if (this._job.painter.step(JOB_BUDGET_MS)) this._finishJob();
+      return;
+    }
     this._lodTimer -= dt;
     if (this._lodTimer > 0) return;
-    this._lodTimer = 0.25;
+    this._lodTimer = 0.15;
     const cam = camera.getWorldPosition(this._tmp);
     const ranked = this.cases
-      .map((cs) => ({ cs, d: cs.position.distanceTo(cam) }))
-      .sort((a, b) => a.d - b.d);
-    const want = new Set(ranked.slice(0, HIRES_BUDGET).filter((r) => r.d < HIRES_RANGE).map((r) => r.cs));
-    // Free memory first (a far sharp atlas), then sharpen the nearest blurry one.
-    const drop = ranked.slice().reverse().find((r) => r.cs.quality === 'high' && !want.has(r.cs));
-    if (drop) return this._setQuality(drop.cs, 'low');
-    const add = ranked.find((r) => r.cs.quality === 'low' && want.has(r.cs));
-    if (add) this._setQuality(add.cs, 'high');
+      .map((cs) => ({ cs, d: Math.hypot(cs.position.x - cam.x, cs.position.z - cam.z) }))
+      .sort((x, y) => x.d - y.d);
+    const sharp = ranked.filter((r) => r.cs.textures.high);
+    const far = sharp[sharp.length - 1];
+    if (far && far.d > HIGH_RANGE + HYSTERESIS) return this._dropHigh(far.cs);
+    const want = ranked.find((r) => r.d < HIGH_RANGE && !r.cs.textures.high);
+    if (want) {
+      if (sharp.length < HIGH_BUDGET) return this._startJob(want.cs, 'high');
+      if (want.d < far.d - HYSTERESIS) {
+        this._dropHigh(far.cs);
+        return this._startJob(want.cs, 'high');
+      }
+    }
+    const mid = ranked.find((r) => !r.cs.textures.mid);
+    if (mid) this._startJob(mid.cs, 'mid');
   }
 
-  _setQuality(cs, q) {
-    const canvas = renderAtlas(cs.layout, cs.items, cs.label, q === 'high' ? 1 : 0.125);
-    const tex = canvasTexture(canvas, { anisotropy: Math.min(8, this.renderer.capabilities.getMaxAnisotropy()) });
-    cs.texture.dispose();
-    cs.texture = tex;
-    cs.material.map = tex;
-    if (cs.highlightMaterial) cs.highlightMaterial.map = tex;
-    cs.quality = q;
+  _startJob(cs, level) {
+    this._job = { cs, level, painter: atlasPainter(cs.layout, cs.items, cs.label, LEVELS[level]) };
+  }
+
+  _finishJob() {
+    const { cs, level, painter } = this._job;
+    this._job = null;
+    const aniso = level === 'high' ? Math.min(4, this.renderer.capabilities.getMaxAnisotropy()) : 2;
+    cs.textures[level] = canvasTexture(painter.canvas, { anisotropy: aniso });
+    this._applyTexture(cs);
+  }
+
+  _dropHigh(cs) {
+    cs.textures.high?.dispose();
+    cs.textures.high = null;
+    this._applyTexture(cs);
+  }
+
+  /** Shows the best atlas a bookcase has. */
+  _applyTexture(cs) {
+    const t = cs.textures.high || cs.textures.mid || cs.textures.low;
+    if (cs.material.map === t) return;
+    cs.material.map = t;
+    if (cs.highlightMaterial) cs.highlightMaterial.map = t;
+  }
+
+  /** Atlas levels currently held (diagnostics/tests). */
+  lodStats() {
+    const n = (k) => this.cases.filter((cs) => cs.textures[k]).length;
+    return { cases: this.cases.length, mid: n('mid'), high: n('high'), painting: this._job ? this._job.level : null };
   }
 
   dispose() {
     this.setHighlight(null);
+    this._job = null;
     for (const cs of this.cases) {
       cs.mesh.geometry.dispose();
       cs.material.dispose();
       cs.highlightMaterial?.dispose();
-      cs.texture.dispose();
+      for (const t of Object.values(cs.textures)) t?.dispose();
     }
     if (this.woodMesh) {
       this.woodMesh.geometry.dispose();
