@@ -12,6 +12,7 @@ import { bookDims, hash01, titleKey, authorKey } from '../util/books.js';
 import { makeSpineCanvas, makeWoodCanvas } from './textures.js';
 import { canvasTexture, disposeTexture } from './canvas-texture.js';
 import { atlasLayout, atlasPainter, STRIPE } from './atlas.js';
+import { perf } from '../perf.js';
 
 const { width: W, height: H, depth: D, shelves: ROWS, bottom: BOTTOM, side: SIDE, board: BOARD } = BOOKCASE;
 export const TOP_TRIM = 0.14;
@@ -422,7 +423,11 @@ export class Bookshelves {
       this.group.add(this.woodMesh);
     }
     const gen = ++this._gen;
+    const t0 = performance.now();
     this._lows = Promise.all(this.cases.map((cs) => this._paintLow(cs, gen)));
+    this._lows.then(() => {
+      if (gen === this._gen) perf.event('lows', { t: t0, ms: performance.now() - t0, bookcases: this.cases.length, worker: !!this._worker });
+    });
   }
 
   /**
@@ -696,10 +701,10 @@ export class Bookshelves {
   _startJob(cs, level) {
     const scale = LEVELS[level];
     if (!this._worker) {
-      this._job = { cs, level, painter: atlasPainter(cs.layout, cs.items, cs.label, scale) };
+      this._job = { cs, level, t0: performance.now(), painter: atlasPainter(cs.layout, cs.items, cs.label, scale) };
       return;
     }
-    const job = { cs, level, done: false, image: null };
+    const job = { cs, level, t0: performance.now(), done: false, image: null };
     this._job = job;
     this._worker.paint(cs.layout, cs.items, cs.label, scale).then((image) => {
       if (this._job !== job) return image.close?.(); // the room was rebuilt meanwhile
@@ -712,8 +717,9 @@ export class Bookshelves {
   }
 
   _finishJob() {
-    const { cs, level, painter, image } = this._job;
+    const { cs, level, painter, image, t0 } = this._job;
     this._job = null;
+    perf.event('atlas', { t: t0, ms: performance.now() - t0, level, worker: !painter });
     const aniso = level === 'high' ? Math.min(4, this.renderer.capabilities.getMaxAnisotropy()) : 2;
     cs.textures[level] = canvasTexture(painter ? painter.canvas : image, { anisotropy: aniso });
     this._applyTexture(cs);

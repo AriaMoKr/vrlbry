@@ -6,6 +6,7 @@ import { Book3D } from './world/book3d.js';
 import { BookReader, THEMES } from './reader/reader.js';
 import { Panel, Label, UI } from './ui/panel.js';
 import { audio } from './audio.js';
+import { perf } from './perf.js';
 import { load, save } from './util/storage.js';
 import { letterOf, SORT_MODES } from './util/books.js';
 import { PAGE_PX, READ } from './config.js';
@@ -926,10 +927,12 @@ export class Interaction {
       return;
     }
     this._turnBusy = true;
+    const t0 = performance.now();
     try {
       // Cancel background preparation: it must not reassign neighbours while we turn.
       this._prepToken = (this._prepToken || 0) + 1;
       let target = dir > 0 ? this._next : this._prev;
+      const prepared = !!target; // the neighbour spread was ready (else it is laid out now)
       if (!target) {
         // Neighbour not ready yet (fast flipping): compute it now.
         const s = dir > 0 ? await this._nextSpread(this._cur.spread) : await this._prevSpread(this._cur.spread);
@@ -943,6 +946,7 @@ export class Interaction {
       this._next = dir > 0 ? null : old;
       await this.book3d.turn(dir, { left: target.left, right: target.right });
       this._afterTurn();
+      perf.event('turn', { t: t0, ms: performance.now() - t0, prepared });
     } finally {
       this._turnBusy = false;
     }
@@ -1096,14 +1100,19 @@ export class Interaction {
   async _rebuildWorld() {
     this._pendingCatalog = false;
     this.state = 'busy';
+    const t = { start: performance.now() };
     try {
       await this._fadeTo(1, 0.15);
+      t.dark = performance.now();
       const kiosk = { position: this.world.kiosk.position.clone(), yaw: this.world.kiosk.yaw };
       this._hoveredBook = null;
       this._highlightUntil = 0;
       this.tooltip.visible = false;
       const collections = collectionsFor(this.libraries, this.booksByLib, this.settings);
-      await this.world.build(collections, { sort: this.settings.sort });
+      const built = this.world.build(collections, { sort: this.settings.sort });
+      t.built = performance.now(); // the synchronous part: packing, geometry, signs
+      await built; // the low atlases from the worker
+      t.ready = performance.now();
       this.placeKiosk();
       const to = this.world.kiosk;
       const viewer = this.controls.viewerPosition(new THREE.Vector3())
@@ -1113,6 +1122,10 @@ export class Interaction {
       this._fillKiosk();
       await this._tween(0.08, () => {}); // a few frames in the dark: the heavy first render
       await this._fadeTo(0, 0.3);
+      perf.event('rebuild', {
+        t: t.start, ms: performance.now() - t.start, place: this.settings.place, bookcases: this.world.shelves.cases.length,
+        fadeOutMs: t.dark - t.start, buildSyncMs: t.built - t.dark, lowsMs: t.ready - t.built,
+      });
     } finally {
       this._fade.material.opacity = 0;
       this._fade.visible = false;

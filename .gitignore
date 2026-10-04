@@ -8,3 +8,6 @@ node_modules/
 Thumbs.db
 # derived indexes (Wikisource works), rebuilt on demand
 .cache/
+
+# Performance dumps from tools/quest-perf.mjs
+perf/

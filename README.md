@@ -130,5 +130,35 @@ node --test test/zim.test.js
   can be exercised in a desktop browser. `window.__vrlbry` exposes the app for scripted tests;
   `__vrlbry.tick(dt, n)` advances frames manually when the page is not being painted.
 
+## Measuring performance on a Quest
+
+`/?perf` turns on a recorder in the page: every frame's timing, room switches, atlas painting,
+page turns, long tasks and memory. `tools/quest-perf.mjs` reads it from the headset over adb,
+together with the headset's own per-second numbers (FPS, stale frames, CPU/GPU load,
+temperature), the browser's memory and the battery, and saves one JSON file in `perf/`.
+
+Connect the Quest by USB (or adb over Wi-Fi), allow USB debugging for this computer, keep the
+server running, then:
+
+```bash
+node tools/quest-perf.mjs run --open
+```
+
+`--open` opens `http://localhost:8080/?perf` in Quest Browser (through `adb reverse`). Put the
+headset on and press **Enter VR**; the script then runs a fixed set of scenarios: standing in
+the smallest room, gliding along the aisles of a 3,000-book room, switching filters, entering,
+standing in and walking the all-libraries hall, and reading 20 pages. They take about four
+minutes, move you around smoothly, and put your settings back at the end. Use `--only
+small-idle,read` to run some of them.
+
+```bash
+node tools/quest-perf.mjs dump
+```
+
+`dump` saves what was recorded while you used the library yourself (opened with `?perf`), and
+`status` just checks the connection. `node tools/quest-perf.mjs --help` lists all options;
+`--cdp http://127.0.0.1:9222` runs the same against a desktop browser started with
+`--remote-debugging-port=9222` (with `?xr=emulate&perf` for an emulated headset).
+
 [SPEC.md](SPEC.md) describes the module contracts (ZIM reader, content format, HTTP API, client
 modules); [CLAUDE.md](CLAUDE.md) is a shorter architecture overview.

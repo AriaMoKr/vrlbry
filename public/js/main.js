@@ -10,6 +10,7 @@ import { audio } from './audio.js';
 import { load } from './util/storage.js';
 import { PLAYER } from './config.js';
 import { collectionsFor } from './rooms.js';
+import { perf } from './perf.js';
 
 const params = new URLSearchParams(location.search);
 const overlay = new Overlay({ root: document.getElementById('overlay') });
@@ -209,10 +210,13 @@ async function start() {
     world.update(dt, camera);
   };
   renderer.setAnimationLoop((time) => {
+    const start = perf.enabled ? performance.now() : 0;
     timer.update(time);
     const dt = Math.min(0.1, timer.getDelta());
+    if (perf.enabled) perf.beforeFrame(dt);
     step(dt);
     renderer.render(scene, camera);
+    if (perf.enabled) perf.afterFrame(time, start, renderer.info.render);
   });
 
   window.__vrlbry = {
@@ -223,6 +227,20 @@ async function start() {
       renderer.render(scene, camera);
     },
   };
+  // ?perf: record frame timing and events for tools/quest-perf.mjs (window.__vrlbry.perf).
+  if (params.has('perf')) {
+    perf.start({
+      renderer,
+      context: () => ({
+        place: settings.place, rooms: settings.rooms, sort: settings.sort, state: interaction.state,
+        room: world.room?.kind ?? null, bookcases: world.shelves.cases.length, books: world.shelves.books().length,
+        lod: world.shelves.lodStats(), atlasWorker: !!world.shelves._worker,
+      }),
+    });
+    perf.run = async (only) => (await import('./perf-scenarios.js')).runScenarios(window.__vrlbry, { only });
+    window.__vrlbry.perf = perf;
+    overlay.showToast('Recording performance (?perf)', 'info', 4000);
+  }
   overlay.setLoading(null);
   if (!libraries.length) overlay.showToast('No .zim files found in the server folder.', 'error', 8000);
 }

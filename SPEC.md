@@ -845,3 +845,18 @@ States: `browse` → `inspect` → `read` (and back).
   just refresh texts.
 - `renderer.setAnimationLoop(tick)`: `dt` clamped to 0.1 s; update order: controls → interaction →
   world → render.
+- `?perf` (`perf.js`): a recorder, a no-op unless started, exposed as `__vrlbry.perf`.
+  - Per frame (ring buffer, 20 min at 72 Hz): start time, interval between frame timestamps (XR
+    or rAF time), main-thread cost of the callback, draw calls, triangles (both eyes in VR).
+  - Events with durations: `rebuild` (fade-out, synchronous build, waiting for the low atlases),
+    `lows`, `atlas` (per level, worker or main thread), `turn`.
+  - Segments (scenarios), long tasks and JS heap samples.
+  - `summary()` gives frame statistics per segment (fps, interval percentiles, dropped frames
+    against the session's frame rate, JS cost, draw calls) and each rebuild's worst frame gap;
+    `dump()` returns everything as JSON.
+  - `perf.run(only)` loads `perf-scenarios.js`: small-idle, room-walk, filters, all-enter,
+    all-idle, all-walk, read. The viewer glides along the aisles at 1.2 m/s, and the settings are
+    restored afterwards.
+  - `tools/quest-perf.mjs` (Node, adb) forwards the Quest Browser's DevTools socket, runs or reads
+    the recorder over CDP, adds the VrApi per-second log, `dumpsys meminfo` / `battery` snapshots
+    (one at the end of each scenario) and device info, and writes `perf/quest-<time>.json`.

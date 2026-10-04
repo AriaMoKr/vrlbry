@@ -27,6 +27,7 @@ node --test --test-name-pattern="redirect" test/zim.test.js   # tests matching a
 - WebXR needs a secure context. `http://localhost` works. A headset on the LAN needs `https://<ip>:8443`, or `adb reverse tcp:8080 tcp:8080`.
 - The embedded browser pane rejects the self-signed certificate, so use the HTTP port (8080) for browser testing.
 - Dev pages: `/reader-test.html` is a 2D reader built on the page renderer, and `/dev/world-test.html` shows the room with an orbit camera.
+- **Performance on the headset:** `/?perf` turns on the recorder (`public/js/perf.js`, exposed as `__vrlbry.perf`). `node tools/quest-perf.mjs run --open` (or `dump` / `status`) collects it over adb with the VrApi log, memory and battery figures, and writes `perf/quest-*.json` (gitignored). `--cdp <url>` targets a desktop browser instead. Instrument new heavy work with `perf.event(name, { t, ms, … })`, which does nothing unless recording.
 - **Scripted testing:**
   - Append `?xr=emulate` to the app URL to install Meta's IWER WebXR emulator (a virtual Quest 3). It is installed with `forceInstall`, because Chromium exposes a native `navigator.xr` even without a headset.
   - The app exposes `window.__vrlbry` (renderer, scene, camera, rig, world, controls, interaction, overlay, xrDevice, settings, `enterVR()`, `tick(dt, n)`).
