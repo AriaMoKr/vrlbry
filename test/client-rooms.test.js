@@ -151,6 +151,9 @@ describe('rooms', () => {
     const other = { id: 'gutenberg_en_lcc-pe_2026-03', kind: 'gutenberg', title: 'PE' };
     assert.equal(isDemoLibrary(demoPg), true);
     assert.equal(isDemoLibrary(other), false, 'lcc-pe is not lcc-p');
+    assert.equal(isDemoLibrary({ id: 'wikipedia_en_physics_mini_2026-07' }), true);
+    assert.equal(isDemoLibrary({ id: 'wikipedia_en_chemistry_mini_2026-07' }), true);
+    assert.equal(isDemoLibrary({ id: 'wikipedia_en_physics_nopic_2026-07' }), false, 'only the mini editions');
     const vols = [1, 2].map((v) => ({ id: 'v' + v, title: 'Range ' + (3 - v), volume: v }));
     const books = { [demoPg.id]: pgBooks, [demoWp.id]: vols, [other.id]: pgBooks };
     const libs = [other, demoPg, demoWp];

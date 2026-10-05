@@ -21,7 +21,9 @@ export const ALL_PLACE = { id: '*', title: 'All libraries', kind: 'all' };
  * newer edition of a demo ZIM still belongs to it.
  */
 export const DEMO_PLACE = { id: 'demo', title: 'Demo set', kind: 'demo' };
-export const DEMO_LIBRARIES = ['gutenberg_en_lcc-p_', 'wikipedia_en_mathematics_mini_'];
+export const DEMO_LIBRARIES = [
+  'gutenberg_en_lcc-p_', 'wikipedia_en_mathematics_mini_', 'wikipedia_en_physics_mini_', 'wikipedia_en_chemistry_mini_',
+];
 export const isDemoLibrary = (library) => DEMO_LIBRARIES.some((prefix) => library.id.startsWith(prefix));
 
 /** Places that shelve several libraries together: which libraries each takes, and when it exists. */
