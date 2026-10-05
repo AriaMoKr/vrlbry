@@ -74,8 +74,8 @@
     pushes to `main`, at https://ariamokr.github.io/vrlbry/ once Pages' source is set to GitHub
     Actions.
   - *Step 1 (done):* the demo set is pre-rendered into the site (`build:pages -- --zims`):
-    every book list, chunk and image as a static file (~220 MB, 81,000 files, ~3 min to build,
-    with Physics and Chemistry), with Wikipedia title search in the browser. No redirect aliases (the server searches
+    every book list, chunk and image as a static file (~270 MB, 85,000 files, ~3 min to build,
+    with Physics, Chemistry and Wikipedia 100), with Wikipedia title search in the browser. No redirect aliases (the server searches
     those in the ZIM's URL index), and nothing beyond the files the build saved: reading ZIMs in
     the browser is the next step.
   - *Demo set* (chosen 2026-10-05, 93 MB together, both under the 100 MB file limit):
@@ -92,5 +92,8 @@
       59 MB on the site) and Chemistry, mini (10 volumes, 9,255 articles, 24 MB; 19 MB):
       https://mirror.download.kiwix.org/zim/wikipedia/wikipedia_en_physics_mini_2026-07.zim
       https://mirror.download.kiwix.org/zim/wikipedia/wikipedia_en_chemistry_mini_2026-07.zim
-      The four make four bookcases. Converted sizes so far: Gutenberg ~0.6× the ZIM (its EPUB
+      Also Wikipedia 100 (101 full articles with pictures, one volume; 318 MB, but only 49 MB on
+      the site: the articles use 3,600 of its images):
+      https://mirror.download.kiwix.org/zim/wikipedia/wikipedia_en_100_2026-08.zim
+      The five make five bookcases. Converted sizes so far: Gutenberg ~0.6× the ZIM (its EPUB
       copies are not used), Wikipedia minis 0.8–2.1× (Mathematics has 18,000 formula images).

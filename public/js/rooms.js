@@ -17,14 +17,17 @@ export const ROOM_CAP = 3000;
 export const ALL_PLACE = { id: '*', title: 'All libraries', kind: 'all' };
 /**
  * The demo set (see TODO: a small set for a version without a server): its libraries shelved
- * together, like ALL_PLACE. Libraries are matched by the start of their id (the file name), so a
- * newer edition of a demo ZIM still belongs to it.
+ * together, like ALL_PLACE. Libraries are matched by their id (the file name) without its date, so
+ * a newer edition of a demo ZIM still belongs to it, but another flavour does not
+ * (wikipedia_en_100_mini_2026-08 is not wikipedia_en_100_).
  */
 export const DEMO_PLACE = { id: 'demo', title: 'Demo set', kind: 'demo' };
 export const DEMO_LIBRARIES = [
   'gutenberg_en_lcc-p_', 'wikipedia_en_mathematics_mini_', 'wikipedia_en_physics_mini_', 'wikipedia_en_chemistry_mini_',
+  'wikipedia_en_100_',
 ];
-export const isDemoLibrary = (library) => DEMO_LIBRARIES.some((prefix) => library.id.startsWith(prefix));
+export const isDemoLibrary = (library) => DEMO_LIBRARIES.some((name) => library.id.startsWith(name)
+  && /^\d{4}-\d{2}$/.test(library.id.slice(name.length)));
 
 /** Places that shelve several libraries together: which libraries each takes, and when it exists. */
 const GROUPS = [
