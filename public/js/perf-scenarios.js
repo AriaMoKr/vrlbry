@@ -11,6 +11,7 @@ import { save } from './util/storage.js';
 export const SCENARIOS = ['small-idle', 'room-walk', 'filters', 'all-enter', 'all-idle', 'all-walk', 'read', 'wiki-walk', 'wiki-read'];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const NOTICE_S = 3; // the starting notice, shown before the first scenario
 
 /**
  * A loop through a room's free floor, as {x, z} points: in a hall up a side aisle, across the
@@ -108,6 +109,9 @@ export async function runScenarios(app, { only = null } = {}) {
 
   try {
     if (I.state === 'inspect' || I.state === 'read') await I.putBack();
+    // Tell the wearer, in the headset, before anything moves (and before any measuring).
+    I.notice('Performance test starting', 'The view moves by itself for a few minutes', NOTICE_S);
+    await sleep(NOTICE_S * 1000 + 300);
 
     await scenario('small-idle', async () => {
       await goTo(small.id);
@@ -205,6 +209,7 @@ export async function runScenarios(app, { only = null } = {}) {
     save('settings', settings);
     await I._rebuildWorld();
     atSpawn();
+    I.notice('Performance test finished', 'Thank you: the results are being saved', 8);
     log('done');
   }
   return ran;

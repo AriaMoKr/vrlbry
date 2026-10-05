@@ -1002,7 +1002,10 @@ States: `browse` → `inspect` → `read` (and back).
     all-idle, all-walk, read (small-idle and read use the smallest library that is not a
     Wikipedia), and, when a Wikipedia is present, wiki-walk and wiki-read in the largest one
     (wiki-read opens the middle volume, then jumps to its longest article). The viewer glides
-    along the aisles at 1.2 m/s, and the settings are restored afterwards.
+    along the aisles at 1.2 m/s, and the settings are restored afterwards. A notice in front of the
+    viewer (`interaction.notice`, visible in the headset) says "Performance test starting" for
+    3 s before the first scenario (outside every segment) and "Performance test finished" at the
+    end.
   - `tools/quest-perf.mjs` (Node, adb) forwards the Quest Browser's DevTools socket, runs or reads
     the recorder over CDP, adds the VrApi per-second log, `dumpsys meminfo` / `battery` snapshots
     (one at the end of each scenario) and device info, and writes `perf/quest-<time>.json`.

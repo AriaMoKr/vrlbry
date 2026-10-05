@@ -1297,6 +1297,22 @@ export class Interaction {
     if (this.state === 'inspect') await this.read({ at: { c: n, b: 0 } });
   }
 
+  /**
+   * A short message floating in front of the viewer for `seconds`: unlike the DOM overlay's
+   * toasts, it shows in the headset too.
+   */
+  notice(title, sub = '', seconds = 4) {
+    if (!this._notice) {
+      this._notice = new Label({ width: 0.8, height: 0.16 });
+      this._notice.mesh.name = 'notice';
+      this._notice.mesh.position.set(0, -0.08, -1.1); // head-locked, a little below the eyes
+      this.camera.add(this._notice.mesh);
+    }
+    this._notice.setText(title, sub);
+    this._notice.visible = true;
+    this._noticeUntil = this._time + seconds;
+  }
+
   /** Search result: go there and highlight it; take it out (by default on non-XR). */
   async searchPick(book, { take = !this.controls.presenting } = {}) {
     if (this.state === 'inspect' || this.state === 'read') await this.putBack();
@@ -1533,6 +1549,7 @@ export class Interaction {
 
     for (const p of [this.kiosk, this.inspectPanel, this.toolbar, this.tocPanel]) if (p.visible) p.update();
     if (this.tooltip.visible) this.tooltip.panel.update();
+    if (this._notice?.visible && this._time >= this._noticeUntil) this._notice.visible = false;
   }
 }
 

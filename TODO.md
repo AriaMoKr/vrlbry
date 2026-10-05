@@ -35,15 +35,16 @@
   worker threads), and check the memory of the 6.8 M-title sort.
 - **Wikipedia: follow links** (later). Tapping a link in an article goes to that article, taking
   its volume off the shelf if needed. The reader cannot follow links today.
-- **Dropped frames while walking.** A Quest 3 drops ~5 % of frames walking an ordinary room and
-  ~9 % in the all-libraries hall. Run 2026-10-05 03:09: garbage collection explains few of them
-  (12 of 349 walking the hall), but 343 of 406 spine atlas jobs had a dropped frame in the 3
-  frames before the atlas arrived (194 of the 349). Now: the worker paints on a software canvas,
-  and walking starts no sharp atlases and at most one mid atlas per second. Measure on the Quest
-  (`quest-perf run` prints the atlas stalls); `?atlas=gpu` compares with the GPU canvas.
-- **All-libraries hall draw calls.** Cut at the entrance from 182 to 52 per eye (desktop
-  measurement, 2026-10-04): one draw call per sign, and bookcases behind a nearer row are not
-  drawn. Confirm on the Quest; the room itself (chandeliers, walls, wainscots, ~31 calls) could
-  still be merged per material.
+- **Garbage collection pauses** are now the main source of dropped frames on a Quest 3. The
+  atlas stalls are fixed (run 2026-10-05 03:37: walking the hall 9.1 % → 0.1 % dropped, an
+  ordinary room 5.4 % → 1.8 %, no drop before an atlas arrived, down from 343 of 406), and of
+  what is left, GC pauses were in 35 of 44 dropped frames walking an ordinary room, 72 of 86
+  switching filters, and 61 of 68 entering the all-libraries hall (its rebuild). Next: find what
+  allocates in those (`quest-perf run` traces GC per scenario; a heap profile of a room switch
+  and of a walk), and allocate less: reuse objects in per-frame code, build rooms with fewer
+  temporary arrays.
+- **All-libraries hall draw calls.** On the Quest: 380 → 104 standing (both eyes), 142 → 56
+  walking, with one draw call per sign and no books drawn behind a nearer row. The room itself
+  (chandeliers, walls, wainscots, ~31 calls per eye) could still be merged per material.
 - **Server code review.** An earlier review recorded 5 minor findings that were never fixed, and
   3 of its reviewers never finished.
