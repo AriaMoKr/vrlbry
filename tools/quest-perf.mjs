@@ -230,6 +230,44 @@ export function summarizeGc(pauses, page) {
 }
 
 /**
+ * Dropped frames around spine atlas jobs (the "atlas" events: painted in the worker, then uploaded
+ * in the frame that applies them), per segment and overall: of the jobs, how many had a dropped
+ * frame in the 3 frames before the atlas was applied (the worker finishing and handing over its
+ * bitmap) and in the apply frame or the next (the upload), with what chance alone would give.
+ */
+export function atlasStalls(page) {
+  const expected = page.summary?.expectedIntervalMs || 1000 / 72;
+  const F = page.frames || { t: [], interval: [] };
+  const jobs = (page.events || []).filter((e) => e.name === 'atlas');
+  const dropped = (i) => F.interval[i] > expected * 1.5;
+  const span = (t0, t1) => {
+    const idx = [];
+    for (let i = 0; i < F.t.length; i++) if (F.t[i] >= t0 && F.t[i] < t1) idx.push(i);
+    const rate = idx.length ? idx.filter(dropped).length / idx.length : 0;
+    let n = 0;
+    let before = 0;
+    let after = 0;
+    let k = 0;
+    for (const e of [...jobs].sort((a, b) => a.t + a.ms - (b.t + b.ms))) {
+      const applied = e.t + e.ms; // inside the frame that applies it
+      if (applied < t0 || applied >= t1) continue;
+      while (k < idx.length && F.t[idx[k]] < applied) k++; // idx[k]: the next frame
+      if (k < 3 || k + 1 >= idx.length) continue;
+      n++;
+      if (dropped(idx[k - 1]) || dropped(idx[k - 2]) || dropped(idx[k - 3])) before++;
+      if (dropped(idx[k]) || dropped(idx[k + 1])) after++;
+    }
+    return { jobs: n, before, after, chanceBefore: round2(n * (1 - (1 - rate) ** 3)), chanceAfter: round2(n * (1 - (1 - rate) ** 2)) };
+  };
+  const t0 = F.t.length ? F.t[0] : 0;
+  const t1 = F.t.length ? F.t[F.t.length - 1] + 1 : 0;
+  return {
+    overall: span(t0, t1),
+    segments: (page.segments || []).filter((s) => s.t1 != null).map((s) => ({ name: s.name, ...span(s.t0, s.t1) })),
+  };
+}
+
+/**
  * Starts tracing V8's GC events in the page; stop() ends it and returns its GC pauses (in the
  * page's performance.now() time), or null when the browser does not trace.
  */
@@ -479,6 +517,13 @@ function printSummary(dump) {
     gcLine('overall', dump.gc.summary.overall);
     for (const seg of dump.gc.summary.segments) gcLine(seg.name, seg);
   }
+  if (dump.atlasStalls?.overall.jobs) {
+    // Spine atlases: a drop just before one arrives was the worker handing over its bitmap.
+    console.log('\nSpine atlas jobs: a dropped frame in the 3 frames before one arrived · in its upload frame or the next:');
+    const atlasLine = (label, a) => console.log(`  ${label.padEnd(12)} ${String(a.jobs).padStart(4)} jobs · before ${a.before} (chance ${a.chanceBefore}) · upload ${a.after} (chance ${a.chanceAfter})`);
+    atlasLine('overall', dump.atlasStalls.overall);
+    for (const seg of dump.atlasStalls.segments) if (seg.jobs) atlasLine(seg.name, seg);
+  }
   if (dump.vrapiSummary) {
     const v = dump.vrapiSummary;
     console.log(`\nHeadset (VrApi, ${v.seconds} s): ${v.fpsAvg} fps avg (min ${v.fpsMin}, target ${v.fpsTarget}) · stale ${v.staleTotal}`
@@ -600,6 +645,7 @@ async function main() {
     const pauses = await gcTrace?.stop();
     dump.page = await cdp.eval('window.__vrlbry.perf.dump()');
     if (pauses) dump.gc = { pauses, summary: summarizeGc(pauses, dump.page) };
+    dump.atlasStalls = atlasStalls(dump.page);
     if (useAdb) {
       dump.vrapi = logger ? logger.stop() : await vrApiBacklog(opts);
       logger = null;

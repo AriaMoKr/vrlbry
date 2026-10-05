@@ -5,7 +5,7 @@ import { describe, it } from 'node:test';
 import { Recorder, MAX_FRAMES } from '../public/js/perf.js';
 import {
   devtoolsSockets, parseVrApiLine, parseMeminfo, parseBattery, summarizeVrApi, parseAdbDevices, isNetworkSerial,
-  keepTraceEvent, gcPauses, summarizeGc, TRACE_SYNC_MARK,
+  keepTraceEvent, gcPauses, summarizeGc, TRACE_SYNC_MARK, atlasStalls,
 } from '../tools/quest-perf.mjs';
 
 const HZ72 = 1000 / 72;
@@ -198,6 +198,30 @@ Total RSS by OOM adjustment:
     assert.equal(g.overall.pauses, 2);
     const steps = summarizeGc([...pauses, { t: 700, ms: 0.2, major: true, name: 'V8.GCIncrementalMarking' }], page);
     assert.deepEqual([steps.overall.pauses, steps.overall.steps], [2, 1], 'marking steps are not pauses');
+  });
+
+  it('relates dropped frames to spine atlas jobs: before they arrive, and at their upload', () => {
+    // 100 frames at 13.9 ms; two atlas jobs applied in frames 40 and 70. Frame 39 dropped (just
+    // before the first arrived), frame 71 dropped (right after the second was uploaded).
+    const t = [];
+    const interval = [];
+    let x = 0;
+    for (let i = 0; i < 100; i++) {
+      const iv = i === 39 || i === 71 ? 41.7 : 13.9;
+      x += iv;
+      t.push(x);
+      interval.push(iv);
+    }
+    const applied = (i) => t[i] + 1; // during frame i
+    const page = {
+      summary: { expectedIntervalMs: 13.9 }, frames: { t, interval },
+      events: [{ name: 'atlas', t: applied(40) - 150, ms: 150 }, { name: 'atlas', t: applied(70) - 150, ms: 150 }, { name: 'turn', t: 0, ms: 1 }],
+      segments: [{ name: 'a', t0: 0, t1: t[99] + 1 }],
+    };
+    const a = atlasStalls(page);
+    assert.deepEqual([a.overall.jobs, a.overall.before, a.overall.after], [2, 1, 1]);
+    assert.deepEqual(a.segments.map((s) => [s.name, s.jobs]), [['a', 2]]);
+    assert.ok(a.overall.chanceBefore > 0 && a.overall.chanceBefore < 0.2);
   });
 
   it('reads the battery level and temperature', () => {

@@ -59,6 +59,15 @@ const JOB_BUDGET_MS = 3; // canvas painting per frame, when painting on the main
 // out; the rest show the low one.
 const MID_BUDGET = 64;
 const MID_SLACK = 16;
+// While the viewer walks, atlases change less (each finished atlas risked a dropped frame on a
+// Quest 3): no new sharp ones, and at most one mid atlas per MID_MOVING_INTERVAL s in a large
+// room. Standing still, they catch up at once.
+const MOVING_SPEED = 0.4; // m/s (horizontal, smoothed) above which the viewer is walking
+const STILL_SPEED = 0.15; // … and below which they stand still again
+const TELEPORT_SPEED = 10; // m/s: a jump this fast is a teleport, not walking
+const MID_MOVING_INTERVAL = 1;
+/** ?atlas=gpu: paint atlases on a GPU-backed canvas in the worker (the old way, for comparison). */
+const ATLAS_GPU = typeof location !== 'undefined' && /[?&]atlas=gpu(&|$)/.test(location.search);
 
 let placeholderTex = null;
 /**
@@ -369,7 +378,7 @@ export class AtlasWorker {
           : { id: book.id, title: book.title, author: book.author },
         dims,
       }));
-      this.worker.postMessage({ id, layout, items: slim, label, scale });
+      this.worker.postMessage({ id, layout, items: slim, label, scale, gpu: ATLAS_GPU });
     });
   }
 
@@ -769,6 +778,8 @@ export class Bookshelves {
    */
   update(dt, camera) {
     if (!camera || !this.cases.length) return;
+    this._clock = (this._clock || 0) + dt;
+    this._trackSpeed(camera.getWorldPosition(this._tmp), dt);
     this._cull(camera.getWorldPosition(this._tmp));
     if (this._job) {
       const job = this._job;
@@ -789,7 +800,7 @@ export class Bookshelves {
     const far = sharp[sharp.length - 1];
     if (!small && far && far.d > HIGH_RANGE + HYSTERESIS) return this._drop(far.cs, 'high');
     const want = ranked.find((r) => (small || r.d < HIGH_RANGE) && !r.cs.textures.high);
-    if (want) {
+    if (want && (small || !this._moving)) {
       if (sharp.length < HIGH_BUDGET) return this._startJob(want.cs, 'high');
       if (want.d < far.d - HYSTERESIS) {
         this._drop(far.cs, 'high');
@@ -803,7 +814,25 @@ export class Bookshelves {
       candidates = ranked.slice(0, MID_BUDGET);
     }
     const mid = candidates.find((r) => !r.cs.textures.mid);
-    if (mid) this._startJob(mid.cs, 'mid');
+    if (!mid) return;
+    if (this._moving && this.cases.length > MID_BUDGET && this._clock - (this._midAt ?? -Infinity) < MID_MOVING_INTERVAL) return;
+    this._midAt = this._clock;
+    this._startJob(mid.cs, 'mid');
+  }
+
+  /** The viewer's smoothed horizontal speed, and whether they are walking (with hysteresis). */
+  _trackSpeed(cam, dt) {
+    if (this._lastCam && dt > 0) {
+      const v = Math.hypot(cam.x - this._lastCam.x, cam.z - this._lastCam.z) / dt;
+      if (v < TELEPORT_SPEED) this._speed = (this._speed || 0) + (v - (this._speed || 0)) * Math.min(1, dt * 5);
+    }
+    (this._lastCam ||= new THREE.Vector3()).copy(cam);
+    if (this._moving && this._speed < STILL_SPEED) {
+      this._moving = false;
+      this._lodTimer = 0; // catch up at once
+    } else if (!this._moving && this._speed > MOVING_SPEED) {
+      this._moving = true;
+    }
   }
 
   /**
@@ -845,7 +874,12 @@ export class Bookshelves {
     this._job = null;
     perf.event('atlas', { t: t0, ms: performance.now() - t0, level, worker: !painter });
     const aniso = level === 'high' ? Math.min(4, this.renderer.capabilities.getMaxAnisotropy()) : 2;
-    cs.textures[level] = canvasTexture(painter ? painter.canvas : image, { anisotropy: aniso });
+    const tex = canvasTexture(painter ? painter.canvas : image, { anisotropy: aniso });
+    cs.textures[level] = tex;
+    // Upload now, timed: otherwise it happens unseen inside the next render.
+    const u0 = performance.now();
+    this.renderer.initTexture?.(tex);
+    perf.event('upload', { t: u0, ms: performance.now() - u0, level });
     this._applyTexture(cs);
   }
 

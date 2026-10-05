@@ -37,9 +37,11 @@ let pageEdge = null;
  * Paints an atlas at `scale` (1 = full resolution) incrementally: `step(budgetMs)` paints spines
  * until the time budget is used and returns true once the atlas is complete.
  */
-export function atlasPainter(layout, items, labelText, scale) {
+export function atlasPainter(layout, items, labelText, scale, { cpu = false } = {}) {
   const c = newCanvas(Math.max(4, Math.round(layout.width * scale)), Math.max(4, Math.round(layout.height * scale)));
-  const g = c.getContext('2d');
+  // cpu: a software canvas (rasterized on this thread). The worker uses it: a GPU canvas is
+  // rasterized in the GPU process when its bitmap is taken, which the headset's frames also need.
+  const g = c.getContext('2d', cpu ? { willReadFrequently: true } : undefined);
   g.scale(scale, scale);
   g.fillStyle = '#2a1a10';
   g.fillRect(0, 0, layout.width, layout.height);

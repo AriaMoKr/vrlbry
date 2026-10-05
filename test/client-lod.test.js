@@ -158,6 +158,30 @@ describe('spine atlas LOD', () => {
       shelves.dispose();
     }
   });
+
+  it('while walking: no new sharp atlases, mid ones at most once a second; catches up when still', () => {
+    const shelves = shelvesWith(110); // more bookcases than the mid budget (64), like the hall
+    try {
+      assert.ok(shelves.cases.length > 64, `${shelves.cases.length} bookcases`);
+      run(shelves, camAt(0, 0), 72 * 2);
+      const started = [];
+      const orig = shelves._startJob.bind(shelves);
+      shelves._startJob = (cs, level) => { started.push([shelves._clock, level]); return orig(cs, level); };
+      // Walk a straight line at 1.2 m/s for 10 s.
+      for (let i = 0; i < 72 * 10; i++) shelves.update(1 / 72, camAt(-6 + (i / 72) * 1.2, 0));
+      const walking = started.filter(([t]) => t > shelves._clock - 9.5); // once up to speed
+      assert.equal(walking.filter(([, l]) => l === 'high').length, 0, 'no sharp atlases while walking');
+      const mids = walking.filter(([, l]) => l === 'mid').map(([t]) => t);
+      for (let k = 1; k < mids.length; k++) assert.ok(mids[k] - mids[k - 1] >= 0.99, 'mid atlases at most once a second');
+      assert.ok(mids.length >= 5, `but some still come: ${mids.length}`);
+      // Standing still, the sharp ones come at once.
+      started.length = 0;
+      run(shelves, camAt(6, 0), 72 * 3);
+      assert.ok(started.some(([, l]) => l === 'high'), 'sharp atlases once still');
+    } finally {
+      shelves.dispose();
+    }
+  });
 });
 
 /** A stand-in for the atlas worker: answers each paint() on a later turn with a fake bitmap. */

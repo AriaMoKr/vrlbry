@@ -35,10 +35,12 @@
   worker threads), and check the memory of the 6.8 M-title sort.
 - **Wikipedia: follow links** (later). Tapping a link in an article goes to that article, taking
   its volume off the shelf if needed. The reader cannot follow links today.
-- **Dropped frames while walking.** A Quest 3 still drops ~4 % of frames walking an ordinary room
-  and ~8 % in the all-libraries hall, with no clear cause since atlas uploads were fixed.
-  `quest-perf run` now traces garbage collection and counts the dropped frames that had a GC
-  pause in them, per scenario: run it on the Quest to see whether GC explains the drops.
+- **Dropped frames while walking.** A Quest 3 drops ~5 % of frames walking an ordinary room and
+  ~9 % in the all-libraries hall. Run 2026-10-05 03:09: garbage collection explains few of them
+  (12 of 349 walking the hall), but 343 of 406 spine atlas jobs had a dropped frame in the 3
+  frames before the atlas arrived (194 of the 349). Now: the worker paints on a software canvas,
+  and walking starts no sharp atlases and at most one mid atlas per second. Measure on the Quest
+  (`quest-perf run` prints the atlas stalls); `?atlas=gpu` compares with the GPU canvas.
 - **All-libraries hall draw calls.** Cut at the entrance from 182 to 52 per eye (desktop
   measurement, 2026-10-04): one draw call per sign, and bookcases behind a nearer row are not
   drawn. Confirm on the Quest; the room itself (chandeliers, walls, wainscots, ~31 calls) could

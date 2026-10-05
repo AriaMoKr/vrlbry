@@ -752,10 +752,17 @@ export class Book3D {
   bookcases (e.g. the 258-book Gutenberg room) fits the budget: all its bookcases get sharp
   atlases regardless of distance and keep them, and the mid level is skipped. A room of more than
   64 bookcases (only the all-libraries place) keeps mid atlases for the 64 nearest only, dropping
-  one once it is more than 80th nearest. Every frame, the books of bookcases the viewer stands
+  one once it is more than 80th nearest. While the viewer walks (smoothed horizontal speed above
+  0.4 m/s, until it falls below 0.15 m/s; a teleport is not walking), no sharp atlas is started
+  and, in a room of more than 64 bookcases, at most one mid atlas per second; standing still,
+  they catch up at once. On a Quest 3 nearly every finished atlas (343 of 406 in one run) had a
+  dropped frame in the three frames before it arrived. Every frame, the books of bookcases the viewer stands
   behind (behind the bookcase's mid-plane, where its back and side panels hide every book) are
   not drawn: about half of a hall. Atlases are painted in a module worker on an OffscreenCanvas
-  (`atlas-worker.js`), and the main thread only uploads them. The worker returns an `ImageBitmap`
+  (`atlas-worker.js`), and the main thread only uploads them, at once and timed (`initTexture`,
+  an `upload` perf event). The worker's canvas is a software one (`willReadFrequently`): a
+  GPU-backed canvas is rasterized in the GPU process when its bitmap is taken, which the
+  headset's frames also need (`?atlas=gpu` restores it, for comparison). The worker returns an `ImageBitmap`
   in exactly the layout three.js uploads: `imageOrientation: 'flipY'` (WebGL ignores `flipY` for
   bitmaps), `premultiplyAlpha: 'none'` and `colorSpaceConversion: 'none'`. With the defaults, the
   browser converted each bitmap on the main thread at `texImage2D`, and on a Quest 3 half of the
@@ -999,6 +1006,9 @@ States: `browse` → `inspect` → `read` (and back).
   - `tools/quest-perf.mjs` (Node, adb) forwards the Quest Browser's DevTools socket, runs or reads
     the recorder over CDP, adds the VrApi per-second log, `dumpsys meminfo` / `battery` snapshots
     (one at the end of each scenario) and device info, and writes `perf/quest-<time>.json`.
+  - The dump's `atlasStalls` (printed too) gives, per scenario, the spine atlas jobs and how many
+    had a dropped frame in the 3 frames before the atlas was applied (the worker handing over its
+    bitmap) or in its upload frame or the next, against chance.
   - During `run` it also traces garbage collection over CDP (`Tracing`, categories `v8`,
     `disabled-by-default-v8.gc`, `blink.user_timing`; `--no-gc` turns it off). A
     `performance.mark` ties trace time to the page's `performance.now()`. The page's main-thread GC
