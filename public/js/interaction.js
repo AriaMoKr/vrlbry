@@ -13,7 +13,7 @@ import { load, save } from './util/storage.js';
 import { letterOf, SORT_MODES, inTitleOrder, thumbIndex } from './util/books.js';
 import { PAGE_PX, READ } from './config.js';
 import {
-  ALL_PLACE, collectionsFor, currentPlace, facetsOf, isFaceted, normRoom, placeBookCount, placeFor, roomLabel, sameRoom, unitOf, ROOM_CAP,
+  ALL_PLACE, collectionsFor, currentPlace, facetsOf, groupPlaces, isFaceted, normRoom, placeBookCount, placeFor, roomLabel, sameRoom, unitOf, ROOM_CAP,
 } from './rooms.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
@@ -307,17 +307,19 @@ export class Interaction {
     // One room per library…
     p.add({ type: 'text', x: pad, y, w: W - 2 * pad, h: 32, text: 'Libraries', size: 24, color: UI.muted });
     y += 38;
-    // With several libraries, one more place shelves them all together.
-    const places = this.libraries.length > 1 ? [...this.libraries, ALL_PLACE] : this.libraries;
+    // Places that shelve several libraries together: the demo set (when its ZIMs are here) and,
+    // with several libraries, all of them.
+    const groups = groupPlaces(this.libraries);
+    const places = [...this.libraries, ...groups];
     const libCols = Math.min(2, Math.max(1, places.length));
     const lw = (W - 2 * pad - (libCols - 1) * 10) / libCols;
     places.forEach((lib, i) => {
       const n = placeBookCount(lib, this.libraries, this.booksByLib);
       const busy = lib.indexing && lib.indexing.stage !== 'failed';
       const count = busy ? `indexing ${Math.round((lib.indexing.progress || 0) * 100)}%`
-        : `${n.toLocaleString()} ${unitOf(lib)}`;
+        : `${n.toLocaleString()} ${n === 1 ? unitOf(lib).slice(0, -1) : unitOf(lib)}`;
       p.add({
-        id: lib === ALL_PLACE ? 'place-all' : `place-${i}`, type: 'button', x: pad + (i % libCols) * (lw + 10), y: y + Math.floor(i / libCols) * 62,
+        id: groups.includes(lib) ? `place-${lib.kind}` : `place-${i}`, type: 'button', x: pad + (i % libCols) * (lw + 10), y: y + Math.floor(i / libCols) * 62,
         w: lw, h: 54, label: `${lib.title} · ${count}`, size: 23, active: place?.id === lib.id, disabled: !n,
         onClick: () => this.setPlace(lib.id),
       });
@@ -329,7 +331,9 @@ export class Interaction {
       const capped = this.world.sections.some((s) => s.shown < s.books);
       const text = capped
         ? `${place.title} share ${MAX_BOOKCASES} bookcases here: the small libraries whole, the first books of the large ones.`
-        : `${place.title} ${place === ALL_PLACE ? 'are' : 'is'} shelved whole in this room.`;
+        : place === ALL_PLACE ? 'All libraries are shelved whole in this room.'
+          : groups.includes(place) ? `The ${place.title.toLowerCase()} is shelved whole in this room.`
+            : `${place.title} is shelved whole in this room.`;
       p.add({ type: 'text', x: pad, y, w: W - 2 * pad, h: 90, text, size: 26, color: UI.muted, maxLines: 2 });
       return;
     }
@@ -406,7 +410,7 @@ export class Interaction {
     this.settings.place = libId;
     if (room) this.settings.rooms[libId] = room;
     save('settings', this.settings);
-    const lib = libId === ALL_PLACE.id ? ALL_PLACE : this.libraries.find((l) => l.id === libId);
+    const lib = groupPlaces(this.libraries).find((g) => g.id === libId) ?? this.libraries.find((l) => l.id === libId);
     const label = room ? `${lib?.title ?? ''}: ${roomLabel(room)}` : lib?.title ?? '';
     this.overlay?.showToast(`Opening ${label}…`, 'info', 2500);
     await new Promise((r) => setTimeout(r, 30)); // let the toast show before the rebuild

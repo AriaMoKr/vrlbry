@@ -75,4 +75,6 @@
     - Wikipedia Mathematics, mini (~41,000 article introductions, 56 MB):
       https://mirror.download.kiwix.org/zim/wikipedia/wikipedia_en_mathematics_mini_2026-06.zim
     Both read fine from that mirror over range requests (metadata and the Gutenberg book index:
-    ~20–30 requests, under 2 MB each). Use `download.kiwix.org/...` for plain downloads.
+    ~20–30 requests, under 2 MB each). Use `download.kiwix.org/...` for plain downloads. With
+    both in the folder, the kiosk's Rooms tab has a *Demo set* place shelving just them (19 books
+    and 24 volumes of 23,326 articles: two bookcases).

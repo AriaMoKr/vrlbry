@@ -15,6 +15,26 @@ export const ROOM_CAP = 3000;
  * ~18,000 books is ~160 bookcases, past the Quest's comfortable draw-call budget).
  */
 export const ALL_PLACE = { id: '*', title: 'All libraries', kind: 'all' };
+/**
+ * The demo set (see TODO: a small set for a version without a server): its libraries shelved
+ * together, like ALL_PLACE. Libraries are matched by the start of their id (the file name), so a
+ * newer edition of a demo ZIM still belongs to it.
+ */
+export const DEMO_PLACE = { id: 'demo', title: 'Demo set', kind: 'demo' };
+export const DEMO_LIBRARIES = ['gutenberg_en_lcc-p_', 'wikipedia_en_mathematics_mini_'];
+export const isDemoLibrary = (library) => DEMO_LIBRARIES.some((prefix) => library.id.startsWith(prefix));
+
+/** Places that shelve several libraries together: which libraries each takes, and when it exists. */
+const GROUPS = [
+  { place: DEMO_PLACE, includes: isDemoLibrary, exists: (libraries) => libraries.some(isDemoLibrary) },
+  { place: ALL_PLACE, includes: () => true, exists: (libraries) => libraries.length > 1 },
+];
+const groupOf = (place) => GROUPS.find((g) => g.place === place);
+
+/** The places that shelve several libraries together, as available with these libraries. */
+export function groupPlaces(libraries) {
+  return GROUPS.filter((g) => g.exists(libraries)).map((g) => g.place);
+}
 /** Libraries with more books than this are browsed by rooms. */
 export const FACET_MIN = 3000;
 
@@ -109,7 +129,8 @@ export function sameRoom(a, b) {
  * @returns {object|null} library descriptor
  */
 export function currentPlace(libraries, booksByLib, settings) {
-  if (settings.place === ALL_PLACE.id && libraries.length > 1) return ALL_PLACE;
+  const group = GROUPS.find((g) => g.place.id === settings.place);
+  if (group?.exists(libraries)) return group.place;
   let lib = libraries.find((l) => l.id === settings.place);
   if (!lib) lib = libraries.find((l) => (booksByLib[l.id] || []).length) || libraries[0] || null;
   settings.place = lib?.id ?? null;
@@ -126,8 +147,9 @@ export function collectionsFor(libraries, booksByLib, settings) {
   settings.rooms ||= {};
   const lib = currentPlace(libraries, booksByLib, settings);
   if (!lib) return [];
-  if (lib === ALL_PLACE) {
-    return libraries.filter((l) => booksByLib[l.id]?.length).map((library) => {
+  const group = groupOf(lib);
+  if (group) {
+    return libraries.filter((l) => group.includes(l) && booksByLib[l.id]?.length).map((library) => {
       const books = booksByLib[library.id];
       // Wikipedia volumes keep their own order (by article range) whatever the shelf order.
       const wiki = library.kind === 'wikipedia';
@@ -142,9 +164,10 @@ export function collectionsFor(libraries, booksByLib, settings) {
   }));
 }
 
-/** Number of books a place shelves in total (all libraries for ALL_PLACE). */
+/** Number of books a place shelves in total (every library of a group place). */
 export function placeBookCount(place, libraries, booksByLib) {
-  if (place === ALL_PLACE) return libraries.reduce((n, l) => n + (booksByLib[l.id]?.length || 0), 0);
+  const group = groupOf(place);
+  if (group) return libraries.reduce((n, l) => n + (group.includes(l) ? booksByLib[l.id]?.length || 0 : 0), 0);
   return booksByLib[place.id]?.length || 0;
 }
 

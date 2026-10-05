@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  ROOM_CAP, ALL_PLACE, placeBookCount, isFaceted, facetsOf, inRoom, defaultRoom, roomFor, roomLabel, sameRoom, normRoom, shelfCollections, collectionsFor,
+  ROOM_CAP, ALL_PLACE, DEMO_PLACE, groupPlaces, isDemoLibrary, placeBookCount, isFaceted, facetsOf, inRoom, defaultRoom, roomFor, roomLabel, sameRoom, normRoom, shelfCollections, collectionsFor,
   currentPlace, placeFor,
 } from '../public/js/rooms.js';
 
@@ -143,6 +143,28 @@ describe('rooms', () => {
     // With a single library there is no such place.
     assert.equal(currentPlace([pg], books, settings).id, 'pg');
     assert.equal(settings.place, 'pg');
+  });
+
+  it('shelves the demo set together when its libraries are here', () => {
+    const demoPg = { id: 'gutenberg_en_lcc-p_2026-03', kind: 'gutenberg', title: 'Language and literature' };
+    const demoWp = { id: 'wikipedia_en_mathematics_mini_2026-06', kind: 'wikipedia', title: 'Mathematics', articles: 23326 };
+    const other = { id: 'gutenberg_en_lcc-pe_2026-03', kind: 'gutenberg', title: 'PE' };
+    assert.equal(isDemoLibrary(demoPg), true);
+    assert.equal(isDemoLibrary(other), false, 'lcc-pe is not lcc-p');
+    const vols = [1, 2].map((v) => ({ id: 'v' + v, title: 'Range ' + (3 - v), volume: v }));
+    const books = { [demoPg.id]: pgBooks, [demoWp.id]: vols, [other.id]: pgBooks };
+    const libs = [other, demoPg, demoWp];
+    assert.deepEqual(groupPlaces(libs), [DEMO_PLACE, ALL_PLACE]);
+    assert.deepEqual(groupPlaces([other]), [], 'no demo set without its ZIMs, no hall with one library');
+    const settings = { sort: 'title', place: DEMO_PLACE.id };
+    assert.equal(currentPlace(libs, books, settings), DEMO_PLACE);
+    const cols = collectionsFor(libs, books, settings);
+    assert.deepEqual(cols.map((c) => [c.library.id, c.books.length, c.ordered]), [[demoPg.id, 10, false], [demoWp.id, 2, true]]);
+    assert.equal(cols[1].subtitle, '2 volumes · 23,326 articles');
+    assert.equal(placeBookCount(DEMO_PLACE, libs, books), 12);
+    // Without its ZIMs the place falls back to a library.
+    const s2 = { sort: 'title', place: DEMO_PLACE.id };
+    assert.equal(currentPlace([other], books, s2), other);
   });
 
   it('knows where a book lives', () => {

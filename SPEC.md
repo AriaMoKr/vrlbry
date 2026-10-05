@@ -921,7 +921,11 @@ States: `browse` → `inspect` → `read` (and back).
   split by filters, and its sign reads "N volumes · M articles". With more than one library
   there is one more place, `ALL_PLACE`
   (`settings.place = '*'`), that shelves every library in one hall, with no filters. Wikipedia
-  volumes keep their own order and sign there too.
+  volumes keep their own order and sign there too. Likewise `DEMO_PLACE` (`settings.place =
+  'demo'`, "Demo set") shelves the demo set's libraries together whenever at least one is present:
+  those whose id starts with an entry of `DEMO_LIBRARIES` (`gutenberg_en_lcc-p_`,
+  `wikipedia_en_mathematics_mini_`), so a newer edition still counts. Both are *group places*
+  (`groupPlaces`), listed after the libraries on the kiosk's Rooms tab.
   - No room has more than `MAX_BOOKCASES` = 200 bookcases (`world.js`); in practice only this
     hall reaches the limit.
   - Libraries share the limit fairly (`shareBookcases`, max-min fair): each gets an equal share,
