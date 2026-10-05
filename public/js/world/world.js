@@ -213,6 +213,15 @@ export class World {
     this.signs.push(sign);
   }
 
+  /**
+   * Distance along a world-space ray to the room's walls, floor, ceiling or furniture (the laser
+   * stops there), or Infinity.
+   * @param {THREE.Ray} ray
+   */
+  raycastSolid(ray) {
+    return this.room?.raycast?.(ray) ?? Infinity;
+  }
+
   /** True when a person can stand at (x, z). */
   isWalkable(x, z) {
     if (!this.room || !this.room.walkable(x, z)) return false;

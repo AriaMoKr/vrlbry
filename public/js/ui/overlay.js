@@ -1,7 +1,7 @@
 // DOM overlay for non-VR use (SPEC §5.6): library card, search, Enter VR, help, loading, toasts.
 // Hidden while an immersive session is running.
 
-import { searchArticles } from '../api.js';
+import { bookIndex, matchBooks, findArticles } from '../search.js';
 
 const ARTICLE_RESULTS = 8; // per Wikipedia library
 
@@ -53,7 +53,7 @@ export class Overlay {
     this._index = [];
     this._results = [];
     this._sel = -1;
-    this._wikis = []; // Wikipedia libraries: their articles are searched on the server
+    this._libraries = [];
     this._books = []; // book results of the current query
     this._articles = []; // article results of the current query
     this._searchToken = 0;
@@ -150,13 +150,8 @@ export class Overlay {
             : `${(booksByLib[l.id]?.length || 0).toLocaleString()} ${l.kind === 'wikisource' ? 'works' : l.kind === 'wikipedia' ? `volumes (${(l.articles ?? 0).toLocaleString()} articles)` : 'books'}`} · ${esc(l.file)}</div></div>
         </div>`).join('') + (libraries.length > 1 ? `<div class="ov-lib-meta">${total.toLocaleString()} books in ${libraries.length} libraries</div>` : '')
       : '<div class="ov-lib-desc">No .zim files were found in the server folder. Add some and reload.</div>';
-    this._index = [];
-    this._wikis = libraries.filter((l) => l.kind === 'wikipedia');
-    for (const l of libraries) {
-      for (const b of booksByLib[l.id] || []) {
-        this._index.push({ book: b, lib: l, hay: `${b.title} ${b.subtitle || ''} ${b.author || ''}`.toLowerCase(), title: (b.title || '').toLowerCase() });
-      }
-    }
+    this._index = bookIndex(libraries, booksByLib);
+    this._libraries = libraries;
   }
 
   /** Shows when the website last changed (next to the brand). */
@@ -234,27 +229,13 @@ export class Overlay {
       return;
     }
     // Wikipedia articles: from the server (millions of titles), a moment after typing stops.
-    if (this._wikis.length && s.length >= 2) {
-      this._searchTimer = setTimeout(async () => {
-        const found = await Promise.all(this._wikis.map((lib) => searchArticles(lib.id, q.trim(), ARTICLE_RESULTS)
-          .then((articles) => articles.map((article) => ({ article, lib })), () => [])));
-        if (token !== this._searchToken) return;
-        this._articles = found.flat();
-        this._showResults();
-      }, 150);
-    }
-    const terms = s.split(/\s+/);
-    const scored = [];
-    for (const e of this._index) {
-      if (!terms.every((t) => e.hay.includes(t))) continue;
-      let score = 0;
-      if (e.title.startsWith(s)) score += 100;
-      else if (e.title.includes(' ' + s) || e.title.includes(s)) score += 40;
-      score -= (e.book.rank || 0) / 1e4;
-      scored.push([score, e]);
-    }
-    scored.sort((a, b) => b[0] - a[0]);
-    this._books = scored.slice(0, 12).map((x) => x[1]);
+    this._searchTimer = setTimeout(async () => {
+      const found = await findArticles(this._libraries, q, ARTICLE_RESULTS);
+      if (token !== this._searchToken || !found.length) return;
+      this._articles = found;
+      this._showResults();
+    }, 150);
+    this._books = matchBooks(this._index, q, 12);
     this._showResults();
   }
 
@@ -268,7 +249,7 @@ export class Overlay {
       ? this._results.map((e, i) => (e.article ? `
         <li role="option" data-i="${i}" class="${i === this._sel ? 'sel' : ''}">
           ${e.lib.illustration ? `<img class="ov-r-icon" src="${esc(e.lib.illustration)}" alt="" width="34" height="34">` : '<span class="ov-nocover"></span>'}
-          <div><div class="ov-r-title">${esc(e.article.title)}</div><div class="ov-r-sub">${esc(e.lib.title)} · Volume ${esc(e.article.book.slice(1))}</div></div>
+          <div><div class="ov-r-title">${e.article.from ? `${esc(e.article.from)} → ` : ''}${esc(e.article.title)}</div><div class="ov-r-sub">${esc(e.lib.title)} · Volume ${esc(e.article.book.slice(1))}</div></div>
         </li>` : `
         <li role="option" data-i="${i}" class="${i === this._sel ? 'sel' : ''}">
           ${e.book.cover ? `<img src="${esc(e.book.cover)}" alt="" loading="lazy" width="34" height="48">` : '<span class="ov-nocover"></span>'}

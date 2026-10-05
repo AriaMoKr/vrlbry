@@ -51,6 +51,8 @@ function writeWikipediaZim(file) {
     A('2001:_A_Space_Odyssey', '2001: A Space Odyssey', 'A film.'),
     A('Ant', 'Ant', 'A small insect.'),
     { ns: 'C', url: 'Beatles', redirectTo: 'C/The_Beatles' },
+    { ns: 'C', url: 'Yellow_fruit', title: 'Yellow fruit', redirectTo: 'C/Banana' },
+    { ns: 'C', url: 'Apple_story', title: 'Apple story', redirectTo: 'C/Apples' }, // to a redirect page
     { ns: 'C', url: 'Apples', title: 'Apples', mime: 'text/html', content: redirectPage('Apples', 'Apple#History') },
     { ns: 'C', url: 'Zebra_stripes', title: 'Zebra stripes', mime: 'text/html', content: redirectPage('Zebra stripes', 'Zebra#History') },
     { ns: 'C', url: '_assets_/pic.png', mime: 'image/png', content: png },
@@ -168,6 +170,10 @@ describe('wikipedia', () => {
       assert.deepEqual(await lib.searchArticles('  '), []);
       assert.equal((await lib.searchArticles('', 3)).length, 0);
       assert.deepEqual((await lib.searchArticles('2001')).map((a) => a.title), ['2001: A Space Odyssey']);
+      // Other names (ZIM redirects): typed as written or not, never twice, never a non-article.
+      assert.deepEqual(await lib.searchArticles('yellow f'), [{ title: 'Banana', book: 'v2', n: 0, from: 'Yellow fruit' }]);
+      assert.deepEqual((await lib.searchArticles('beatles')).map((a) => [a.title, a.from]), [['The Beatles', 'Beatles']], 'the name typed in full leads');
+      assert.deepEqual(await lib.searchArticles('apple s'), [], 'a redirect to a redirect page is not an article');
       await lib.close();
 
       // Reopened: the cached index is used at once.

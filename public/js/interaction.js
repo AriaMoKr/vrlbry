@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { Book3D } from './world/book3d.js';
 import { MAX_BOOKCASES } from './world/world.js';
 import { BookReader, THEMES } from './reader/reader.js';
+import { bookIndex, matchBooks, findArticles } from './search.js';
 import { Panel, Label, UI } from './ui/panel.js';
 import { audio } from './audio.js';
 import { perf } from './perf.js';
@@ -20,6 +21,8 @@ const THEME_ORDER = ['paper', 'sepia', 'night'];
 const FONT_STEPS = [0.7, 0.8, 0.9, 1, 1.1, 1.25, 1.4, 1.6, 1.8];
 const TOC_THUMBS_MIN = 30; // contents entries before a list in title order gets a thumb index
 const TOC_THUMBS = 9; // its stops
+const SEARCH_KEYS = ['1234567890', 'qwertyuiop', "asdfghjkl'", 'zxcvbnm-.,'];
+const SEARCH_DELAY = 250; // ms after the last key before searching
 
 const easeInOut = (t) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
 
@@ -99,6 +102,7 @@ export class Interaction {
     const p = new Panel({ width: 1.0, height: 1.0, pxPerMeter: 1000 });
     this.kiosk = p;
     this._kioskTab = 'shelves';
+    this._search = { q: '', results: [], pending: false, token: 0, timer: 0 };
     p.mesh.name = 'kiosk';
     this.scene.add(p.mesh);
     this.placeKiosk();
@@ -134,20 +138,19 @@ export class Interaction {
     const place = this._place();
     // Rooms exist when there is more than one library, or a library too big to shelve whole.
     const hasRooms = this.libraries.length > 1 || (place && isFaceted(place, this.booksByLib[place.id]));
-    if (!hasRooms) this._kioskTab = 'shelves';
+    if (!hasRooms && this._kioskTab === 'rooms') this._kioskTab = 'shelves';
     let y = 96;
-    if (hasRooms) {
-      const tabs = [['shelves', 'Shelves & settings'], ['rooms', 'Rooms']];
-      const tw = (W - 2 * pad - 12) / 2;
-      tabs.forEach(([id, label], i) => {
-        p.add({
-          id: `tab-${id}`, type: 'button', x: pad + i * (tw + 12), y, w: tw, h: 54, label, size: 25,
-          active: this._kioskTab === id, onClick: () => { this._kioskTab = id; this._fillKiosk(); },
-        });
+    const tabs = [['shelves', 'Shelves & settings'], ...(hasRooms ? [['rooms', 'Rooms']] : []), ['search', 'Search']];
+    const tw = (W - 2 * pad - 12 * (tabs.length - 1)) / tabs.length;
+    tabs.forEach(([id, label], i) => {
+      p.add({
+        id: `tab-${id}`, type: 'button', x: pad + i * (tw + 12), y, w: tw, h: 54, label, size: 25,
+        active: this._kioskTab === id, onClick: () => { this._kioskTab = id; this._fillKiosk(); },
       });
-      y += 74;
-    }
+    });
+    y += 74;
     if (this._kioskTab === 'rooms') this._fillRoomsTab(p, y, pad, place);
+    else if (this._kioskTab === 'search') this._fillSearchTab(p, y, pad);
     else this._fillShelvesTab(p, y, pad, place);
     if (this._version) {
       p.add({ id: 'version', type: 'text', x: pad, y: p.h - 40, w: W - 2 * pad, h: 28, text: this._version, size: 21, color: UI.muted, align: 'right', maxLines: 1 });
@@ -230,6 +233,72 @@ export class Interaction {
         })),
       });
     }
+  }
+
+  /**
+   * Search in VR: an on-screen keyboard, the query, and results — books (go to it and take it
+   * out) and Wikipedia articles (open the volume at the article).
+   */
+  _fillSearchTab(p, y0, pad) {
+    const W = p.w;
+    const st = this._search;
+    p.add({ type: 'rect', x: pad, y: y0, w: W - 2 * pad, h: 60, radius: 14, color: 'rgba(255,255,255,0.08)' });
+    p.add({
+      id: 'search-q', type: 'text', x: pad + 18, y: y0 + 13, w: W - 2 * pad - 36, h: 40, size: 30, maxLines: 1,
+      text: st.q ? `${st.q}|` : 'Type a title, an author or an article…', color: st.q ? UI.text : UI.muted,
+    });
+    const gap = 8;
+    const kw = (W - 2 * pad - 9 * gap) / 10;
+    const kh = 56;
+    let y = y0 + 76;
+    SEARCH_KEYS.forEach((row, r) => {
+      [...row].forEach((ch, c) => {
+        p.add({ type: 'button', x: pad + c * (kw + gap), y: y + r * (kh + gap), w: kw, h: kh, label: ch.toUpperCase(), size: 28, onClick: () => this.typeSearch(ch) });
+      });
+    });
+    y += SEARCH_KEYS.length * (kh + gap);
+    p.add({ type: 'button', x: pad, y, w: 6 * (kw + gap) - gap, h: kh, label: 'Space', size: 24, onClick: () => this.typeSearch(' ') });
+    p.add({ type: 'button', x: pad + 6 * (kw + gap), y, w: 2 * (kw + gap) - gap, h: kh, label: '⌫', size: 30, onClick: () => this.typeSearch('backspace') });
+    p.add({ type: 'button', x: pad + 8 * (kw + gap), y, w: 2 * (kw + gap) - gap, h: kh, label: 'Clear', size: 24, onClick: () => this.typeSearch(null) });
+    y += kh + 18;
+    if (!st.results.length) {
+      const text = !st.q.trim() ? 'Results appear as you type.' : st.pending ? 'Searching…' : 'Nothing found.';
+      p.add({ type: 'text', x: pad, y, w: W - 2 * pad, h: 34, text, size: 26, color: UI.muted });
+      return;
+    }
+    const multi = this.libraries.length > 1;
+    p.add({
+      id: 'search-results', type: 'list', x: pad, y, w: W - 2 * pad, h: p.h - y - 52, rowH: 70, size: 26,
+      items: st.results.map((e) => (e.article
+        ? { label: e.article.from ? `${e.article.from} → ${e.article.title}` : e.article.title, sub: `${e.lib.title} · Volume ${e.article.book.slice(1)}`, onClick: () => this.openArticle(e.lib.id, e.article.book, e.article.n) }
+        : { label: e.book.title, sub: [e.book.author, multi ? e.lib.title : null].filter(Boolean).join(' · '), onClick: () => this.searchPick(e.book, { take: true }) })),
+    });
+  }
+
+  /** A key of the kiosk keyboard: a character, 'backspace', or null (clear). */
+  typeSearch(ch) {
+    const st = this._search;
+    if (ch === null) st.q = '';
+    else if (ch === 'backspace') st.q = st.q.slice(0, -1);
+    else if (st.q.length < 60 && !(ch === ' ' && (!st.q || st.q.endsWith(' ')))) st.q += ch;
+    const token = ++st.token;
+    clearTimeout(st.timer);
+    st.pending = !!st.q.trim();
+    if (!st.pending) st.results = [];
+    else st.timer = setTimeout(() => this._runSearch(token), SEARCH_DELAY);
+    this._fillKiosk();
+  }
+
+  async _runSearch(token) {
+    const st = this._search;
+    const books = matchBooks(bookIndex(this.libraries, this.booksByLib), st.q, 12);
+    st.results = books;
+    if (this._kioskTab === 'search') this._fillKiosk();
+    const articles = await findArticles(this.libraries, st.q, 6);
+    if (token !== st.token) return;
+    if (articles.length) st.results = [...books.slice(0, 6), ...articles];
+    st.pending = false;
+    if (this._kioskTab === 'search') this._fillKiosk();
   }
 
   _fillRoomsTab(p, y0, pad, place) {
@@ -542,6 +611,9 @@ export class Interaction {
     if (sh && (!best || sh.distance < best.distance)) {
       best = sh.book ? { kind: 'book', book: sh.book, distance: sh.distance } : { kind: 'solid', distance: sh.distance };
     }
+    // So do the walls, floor, ceiling and furniture.
+    const solid = this.world.raycastSolid(rc.ray);
+    if (solid < rc.far && (!best || solid < best.distance)) best = { kind: 'solid', distance: solid };
     return best;
   }
 
@@ -1225,8 +1297,8 @@ export class Interaction {
     if (this.state === 'inspect') await this.read({ at: { c: n, b: 0 } });
   }
 
-  /** Overlay search result: go there, highlight, and take it out on non-XR. */
-  async searchPick(book) {
+  /** Search result: go there and highlight it; take it out (by default on non-XR). */
+  async searchPick(book, { take = !this.controls.presenting } = {}) {
     if (this.state === 'inspect' || this.state === 'read') await this.putBack();
     if (this.state !== 'browse') return;
     if (!(await this.ensureShelved(book))) {
@@ -1234,7 +1306,7 @@ export class Interaction {
       return;
     }
     this.showBook(book);
-    if (!this.controls.presenting) {
+    if (take) {
       await this._tween(0.5, () => {});
       await this.pick(book);
     }

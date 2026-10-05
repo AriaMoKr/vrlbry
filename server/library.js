@@ -416,10 +416,25 @@ export class ArchiveLibrary {
   async searchArticles(query, limit) {
     const idx = this._wikipedia;
     if (!idx) return [];
-    const found = await wikipedia.searchIndex(this.archive, idx, query, limit);
-    return found.map(({ title, position }) => ({
-      title, book: `v${Math.floor(position / idx.volumeSize) + 1}`, n: position % idx.volumeSize,
-    }));
+    limit = Math.max(1, Math.min(wikipedia.SEARCH_LIMIT, limit | 0 || 12));
+    const [titles, aliases] = await Promise.all([
+      wikipedia.searchIndex(this.archive, idx, query, limit),
+      wikipedia.searchRedirects(this.archive, idx, query, limit),
+    ]);
+    // Titles first, except that another name typed in full ("NYC") leads; never one article twice.
+    const typed = String(query ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
+    const exactTitle = titles[0]?.title.toLowerCase() === typed;
+    const exactAliases = exactTitle ? [] : aliases.filter((a) => a.from.toLowerCase() === typed);
+    const out = [];
+    const seen = new Set();
+    for (const a of [...exactAliases, ...titles, ...aliases]) {
+      if (out.length >= limit || seen.has(a.position)) continue;
+      seen.add(a.position);
+      const hit = { title: a.title, book: `v${Math.floor(a.position / idx.volumeSize) + 1}`, n: a.position % idx.volumeSize };
+      if (a.from) hit.from = a.from;
+      out.push(hit);
+    }
+    return out;
   }
 
   /**

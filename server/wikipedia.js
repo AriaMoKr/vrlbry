@@ -114,20 +114,9 @@ export async function searchIndex(archive, idx, query, limit = 12) {
   const qk = titleKey(String(query ?? '').replace(/\s+/g, ' ').trim());
   if (!qk) return [];
   limit = Math.max(1, Math.min(SEARCH_LIMIT, limit | 0 || 12));
-  const titleAt = async (i) => {
-    const e = await archive.getEntryByIndex(idx.order[i]);
-    return e.title || e.url;
-  };
-  let lo = 0;
-  let hi = idx.count;
-  while (lo < hi) {
-    const mid = (lo + hi) >>> 1;
-    if (collator.compare(titleKey(await titleAt(mid)), qk) < 0) lo = mid + 1;
-    else hi = mid;
-  }
   const out = [];
-  for (let i = lo; i < idx.count && out.length < limit; i++) {
-    const title = await titleAt(i);
+  for (let i = await lowerBoundKey(archive, idx, qk); i < idx.count && out.length < limit; i++) {
+    const title = await titleAt(archive, idx, i);
     if (!titleKey(title).startsWith(qk)) break;
     out.push({ title: title.replace(/\s+/g, ' ').trim(), position: i });
   }
@@ -135,6 +124,73 @@ export async function searchIndex(archive, idx, query, limit = 12) {
   const typed = String(query).replace(/\s+/g, ' ').trim().toLowerCase();
   const exact = out.findIndex((a) => a.title.toLowerCase() === typed);
   if (exact > 0) out.unshift(...out.splice(exact, 1));
+  return out;
+}
+
+/** The title of the article at `position` in title order. */
+async function titleAt(archive, idx, position) {
+  const e = await archive.getEntryByIndex(idx.order[position]);
+  return e.title || e.url;
+}
+
+/** First position in title order whose title key is not before `key` (binary search). */
+async function lowerBoundKey(archive, idx, key) {
+  let lo = 0;
+  let hi = idx.count;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (collator.compare(titleKey(await titleAt(archive, idx, mid)), key) < 0) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+/** Position of an article entry in title order, or -1 when it is not an article of the index. */
+async function positionOf(archive, idx, entry) {
+  const key = titleKey(entry.title || entry.url);
+  for (let i = await lowerBoundKey(archive, idx, key), n = 0; i < idx.count && n < 64; i++, n++) {
+    if (idx.order[i] === entry.index) return i;
+    if (titleKey(await titleAt(archive, idx, i)) !== key) break;
+  }
+  return -1;
+}
+
+/** Most URL-index entries looked at per spelling of a redirect search. */
+const REDIRECT_SCAN = 400;
+
+/**
+ * Redirects whose titles start with `query` ("NYC" → "New York City"): the other names of
+ * articles. ZIM redirects are entries of the URL index, and Wikipedia URLs are titles with "_"
+ * for spaces, so a prefix search over URLs finds them. URLs are case-sensitive, so the query is
+ * tried as typed, with a capital first letter, in capitals and in title case.
+ * @returns {Promise<Array<{ from: string, title: string, position: number }>>} position: of the
+ *   target article in title order
+ */
+export async function searchRedirects(archive, idx, query, limit = 12) {
+  const q = String(query ?? '').replace(/\s+/g, ' ').trim();
+  if (!q) return [];
+  limit = Math.max(1, Math.min(SEARCH_LIMIT, limit | 0 || 12));
+  const spellings = [...new Set([
+    q, q.charAt(0).toUpperCase() + q.slice(1), q.toUpperCase(),
+    q.replace(/(^|\s)(\S)/g, (m, s, c) => s + c.toUpperCase()),
+  ])];
+  const out = [];
+  const seen = new Set();
+  for (const s of spellings) {
+    const prefix = s.replace(/ /g, '_');
+    const start = await archive.lowerBound(idx.ns, prefix);
+    let n = 0;
+    for await (const e of archive.entries(start, archive.entryCount)) {
+      if (e.ns !== idx.ns || !e.url.startsWith(prefix) || ++n > REDIRECT_SCAN || out.length >= limit) break;
+      if (!e.isRedirect || seen.has(e.index)) continue;
+      seen.add(e.index);
+      const target = await archive.resolveRedirect(e).catch(() => null);
+      if (!target || target.isRedirect) continue;
+      const position = await positionOf(archive, idx, target);
+      if (position < 0) continue; // not an article (e.g. a file)
+      out.push({ from: (e.title || e.url).replace(/\s+/g, ' ').trim(), title: (target.title || target.url).replace(/\s+/g, ' ').trim(), position });
+    }
+  }
   return out;
 }
 

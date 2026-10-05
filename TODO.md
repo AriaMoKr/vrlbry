@@ -33,18 +33,13 @@
 - **Wikipedia: the full English maxi** (~6.8 M articles, ~119 GB). At the top-1M rate its index
   would take roughly 1¾ hours: consider speeding up the size pass (e.g. decompressing clusters in
   worker threads), and check the memory of the 6.8 M-title sort.
-- **Wikipedia: search in VR.** Article search (and book search) is in the desktop/phone overlay
-  only; a headset needs a keyboard on the kiosk.
-- **Wikipedia: search by redirects.** Search matches article titles only. ZIM redirects ("NYC" →
-  "New York City") could serve as aliases, through the ZIM's own title index.
 - **Wikipedia: follow links** (later). Tapping a link in an article goes to that article, taking
   its volume off the shelf if needed. The reader cannot follow links today.
 - **Dropped frames while walking.** A Quest 3 still drops ~4 % of frames walking an ordinary room
-  and ~8 % in the all-libraries hall, with no clear cause since atlas uploads were fixed. Next:
-  record GC and long-task timing per scenario (`?perf`, `tools/quest-perf.mjs`).
+  and ~8 % in the all-libraries hall, with no clear cause since atlas uploads were fixed.
+  `quest-perf run` now traces garbage collection and counts the dropped frames that had a GC
+  pause in them, per scenario: run it on the Quest to see whether GC explains the drops.
 - **All-libraries hall draw calls.** Walking reaches ~134 draw calls per eye. Reduce them, or
   lower the 200-bookcase cap.
-- **Laser through other objects.** Bookcases and panels stop the pointer ray; walls, the kiosk
-  pedestal and the furniture do not.
 - **Server code review.** An earlier review recorded 5 minor findings that were never fixed, and
   3 of its reviewers never finished.

@@ -206,8 +206,8 @@ function makeReadingCorner(group, x, z, facing) {
   corner.updateMatrixWorld(true);
   const chairWorld = chair.position.clone().applyMatrix4(corner.matrix);
   return { lamp, colliders: [
-    { type: 'circle', x, z, r: 0.62 },
-    { type: 'circle', x: chairWorld.x, z: chairWorld.z, r: 0.5 },
+    { type: 'circle', x, z, r: 0.62, h: 0.78 },
+    { type: 'circle', x: chairWorld.x, z: chairWorld.z, r: 0.5, h: 0.95 },
   ] };
 }
 
@@ -227,7 +227,7 @@ function makeGlobe(group, x, z) {
   g.add(legs, ring, ball);
   group.add(g);
   shadowDecal(group, x, z, 0.8, 0.8);
-  return { type: 'circle', x, z, r: 0.35 };
+  return { type: 'circle', x, z, r: 0.35, h: 1.2 };
 }
 
 /** The catalogue pedestal (the kiosk panel floats above it). */
@@ -248,7 +248,7 @@ function makePedestal(group, x, z, yaw) {
   g.add(col, capital, base, desk);
   group.add(g);
   shadowDecal(group, x, z, 0.9, 0.9);
-  return { type: 'circle', x, z, r: 0.32 };
+  return { type: 'circle', x, z, r: 0.32, h: 1.0 };
 }
 
 /** Chandelier: brass ring with glowing candles and a warm point light. */
@@ -403,6 +403,10 @@ export function createRotunda({ R, windowAngles = [], kiosk, decor = true }) {
   const walkR = R - 0.45;
   return {
     group, floor, colliders, kind: 'rotunda', R,
+    // Laser stop: the round wall, the dome above it, the floor, the furniture.
+    raycast: (ray) => Math.min(
+      rayCylinderExit(ray, 0, 0, R, WALL_H), raySphereExit(ray, 0, WALL_H, 0, R), rayFloor(ray), rayColliders(ray, colliders),
+    ),
     walkable: (x, z) => Math.hypot(x, z) < walkR,
     boundary(p, radius) {
       const d = Math.hypot(p.x, p.z);
@@ -480,6 +484,8 @@ export function createHall({ minX, maxX, minZ, maxZ, kiosk }) {
   const margin = 0.35;
   return {
     group, floor, colliders, kind: 'hall',
+    // Laser stop: the four walls, the ceiling, the floor, the furniture.
+    raycast: (ray) => Math.min(rayBoxExit(ray, minX, maxX, minZ, maxZ), rayFloor(ray), rayColliders(ray, colliders)),
     walkable: (x, z) => x > minX + margin && x < maxX - margin && z > minZ + margin && z < maxZ - margin,
     boundary(p, radius) {
       p.x = Math.min(maxX - margin - radius, Math.max(minX + margin + radius, p.x));
@@ -489,6 +495,80 @@ export function createHall({ minX, maxX, minZ, maxZ, kiosk }) {
       dust(dt);
     },
   };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Laser stops: rays from inside the room against its walls, floor, ceiling and furniture, as
+// simple shapes (the furniture's walking circles, with heights). Each returns the distance
+// along the ray (direction normalized), or Infinity.
+
+/** The floor (y = 0), seen from above. */
+function rayFloor({ origin: o, direction: d }) {
+  return d.y < -1e-6 && o.y > 0 ? -o.y / d.y : Infinity;
+}
+
+/** Leaving an upright cylinder of radius r around (cx, cz), below height h, from inside. */
+function rayCylinderExit({ origin: o, direction: d }, cx, cz, r, h) {
+  const ox = o.x - cx;
+  const oz = o.z - cz;
+  const a = d.x * d.x + d.z * d.z;
+  if (a < 1e-12) return Infinity;
+  const b = ox * d.x + oz * d.z;
+  const c = ox * ox + oz * oz - r * r;
+  const t = (-b + Math.sqrt(Math.max(0, b * b - a * c))) / a;
+  const y = o.y + t * d.y;
+  return t > 0 && y >= 0 && y <= h ? t : Infinity;
+}
+
+/** The upper half of a sphere (a dome) seen from inside, above its centre height. */
+function raySphereExit({ origin: o, direction: d }, cx, cy, cz, r) {
+  const ox = o.x - cx;
+  const oy = o.y - cy;
+  const oz = o.z - cz;
+  const b = ox * d.x + oy * d.y + oz * d.z;
+  const c = ox * ox + oy * oy + oz * oz - r * r;
+  const t = -b + Math.sqrt(Math.max(0, b * b - c));
+  return t > 0 && o.y + t * d.y >= cy ? t : Infinity;
+}
+
+/** Leaving a box room (walls at the bounds, ceiling at WALL_H) from inside. */
+function rayBoxExit({ origin: o, direction: d }, minX, maxX, minZ, maxZ) {
+  let t = Infinity;
+  if (d.x > 1e-9) t = Math.min(t, (maxX - o.x) / d.x);
+  else if (d.x < -1e-9) t = Math.min(t, (minX - o.x) / d.x);
+  if (d.z > 1e-9) t = Math.min(t, (maxZ - o.z) / d.z);
+  else if (d.z < -1e-9) t = Math.min(t, (minZ - o.z) / d.z);
+  if (d.y > 1e-9) t = Math.min(t, (WALL_H - o.y) / d.y);
+  return t > 0 ? t : Infinity;
+}
+
+/** The nearest piece of furniture: upright cylinders (sides and top), not when inside one. */
+function rayColliders({ origin: o, direction: d }, colliders) {
+  let best = Infinity;
+  for (const c of colliders) {
+    const h = c.h ?? 1;
+    const ox = o.x - c.x;
+    const oz = o.z - c.z;
+    const c0 = ox * ox + oz * oz - c.r * c.r;
+    if (c0 < 0 && o.y < h) continue; // standing in it
+    const a = d.x * d.x + d.z * d.z;
+    if (a > 1e-12 && c0 > 0) {
+      const b = ox * d.x + oz * d.z;
+      const disc = b * b - a * c0;
+      if (disc >= 0) {
+        const t = (-b - Math.sqrt(disc)) / a; // entering the side
+        const y = o.y + t * d.y;
+        if (t > 0 && y >= 0 && y <= h) best = Math.min(best, t);
+      }
+    }
+    if (d.y < -1e-6 && o.y > h) {
+      const t = (h - o.y) / d.y; // onto the top
+      const x = ox + t * d.x;
+      const z = oz + t * d.z;
+      if (x * x + z * z <= c.r * c.r) best = Math.min(best, t);
+    }
+  }
+  return best;
 }
 
 /** Disposes geometries of a room group (shared materials/textures are kept for rebuilds). */

@@ -544,11 +544,17 @@ accepts it (recommended: large chunks compress ~4×).
 **`GET /api/libraries/:lib/books/:id/res/<path>`** → raw EPUB-internal file with its mime.
 
 **`GET /api/libraries/:lib/articles?q=<prefix>&limit=<n>`** (Wikipedia libraries only, 404
-otherwise) → `{ "library": lib, "articles": [ { "title", "book": "v<N>", "n" } ] }`: articles whose
-title starts with `q` in title order (matched by `titleKey`, so case, accents, a leading "The" and
-punctuation are ignored), the one titled exactly `q` first; `book` is the volume and `n` the
-article's chunk in it. `limit` defaults to 12, at most 50. A binary search over the sorted index
-reads ~20 directory entries (a few ms on 1 M articles); empty while indexing.
+otherwise) → `{ "library": lib, "articles": [ { "title", "book": "v<N>", "n", "from"? } ] }`:
+articles whose title starts with `q` in title order (matched by `titleKey`, so case, accents, a
+leading "The" and punctuation are ignored), the one titled exactly `q` first; `book` is the volume
+and `n` the article's chunk in it. A binary search over the sorted index reads ~20 directory
+entries (a few ms on 1 M articles). Articles are also found by their other names, the ZIM's
+redirects ("NYC" → "New York City", `from` = the redirect's title): a prefix search over the
+URL index (Wikipedia URLs are titles with "_" for spaces; URLs are case-sensitive, so `q` is tried
+as typed, with a capital first letter, in capitals and in title case; at most 400 entries per
+spelling), each redirect resolved to its article's position in the index (`searchRedirects` in
+`wikipedia.js`). Title matches come first, except that another name typed in full leads; an
+article appears once. `limit` defaults to 12, at most 50. Empty while indexing.
 
 **`GET /zim/:lib/<archivePath>`** → raw entry content. `<archivePath>` is `ns/url` with each
 segment percent-encoded (decode each segment, join with `/`). Follows ZIM redirects internally.
@@ -792,10 +798,12 @@ export class Controls extends EventTarget {
   cursor dot (cursor placed by interaction at hit distance via `pointer.setHitDistance(d)` if you
   add it); controller models via `XRControllerModelFactory` (CDN profile assets; on failure show a
   simple procedural controller); hands via `XRHandModelFactory` with the procedural `'spheres'` or
-  `'boxes'` profile (offline-safe). The ray stops where it meets something: a panel, a book, or a
+  `'boxes'` profile (offline-safe). The ray stops where it meets something: a panel, a book, a
   bookcase (`shelves.raycast`: bookcases are solid except for their open front, so a ray reaches
   books only through it and never passes through a back, side, top or shelf board into the next
-  bookcase; this applies in every state, while books are pickable only when browsing).
+  bookcase; this applies in every state, while books are pickable only when browsing), or the
+  room (`world.raycastSolid` → `room.raycast`: the wall, the dome or ceiling, the floor, and the
+  furniture as upright cylinders from its walking circles with heights).
   Locomotion when enabled: **right stick forward → teleport arc** (release to teleport onto
   `world.teleportTargets`, validated by `world.isWalkable`); while aiming, that controller's ray
   and cursor are hidden and `pointer.teleporting` keeps it from hovering or selecting; right stick
@@ -866,8 +874,8 @@ States: `browse` → `inspect` → `read` (and back).
   button (`POST /api/rescan`), "↻ Reload page" (`interaction.onReload` → `location.reload()`; in
   VR the browser's own controls are out of reach, and a reload ends the session); at its foot,
   small and right-aligned, "Updated <date, time>" from `GET /api/version`, fetched once at load,
-  so it tells which version the page is running; when there is more than one library or the
-  current one is browsed by rooms, two tabs:
+  so it tells which version the page is running. Tabs: *Shelves & settings*, *Rooms* (when there
+  is more than one library or the current one is browsed by rooms) and *Search*:
   - *Shelves & settings*: library summary, sort toggle Title/Author/Popularity (rebuilds shelves),
     A–Z letter grid over the shelved books (teleports to the first book with that letter via
     `shelves.locate` and highlights it for 4 s), "Surprise me" (random book), "Recently read"
@@ -879,6 +887,14 @@ States: `browse` → `inspect` → `read` (and back).
     it, and the other filter is kept. Counts show what the room would hold with that choice
     (a genre's count respects the current letter and vice versa); choices that would give an
     empty room are disabled.
+  - *Search* (search in VR): the query with a caret, an on-screen keyboard (digits, QWERTY, ' - .
+    ,; Space, ⌫, Clear) and the results 250 ms after the last key: up to 12 books, then up to 6
+    books and 6 articles per Wikipedia. A book result goes to the book and takes it out
+    (`searchPick(book, { take: true })`); an article result opens its volume at the article
+    (`openArticle`). Matching is `search.js`, shared with the overlay: book index per catalogue
+    (built once), every word must match title/subtitle/author, case and accents folded; the exact
+    title first, then titles starting with the query as a whole word, then starting with it, then
+    containing it; more popular first among equals.
   - Rebuilding from the kiosk (library, filters, sort) never moves the viewer: they keep their
     pose relative to the kiosk (`controls.followFrame`), which itself moves only when the room
     changes shape (rotunda ↔ hall, or a different rotunda radius). Only if that spot is no longer
@@ -975,3 +991,9 @@ States: `browse` → `inspect` → `read` (and back).
   - `tools/quest-perf.mjs` (Node, adb) forwards the Quest Browser's DevTools socket, runs or reads
     the recorder over CDP, adds the VrApi per-second log, `dumpsys meminfo` / `battery` snapshots
     (one at the end of each scenario) and device info, and writes `perf/quest-<time>.json`.
+  - During `run` it also traces garbage collection over CDP (`Tracing`, categories `v8`,
+    `disabled-by-default-v8.gc`, `blink.user_timing`; `--no-gc` turns it off). A
+    `performance.mark` ties trace time to the page's `performance.now()`. The page's main-thread GC
+    events become pauses (nested events merged), stored as `dump.gc.pauses`, and `dump.gc.summary`
+    gives per scenario: pauses (major ones), incremental-marking steps, GC time and its share,
+    the longest pause, and how many of the dropped frames had a GC pause inside the gap.

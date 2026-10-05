@@ -30,6 +30,7 @@ Options:
   --allow-2d       run the scenarios even when the page is not in VR
   --out <dir>      where to write the dump (default perf/)
   --serial <id>    adb device serial, when several devices are connected
+  --no-gc          do not trace garbage collection during run (on by default)
   --cdp <url>      use this DevTools endpoint instead of the headset (e.g. http://127.0.0.1:9222
                    for a desktop browser started with --remote-debugging-port); skips adb
   -h, --help       this help
@@ -133,6 +134,124 @@ export function summarizeVrApi(samples) {
     seconds: s.length, fpsAvg: avg('fps'), fpsMin: Math.min(...s.map((x) => x.fps)), fpsTarget: s[s.length - 1].fpsTarget,
     staleTotal: s.reduce((n, x) => n + (x.stale || 0), 0), appMsAvg: avg('appMs'), gpuPctAvg: avg('gpuPct'), cpuPctAvg: avg('cpuPct'),
     tempCMax: Math.max(...s.map((x) => x.tempC ?? -Infinity)),
+  };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Garbage collection, from a CDP trace of V8's own events
+
+/** Trace categories: V8's GC events, and user timing for the clock-sync mark. */
+export const GC_TRACE_CATEGORIES = ['v8', 'disabled-by-default-v8.gc', 'blink.user_timing'];
+/** performance.mark() name that ties trace time to the page's performance.now(). */
+export const TRACE_SYNC_MARK = 'vrlbry-trace-sync';
+const GC_EVENT = /^(MinorGC|MajorGC|V8\.GC)/;
+const GC_STEP = /IncrementalMarking|_HEAP_EXTERNAL_|PhantomHandle/; // small steps, not pauses
+
+/** Trace events worth keeping (the rest is dropped as it streams in). */
+export function keepTraceEvent(e) {
+  return GC_EVENT.test(e.name) || e.name === TRACE_SYNC_MARK;
+}
+
+const round2 = (v) => Math.round(v * 100) / 100;
+
+/**
+ * The page's main-thread GC pauses, in its performance.now() time. The sync mark (made with
+ * performance.mark() at a known performance.now()) identifies the main thread and the clock
+ * offset; nested and overlapping GC events (a GC and its phases) merge into one pause.
+ * @param {object[]} events trace events (keepTraceEvent)
+ * @param {number} markTime performance.now() of the sync mark
+ * @returns {Array<{ t: number, ms: number, major: boolean, name: string }>|null} null without the sync mark
+ */
+export function gcPauses(events, markTime) {
+  const mark = events.find((e) => e.name === TRACE_SYNC_MARK);
+  if (!mark) return null;
+  const offset = mark.ts / 1000 - markTime; // trace ms − performance.now()
+  const spans = [];
+  const open = new Map(); // name → begin ts of B/E pairs
+  for (const e of events) {
+    if (e.pid !== mark.pid || e.tid !== mark.tid || !GC_EVENT.test(e.name)) continue;
+    if (e.ph === 'X') spans.push([e.ts, e.ts + (e.dur || 0), e.name]);
+    else if (e.ph === 'B') open.set(e.name, e.ts);
+    else if (e.ph === 'E' && open.has(e.name)) {
+      spans.push([open.get(e.name), e.ts, e.name]);
+      open.delete(e.name);
+    }
+  }
+  spans.sort((a, b) => a[0] - b[0]);
+  const pauses = [];
+  for (const [start, end, name] of spans) {
+    const major = !/minor|scaveng/i.test(name) && /major|mc|mark|compact/i.test(name);
+    const last = pauses[pauses.length - 1];
+    if (last && start <= last.end) {
+      last.end = Math.max(last.end, end);
+      last.major ||= major;
+    } else {
+      pauses.push({ start, end, major, name }); // named after its outermost event
+    }
+  }
+  return pauses.map((p) => ({ t: round2(p.start / 1000 - offset), ms: round2((p.end - p.start) / 1000), major: p.major, name: p.name }));
+}
+
+/**
+ * GC per recorder segment and overall: pauses (major ones too), their total and longest, and how
+ * many of the dropped frames had a GC pause inside the gap — whether GC explains the drops.
+ * Dropped frames are counted as the recorder counts them (perf.js summary).
+ */
+export function summarizeGc(pauses, page) {
+  const expected = page.summary?.expectedIntervalMs || 1000 / 72;
+  const F = page.frames || { t: [], interval: [] };
+  const span = (t0, t1) => {
+    const ps = pauses.filter((p) => p.t < t1 && p.t + p.ms > t0);
+    let dropped = 0;
+    let droppedWithGc = 0;
+    for (let i = 0; i < F.t.length; i++) {
+      const end = F.t[i];
+      const iv = F.interval[i];
+      if (end < t0 || end >= t1 || !(iv > expected * 1.5)) continue;
+      const n = Math.round(iv / expected) - 1;
+      dropped += n;
+      if (ps.some((p) => p.t < end && p.t + p.ms > end - iv)) droppedWithGc += n;
+    }
+    const total = ps.reduce((s, p) => s + p.ms, 0);
+    // Incremental marking runs in many small steps (well under 1 ms): counted apart from pauses.
+    const full = ps.filter((p) => !GC_STEP.test(p.name));
+    return {
+      pauses: full.length, major: full.filter((p) => p.major).length, steps: ps.length - full.length, totalMs: round2(total),
+      maxMs: round2(ps.reduce((m, p) => Math.max(m, p.ms), 0)), pctOfTime: round2((100 * total) / Math.max(1, t1 - t0)),
+      dropped, droppedWithGc,
+    };
+  };
+  const t0 = F.t.length ? F.t[0] - (F.interval[0] || 0) : 0;
+  const t1 = F.t.length ? F.t[F.t.length - 1] + 1 : 0;
+  return {
+    overall: span(t0, t1),
+    segments: (page.segments || []).filter((s) => s.t1 != null).map((s) => ({ name: s.name, ...span(s.t0, s.t1) })),
+  };
+}
+
+/**
+ * Starts tracing V8's GC events in the page; stop() ends it and returns its GC pauses (in the
+ * page's performance.now() time), or null when the browser does not trace.
+ */
+async function startGcTrace(cdp) {
+  const events = [];
+  cdp.on('Tracing.dataCollected', ({ value }) => {
+    for (const e of value) if (keepTraceEvent(e)) events.push(e);
+  });
+  const complete = new Promise((resolve) => cdp.on('Tracing.tracingComplete', resolve));
+  try {
+    await cdp.send('Tracing.start', { transferMode: 'ReportEvents', traceConfig: { recordMode: 'recordContinuously', includedCategories: GC_TRACE_CATEGORIES } });
+  } catch (err) {
+    console.log(`(no GC trace: ${err.message})`);
+    return { stop: async () => null };
+  }
+  return {
+    async stop() {
+      const markTime = await cdp.eval(`performance.mark(${JSON.stringify(TRACE_SYNC_MARK)}).startTime`);
+      await cdp.send('Tracing.end');
+      await Promise.race([complete, new Promise((r) => setTimeout(r, 30000))]);
+      return gcPauses(events, markTime);
+    },
   };
 }
 
@@ -352,6 +471,14 @@ function printSummary(dump) {
     }
     console.log(`  long tasks   ${s.longTasks.count} · max ${s.longTasks.maxMs} ms${s.memory ? ` · JS heap ${s.memory.usedMB} MB` : ''}`);
   }
+  if (dump.gc) {
+    // Garbage collection on the page's main thread: does it explain the dropped frames?
+    console.log('\nGarbage collection (main thread):');
+    const gcLine = (label, g) => console.log(`  ${label.padEnd(12)} ${String(g.pauses).padStart(4)} pauses (${g.major} major) + ${g.steps} marking steps · ${g.totalMs} ms = ${g.pctOfTime}% of the time`
+      + ` · longest ${g.maxMs} ms · dropped frames in a GC pause: ${g.droppedWithGc} of ${g.dropped}`);
+    gcLine('overall', dump.gc.summary.overall);
+    for (const seg of dump.gc.summary.segments) gcLine(seg.name, seg);
+  }
   if (dump.vrapiSummary) {
     const v = dump.vrapiSummary;
     console.log(`\nHeadset (VrApi, ${v.seconds} s): ${v.fpsAvg} fps avg (min ${v.fpsMin}, target ${v.fpsTarget}) · stale ${v.staleTotal}`
@@ -368,7 +495,7 @@ async function main() {
     options: {
       open: { type: 'boolean' }, port: { type: 'string', default: '8080' }, only: { type: 'string' },
       'enter-vr': { type: 'boolean' }, 'allow-2d': { type: 'boolean' }, out: { type: 'string', default: path.join(ROOT, 'perf') },
-      serial: { type: 'string' }, cdp: { type: 'string' }, help: { type: 'boolean', short: 'h' },
+      serial: { type: 'string' }, cdp: { type: 'string' }, 'no-gc': { type: 'boolean' }, help: { type: 'boolean', short: 'h' },
     },
   });
   const command = positionals[0];
@@ -381,6 +508,7 @@ async function main() {
   const dump = { tool: 'quest-perf', version: 1, command, startedAt: new Date().toISOString(), snapshots: [] };
   let release = async () => {};
   let logger = null;
+  let gcTrace = null;
   let cdp = null;
   try {
     if (useAdb) {
@@ -464,11 +592,14 @@ async function main() {
       }
       const only = opts.only ? JSON.stringify(opts.only.split(',').map((s) => s.trim())) : 'null';
       console.log('Running scenarios…');
+      gcTrace = opts['no-gc'] ? null : await startGcTrace(cdp);
       await cdp.eval(`(async () => { const p = window.__vrlbry.perf; p.reset(); return p.run(${only}); })()`);
     }
 
     console.log('Collecting the dump…');
+    const pauses = await gcTrace?.stop();
     dump.page = await cdp.eval('window.__vrlbry.perf.dump()');
+    if (pauses) dump.gc = { pauses, summary: summarizeGc(pauses, dump.page) };
     if (useAdb) {
       dump.vrapi = logger ? logger.stop() : await vrApiBacklog(opts);
       logger = null;

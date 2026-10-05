@@ -5,6 +5,7 @@ import { describe, it } from 'node:test';
 import { Recorder, MAX_FRAMES } from '../public/js/perf.js';
 import {
   devtoolsSockets, parseVrApiLine, parseMeminfo, parseBattery, summarizeVrApi, parseAdbDevices, isNetworkSerial,
+  keepTraceEvent, gcPauses, summarizeGc, TRACE_SYNC_MARK,
 } from '../tools/quest-perf.mjs';
 
 const HZ72 = 1000 / 72;
@@ -160,6 +161,43 @@ Total RSS by OOM adjustment:
     assert.equal(isNetworkSerial('192.168.50.176:5555'), true);
     assert.equal(isNetworkSerial('adb-2G0YC1ZG3P071X-abc._adb-tls-connect._tcp'), true);
     assert.equal(isNetworkSerial('2G0YC1ZG3P071X'), false);
+  });
+
+  it('turns a V8 trace into main-thread GC pauses in page time, and relates them to dropped frames', () => {
+    // Trace clock: µs. The sync mark was made at performance.now() = 1000 ms, at trace ts 5,000,000 µs.
+    const main = { pid: 1, tid: 7 };
+    const events = [
+      { ...main, name: TRACE_SYNC_MARK, ph: 'R', ts: 5_000_000 },
+      { ...main, name: 'MinorGC', ph: 'X', ts: 4_100_000, dur: 2_000 }, // t = 100 ms, 2 ms
+      { ...main, name: 'V8.GCScavenger', ph: 'X', ts: 4_100_500, dur: 1_000 }, // nested in it
+      { ...main, name: 'MajorGC', ph: 'B', ts: 4_500_000 }, // t = 500 ms…
+      { ...main, name: 'V8.GC_MC_MARK', ph: 'X', ts: 4_510_000, dur: 30_000 },
+      { ...main, name: 'MajorGC', ph: 'E', ts: 4_540_000 }, // …40 ms
+      { pid: 1, tid: 9, name: 'MinorGC', ph: 'X', ts: 4_200_000, dur: 5_000 }, // a worker: not the main thread
+      { ...main, name: 'FunctionCall', ph: 'X', ts: 4_300_000, dur: 50_000 },
+    ];
+    assert.equal(events.filter(keepTraceEvent).length, 7, 'GC events and the mark');
+    const pauses = gcPauses(events.filter(keepTraceEvent), 1000);
+    assert.deepEqual(pauses, [{ t: 100, ms: 2, major: false, name: 'MinorGC' }, { t: 500, ms: 40, major: true, name: 'MajorGC' }]);
+    assert.equal(gcPauses([], 0), null);
+
+    // 72 Hz frames every 13.9 ms, except a 69.5 ms gap over the major GC (4 frames dropped) and a
+    // 55.6 ms gap near 800 ms with no GC in it (3 dropped).
+    const t = [];
+    const interval = [];
+    for (let x = 13.9; x < 1000; x += 13.9) {
+      if (x > 500 && x < 555) continue;
+      if (x > 760 && x < 800) continue;
+      t.push(x);
+      interval.push(t.length > 1 ? x - t[t.length - 2] : 13.9);
+    }
+    const page = { summary: { expectedIntervalMs: 13.9 }, frames: { t, interval }, segments: [{ name: 'a', t0: 0, t1: 400 }, { name: 'b', t0: 400, t1: 1000 }] };
+    const g = summarizeGc(pauses, page);
+    assert.deepEqual(g.segments.map((s) => [s.name, s.pauses, s.major, s.totalMs, s.maxMs, s.dropped, s.droppedWithGc]),
+      [['a', 1, 0, 2, 2, 0, 0], ['b', 1, 1, 40, 40, 7, 4]]);
+    assert.equal(g.overall.pauses, 2);
+    const steps = summarizeGc([...pauses, { t: 700, ms: 0.2, major: true, name: 'V8.GCIncrementalMarking' }], page);
+    assert.deepEqual([steps.overall.pauses, steps.overall.steps], [2, 1], 'marking steps are not pauses');
   });
 
   it('reads the battery level and temperature', () => {

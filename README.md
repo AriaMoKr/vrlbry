@@ -118,8 +118,9 @@ popularity, jump to a letter, pick a book at random ("Surprise me"), reopen rece
 filter a large library by genre and title letter, rescan the folder, and reload the page (handy
 in a headset, where the browser's own controls are out of reach). Its footer, and the library
 card, show when the app's files last changed ("Updated …"), so you can tell which version a page
-is running. The search box (desktop and phone) finds
-any book by title or author and takes you to it. Your reading position, text size, theme and
+is running. The search box (desktop and phone), or the kiosk's Search tab with its on-screen
+keyboard (in a headset), finds any book by title or author and takes you to it, and any
+Wikipedia article by title and opens its volume there. Your reading position, text size, theme and
 rooms are remembered in the browser.
 
 ## Development
@@ -147,7 +148,9 @@ node --test test/zim.test.js
 `/?perf` turns on a recorder in the page: every frame's timing, room switches, atlas painting,
 page turns, long tasks and memory. `tools/quest-perf.mjs` reads it from the headset over adb,
 together with the headset's own per-second numbers (FPS, stale frames, CPU/GPU load,
-temperature), the browser's memory and the battery, and saves one JSON file in `perf/`.
+temperature), the browser's memory and the battery, and saves one JSON file in `perf/`. While
+the scenarios run it also traces garbage collection, and shows per scenario how many dropped
+frames happened during a GC pause.
 
 Connect the Quest by USB (or adb over Wi-Fi), allow USB debugging for this computer, keep the
 server running, then:
