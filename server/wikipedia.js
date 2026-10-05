@@ -97,6 +97,47 @@ export async function buildIndex(archive, { volumeSize = VOLUME_SIZE, onProgress
   return { version: INDEX_VERSION, uuid: archive.header.uuid, ns, volumeSize, count: order.length, order, sizes, volumes };
 }
 
+/** Most results a search returns. */
+export const SEARCH_LIMIT = 50;
+
+/**
+ * Articles whose title starts with `query`, in title order. Matching uses the index's own key
+ * (titleKey: case, accents, a leading "The" and punctuation are ignored), so a binary search over
+ * the sorted index finds the first match after reading ~log2(count) directory entries.
+ * @param {import('./zim/reader.js').ZimArchive} archive
+ * @param {{ order: Uint32Array, count: number }} idx
+ * @param {string} query
+ * @param {number} [limit]
+ * @returns {Promise<Array<{ title: string, position: number }>>} position: index in title order
+ */
+export async function searchIndex(archive, idx, query, limit = 12) {
+  const qk = titleKey(String(query ?? '').replace(/\s+/g, ' ').trim());
+  if (!qk) return [];
+  limit = Math.max(1, Math.min(SEARCH_LIMIT, limit | 0 || 12));
+  const titleAt = async (i) => {
+    const e = await archive.getEntryByIndex(idx.order[i]);
+    return e.title || e.url;
+  };
+  let lo = 0;
+  let hi = idx.count;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (collator.compare(titleKey(await titleAt(mid)), qk) < 0) lo = mid + 1;
+    else hi = mid;
+  }
+  const out = [];
+  for (let i = lo; i < idx.count && out.length < limit; i++) {
+    const title = await titleAt(i);
+    if (!titleKey(title).startsWith(qk)) break;
+    out.push({ title: title.replace(/\s+/g, ' ').trim(), position: i });
+  }
+  // The article titled exactly as typed comes first ("Paris" before ".paris").
+  const typed = String(query).replace(/\s+/g, ' ').trim().toLowerCase();
+  const exact = out.findIndex((a) => a.title.toLowerCase() === typed);
+  if (exact > 0) out.unshift(...out.splice(exact, 1));
+  return out;
+}
+
 /** Pages at most this big are checked for being a redirect page (real articles are far bigger). */
 const REDIRECT_PAGE_MAX = 1024;
 

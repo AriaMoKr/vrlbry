@@ -1,6 +1,10 @@
 // DOM overlay for non-VR use (SPEC §5.6): library card, search, Enter VR, help, loading, toasts.
 // Hidden while an immersive session is running.
 
+import { searchArticles } from '../api.js';
+
+const ARTICLE_RESULTS = 8; // per Wikipedia library
+
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 const HELP = {
@@ -49,6 +53,12 @@ export class Overlay {
     this._index = [];
     this._results = [];
     this._sel = -1;
+    this._wikis = []; // Wikipedia libraries: their articles are searched on the server
+    this._books = []; // book results of the current query
+    this._articles = []; // article results of the current query
+    this._searchToken = 0;
+    this._searchTimer = 0;
+    this._pickArticle = null;
     root.innerHTML = `
       <div class="ov-loading" role="status" aria-live="polite">
         <div class="ov-logo">vrlbry</div>
@@ -60,7 +70,7 @@ export class Overlay {
         <div class="ov-libs"></div>
       </section>
       <div class="ov-search" role="search">
-        <input type="search" placeholder="Find a book or author…" aria-label="Find a book" autocomplete="off" spellcheck="false">
+        <input type="search" placeholder="Find a book, author or article…" aria-label="Find a book or article" autocomplete="off" spellcheck="false">
         <ul class="ov-results" role="listbox" hidden></ul>
       </div>
       <div class="ov-bottom">
@@ -141,6 +151,7 @@ export class Overlay {
         </div>`).join('') + (libraries.length > 1 ? `<div class="ov-lib-meta">${total.toLocaleString()} books in ${libraries.length} libraries</div>` : '')
       : '<div class="ov-lib-desc">No .zim files were found in the server folder. Add some and reload.</div>';
     this._index = [];
+    this._wikis = libraries.filter((l) => l.kind === 'wikipedia');
     for (const l of libraries) {
       for (const b of booksByLib[l.id] || []) {
         this._index.push({ book: b, lib: l, hay: `${b.title} ${b.subtitle || ''} ${b.author || ''}`.toLowerCase(), title: (b.title || '').toLowerCase() });
@@ -152,6 +163,8 @@ export class Overlay {
   setVersion(text) { this.$('.ov-version').textContent = text; }
 
   onSearchPick(cb) { this._pick = cb; }
+  /** cb(libId, { title, book, n }) for a Wikipedia article chosen in the search results. */
+  onArticlePick(cb) { this._pickArticle = cb; }
   onRescan(cb) { this._rescan = cb; }
   onEnterVR(cb) { this._enterVR = cb; }
 
@@ -212,10 +225,23 @@ export class Overlay {
   _search(q) {
     const list = this.$('.ov-results');
     const s = q.trim().toLowerCase();
+    const token = ++this._searchToken;
+    clearTimeout(this._searchTimer);
+    this._articles = [];
     if (!s) {
       list.hidden = true;
       this._results = [];
       return;
+    }
+    // Wikipedia articles: from the server (millions of titles), a moment after typing stops.
+    if (this._wikis.length && s.length >= 2) {
+      this._searchTimer = setTimeout(async () => {
+        const found = await Promise.all(this._wikis.map((lib) => searchArticles(lib.id, q.trim(), ARTICLE_RESULTS)
+          .then((articles) => articles.map((article) => ({ article, lib })), () => [])));
+        if (token !== this._searchToken) return;
+        this._articles = found.flat();
+        this._showResults();
+      }, 150);
     }
     const terms = s.split(/\s+/);
     const scored = [];
@@ -228,14 +254,26 @@ export class Overlay {
       scored.push([score, e]);
     }
     scored.sort((a, b) => b[0] - a[0]);
-    this._results = scored.slice(0, 12).map((x) => x[1]);
+    this._books = scored.slice(0, 12).map((x) => x[1]);
+    this._showResults();
+  }
+
+  /** Lists the book results, then the article results (fewer books once articles arrive). */
+  _showResults() {
+    const list = this.$('.ov-results');
+    const books = this._articles.length ? this._books.slice(0, 6) : this._books;
+    this._results = [...books, ...this._articles];
     this._sel = this._results.length ? 0 : -1;
     list.innerHTML = this._results.length
-      ? this._results.map((e, i) => `
+      ? this._results.map((e, i) => (e.article ? `
+        <li role="option" data-i="${i}" class="${i === this._sel ? 'sel' : ''}">
+          ${e.lib.illustration ? `<img class="ov-r-icon" src="${esc(e.lib.illustration)}" alt="" width="34" height="34">` : '<span class="ov-nocover"></span>'}
+          <div><div class="ov-r-title">${esc(e.article.title)}</div><div class="ov-r-sub">${esc(e.lib.title)} · Volume ${esc(e.article.book.slice(1))}</div></div>
+        </li>` : `
         <li role="option" data-i="${i}" class="${i === this._sel ? 'sel' : ''}">
           ${e.book.cover ? `<img src="${esc(e.book.cover)}" alt="" loading="lazy" width="34" height="48">` : '<span class="ov-nocover"></span>'}
           <div><div class="ov-r-title">${esc(e.book.title)}</div><div class="ov-r-sub">${esc(e.book.author || '')}${this._multi() ? ' · ' + esc(e.lib.title) : ''}</div></div>
-        </li>`).join('')
+        </li>`)).join('')
       : '<li class="ov-empty">No matching books</li>';
     list.hidden = false;
     list.querySelectorAll('li[data-i]').forEach((li) => {
@@ -269,6 +307,7 @@ export class Overlay {
     this.$('.ov-results').hidden = true;
     const input = this.$('.ov-search input');
     input.blur();
-    this._pick?.(e.book);
+    if (e.article) this._pickArticle?.(e.lib.id, e.article);
+    else this._pick?.(e.book);
   }
 }

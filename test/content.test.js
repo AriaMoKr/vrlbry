@@ -19,15 +19,16 @@ const allText = (bs) => bs.map(text).join('\n');
 function validate(bs) {
   const keys = {
     h: ['t', 'l', 'r', 'a', 'id'], p: ['t', 'r', 'a', 'q', 'v', 'id'], li: ['t', 'r', 'd', 'm', 'q', 'id'],
-    tr: ['t', 'c', 'g', 'hd', 'q', 'id'], pre: ['t', 'x', 'q', 'id'], img: ['t', 'src', 'w', 'h', 'alt', 'q', 'id'], hr: ['t'],
+    tr: ['t', 'c', 'g', 'hd', 'q', 'id'], pre: ['t', 'x', 'q', 'id'], img: ['t', 'src', 'w', 'h', 'em', 'alt', 'inv', 'q', 'id'], hr: ['t'],
   };
   const errs = [];
+  const image = (run) => run.length === 3 && run[0] === '￼' && typeof run[2]?.src === 'string' && run[2].w > 0 && run[2].h > 0;
   const runs = (r, w) => {
     if (!Array.isArray(r) || r.length === 0) return errs.push(`${w}: empty runs`);
     r.forEach((run, i) => {
-      if (!Array.isArray(run) || run.length !== 2 || typeof run[0] !== 'string' || !Number.isInteger(run[1])) errs.push(`${w}: bad run`);
+      if (!Array.isArray(run) || !(run.length === 2 || image(run)) || typeof run[0] !== 'string' || !Number.isInteger(run[1])) errs.push(`${w}: bad run`);
       else if (run[0] === '') errs.push(`${w}: empty run text`);
-      else if (i > 0 && r[i - 1][1] === run[1]) errs.push(`${w}: unmerged runs`);
+      else if (i > 0 && r[i - 1][1] === run[1] && run.length === 2 && r[i - 1].length === 2) errs.push(`${w}: unmerged runs`);
     });
     const t = r.map((x) => x[0]).join('');
     if (/^[ \n]|[ \n]$/.test(t)) errs.push(`${w}: untrimmed ${JSON.stringify(t)}`);
@@ -356,6 +357,87 @@ describe('htmlToBlocks: images', () => {
       { t: 'img', src: 'C/p.jpg' },
       { t: 'p', r: [['Cap two', 128]], a: 'c' },
       { t: 'img', src: 'C/q.jpg', q: 1 },
+    ]);
+  });
+});
+
+describe('htmlToBlocks: inline images (image runs)', () => {
+  const math = (alt, w, h, va) => `<span class="mwe-math-element"><span class="mwe-math-mathml-inline" style="display: none;"><math alttext="${alt}"><mi>x</mi></math></span><img src="./_assets_/m/${alt}.svg" class="mwe-math-fallback-image-inline mw-invert skin-invert" aria-hidden="true" style="vertical-align: ${va}ex; width:${w}ex; height:${h}ex;" alt="${alt}"></span>`;
+
+  test('a MediaWiki formula stays in its sentence, sized from its ex style', () => {
+    const bs = blocks(`<p>The state ${math('x', 1.5, 2, -0.5)}, and <b>more</b> ${math('y', 2, 2.5, 0)} here.</p>`, 'C/Kalman');
+    assert.deepEqual(validate(bs), []);
+    assert.deepEqual(bs, [{ t: 'p', r: [
+      ['The state ', 0], ['￼', 0, { src: 'C/_assets_/m/x.svg', w: 12, h: 16, va: -4, alt: 'x', inv: 1 }], [', and ', 0], ['more', 2], [' ', 0],
+      ['￼', 0, { src: 'C/_assets_/m/y.svg', w: 16, h: 20, alt: 'y', inv: 1 }], [' here.', 0],
+    ] }]);
+    assert.equal(blockChars(bs[0]), 'The state , and more  here.'.length + 2, 'an image run counts as one character');
+  });
+
+  test('small images with a size are inline; large ones still split the paragraph', () => {
+    const bs = blocks('<p><img src="flag.png" width="23" height="15" alt="US"> United States <img src="big.png" width="200" height="150"> after</p>');
+    assert.deepEqual(validate(bs), []);
+    assert.deepEqual(bs, [
+      { t: 'p', r: [['￼', 0, { src: 'C/flag.png', w: 23, h: 15, alt: 'US' }], [' United States', 0]] },
+      { t: 'img', src: 'C/big.png', w: 200, h: 150 },
+      { t: 'p', r: [['after', 0]] },
+    ]);
+  });
+
+  test('a block of nothing but images becomes image blocks (a formula on its own line)', () => {
+    const bs = blocks(`<dl><dd>${math('z', 4, 3, -1)}</dd></dl><div class="center"><img src="orn.png" width="300" height="20"></div>`);
+    assert.deepEqual(validate(bs), []);
+    assert.deepEqual(bs, [
+      { t: 'img', src: 'C/_assets_/m/z.svg', w: 32, h: 24, em: 1, alt: 'z', inv: 1, q: 1 },
+      { t: 'img', src: 'C/orn.png', w: 300, h: 20 },
+    ]);
+  });
+
+  test('inline images in table cells, headings and verse lines', () => {
+    const bs = blocks(`<h2>Area ${math('A', 1, 2, 0)}</h2><table><tr><td><img src="f.png" width="20" height="12"> France</td><td>67</td></tr></table>
+      <div class="poem"><p>one ${math('a', 1, 1, 0)}<br>two</p></div>`);
+    assert.deepEqual(validate(bs), []);
+    assert.equal(bs[0].t, 'h');
+    assert.equal(bs[0].r[1][2].src, 'C/_assets_/m/A.svg');
+    assert.deepEqual(bs[1].c[0][0][2], { src: 'C/f.png', w: 20, h: 12 });
+    assert.deepEqual(bs[2].r.map((r) => r[0]), ['one ', '￼', '\ntwo']);
+    const { toc } = chunkBlocks(bs);
+    assert.equal(toc[0].title, 'Area', 'no image in contents titles');
+  });
+});
+
+describe('htmlToBlocks: MediaWiki infoboxes and sidebars', () => {
+  const infobox = `<table class="infobox vcard"><caption class="infobox-title">Ants</caption>
+    <tr><td colspan="2" class="infobox-image"><img src="ant.jpg" width="250" height="180" alt="An ant"><div class="infobox-caption">A worker ant</div></td></tr>
+    <tr><th class="infobox-label">Kingdom</th><td class="infobox-data">Animalia</td></tr>
+    <tr><th class="infobox-label">Order</th><td class="infobox-data">Hymenoptera</td></tr></table>`;
+  const sidebar = '<table class="sidebar nomobile nowraplinks"><tr><td><ul><li>Series item 1</li><li>Series item 2</li></ul></td></tr></table>';
+
+  test('the infobox image opens the article; its facts follow the lead; sidebars are dropped', () => {
+    const bs = blocks(`<div class="mw-parser-output">${sidebar}${infobox}<p>Ants are insects.</p><p>They live in colonies.</p>
+      <h2>Taxonomy</h2><p>Ants are wasps.</p></div>`);
+    assert.deepEqual(validate(bs), []);
+    assert.deepEqual(bs.map((b) => [b.t, b.src ?? text(b)]), [
+      ['img', 'C/ant.jpg'],
+      ['p', 'A worker ant'],
+      ['p', 'Ants are insects.'],
+      ['p', 'They live in colonies.'],
+      ['h', 'Quick facts'],
+      ['p', 'Ants'],
+      ['tr', 'Kingdom | Animalia'],
+      ['tr', 'Order | Hymenoptera'],
+      ['h', 'Taxonomy'],
+      ['p', 'Ants are wasps.'],
+    ]);
+    assert.equal(bs[1].a, 'c');
+    assert.equal(bs[1].r[0][1] & 128, 128, 'the caption is smaller');
+    assert.ok(!allText(bs).includes('Series item'));
+  });
+
+  test('without a section heading the facts go to the end; an infobox without an image moves whole', () => {
+    const bs = blocks('<table class="infobox"><tr><th>Born</th><td>1900</td></tr><tr><th>Died</th><td>1990</td></tr></table><p>A life.</p>');
+    assert.deepEqual(bs.map((b) => [b.t, text(b)]), [
+      ['p', 'A life.'], ['h', 'Quick facts'], ['tr', 'Born | 1900'], ['tr', 'Died | 1990'],
     ]);
   });
 });

@@ -51,6 +51,11 @@ export async function getBooks(libId) {
   return (await getJSON(`/api/libraries/${enc(libId)}/books`)).books;
 }
 
+/** Wikipedia articles whose titles start with `q` (SPEC §2.5): [{ title, book, n }]. */
+export async function searchArticles(libId, q, limit = 8) {
+  return (await getJSON(`/api/libraries/${enc(libId)}/articles?q=${enc(q)}&limit=${limit}`)).articles;
+}
+
 /** Book reading metadata: chunks, toc, totals. Cached. */
 export function getBookMeta(libId, bookId) {
   const key = `${libId}\n${bookId}`;

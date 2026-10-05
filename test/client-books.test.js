@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  titleKey, authorKey, compareBooks, sortBooks, letterOf, bookDims, hashString,
+  titleKey, authorKey, compareBooks, sortBooks, letterOf, bookDims, hashString, inTitleOrder, thumbIndex,
 } from '../public/js/util/books.js';
 import { BOOK } from '../public/js/config.js';
 
@@ -79,6 +79,18 @@ describe('util/books', () => {
       assert.ok(Math.abs(d1.d - d1.h * BOOK.depthRatio) < 1e-12);
     }
     assert.ok(bookDims({ id: 'a', title: 't', size: 20e6 }).w > bookDims({ id: 'a', title: 't', size: 30e3 }).w);
+  });
+
+  it('thumbIndex labels evenly spaced stops by how their titles start', () => {
+    // A Wikipedia volume: every title starts with K.
+    const titles = ['Kaden Elliss', 'Kaduna', 'Kaesong', 'Kafka', 'The Kafka Project', 'Kagoshima', 'Kahului', 'Kaiser', 'Kalahari', 'Kalman filter'];
+    assert.equal(inTitleOrder(titles), true, 'a leading The is ignored, as on the shelves');
+    assert.equal(inTitleOrder(['B', 'A']), false);
+    assert.deepEqual(thumbIndex(titles, 5), [
+      { index: 0, label: 'Kad' }, { index: 2, label: 'Kae' }, { index: 4, label: 'Kaf' }, { index: 6, label: 'Kah' }, { index: 8, label: 'Kal' },
+    ]);
+    assert.deepEqual(thumbIndex(['Ant', 'Bee'], 9).map((s) => s.index), [0, 1], 'never more stops than titles');
+    assert.deepEqual(thumbIndex([], 9), []);
   });
 
   it('hashString is FNV-1a', () => {

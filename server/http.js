@@ -151,6 +151,14 @@ export function createApp(library, { publicDir = DEFAULT_PUBLIC_DIR, vendorDirs 
       return sendBody(req, res, serialize({ generation: library.generation ?? 0, libraries }), { cacheControl: 'no-cache' });
     }
     const lib = library.get(segs[1]);
+    if (segs.length === 3 && segs[2] === 'articles') {
+      // Wikipedia article search by title prefix (§2.5): ?q=<prefix>&limit=<n>.
+      if (!lib) return sendError(req, res, 404, `unknown library: ${segs[1]}`);
+      if (lib.kind !== 'wikipedia') return sendError(req, res, 404, 'not a Wikipedia library');
+      const params = new URL(req.url, 'http://x').searchParams;
+      const articles = await lib.searchArticles(params.get('q') ?? '', Number(params.get('limit')) || undefined);
+      return sendBody(req, res, new Body(Buffer.from(JSON.stringify({ library: lib.id, articles }), 'utf8')), { cacheControl: 'no-store' });
+    }
     if (segs.length < 3 || segs[2] !== 'books') return sendError(req, res, 404, 'unknown API endpoint');
     if (!lib) return sendError(req, res, 404, `unknown library: ${segs[1]}`);
 

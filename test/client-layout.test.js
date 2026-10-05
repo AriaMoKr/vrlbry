@@ -148,6 +148,45 @@ describe('reader layout', () => {
     }
   });
 
+  it('lays out inline images in the line, growing lines for tall ones and shrinking wide ones', () => {
+    const img = (w, h, va = 0) => ['￼', 0, { src: `/i${w}x${h}.svg`, w, h, va, inv: 1 }];
+    const k = M.size / 16; // inline sizes are CSS px at 16 px
+    const blocks = [
+      { t: 'p', r: [['The state ', 0], img(12, 16, -4), [', then more text.', 0]] },
+      { t: 'p', r: [['A fraction ', 0], img(40, 60, -20), [' here.', 0]] },
+      { t: 'p', r: [['Too wide: ', 0], img(2000, 30)] },
+      { t: 'tr', c: [[img(20, 60), [' France', 0]], [['67', 0]]], g: 1 },
+    ];
+    const pages = layoutChunk(blocks, M, fake);
+    checkPages(pages, blocks);
+    const boxes = pages.flatMap((pg) => pg.boxes.map(({ box }) => box));
+    const imgOf = (bi) => boxes.filter((b) => b.block === bi).flatMap((b) => b.items).find((i) => i.k === 'img');
+
+    // In the sentence: after "The state ", bottom 4 px (scaled) below the baseline, not inverted away.
+    const a = imgOf(0);
+    assert.deepEqual([Math.round(a.w), Math.round(a.h)], [Math.round(12 * k), Math.round(16 * k)]);
+    assert.ok(Math.abs(a.x - fake.width('The state ', `${M.size}px serif`)) < 1);
+    const line0 = boxes.find((b) => b.block === 0);
+    const text0 = line0.items.find((i) => i.k === 't');
+    assert.ok(Math.abs(a.y + a.h - (text0.y + 4 * k)) < 0.5, 'bottom at baseline − vertical-align');
+    assert.equal(a.inv, true);
+    assert.equal(line0.h, M.lineHeight, 'a formula of text height keeps the line height');
+
+    // Tall: the line grows and nothing reaches above it.
+    const tall = boxes.find((b) => b.block === 1);
+    assert.ok(tall.h > 60 * k, 'the line holds the whole image');
+    assert.ok(tall.items.every((i) => i.y >= 0));
+
+    // Wider than the text: shrunk to fit, aspect kept.
+    const wide = imgOf(2);
+    assert.ok(wide.w <= M.textWidth + 0.5 && wide.x + wide.w <= M.textWidth + 0.5);
+    assert.ok(Math.abs(wide.w / wide.h - 2000 / 30) < 0.5);
+
+    // In a table cell: capped to the row's line height.
+    const cell = imgOf(3);
+    assert.ok(cell.h < 60 * k && cell.h <= M.lineHeight);
+  });
+
   it('is deterministic and scales with fontScale', () => {
     const blocks = Array.from({ length: 40 }, (_, i) => p(words(100 + i)));
     const a = layoutChunk(blocks, M, fake).map((pg) => pg.firstBlock + ':' + pg.boxes.length);

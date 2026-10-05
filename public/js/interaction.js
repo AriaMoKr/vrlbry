@@ -9,7 +9,7 @@ import { Panel, Label, UI } from './ui/panel.js';
 import { audio } from './audio.js';
 import { perf } from './perf.js';
 import { load, save } from './util/storage.js';
-import { letterOf, SORT_MODES } from './util/books.js';
+import { letterOf, SORT_MODES, inTitleOrder, thumbIndex } from './util/books.js';
 import { PAGE_PX, READ } from './config.js';
 import {
   ALL_PLACE, collectionsFor, currentPlace, facetsOf, isFaceted, normRoom, placeBookCount, placeFor, roomLabel, sameRoom, unitOf, ROOM_CAP,
@@ -18,6 +18,8 @@ import {
 const UP = new THREE.Vector3(0, 1, 0);
 const THEME_ORDER = ['paper', 'sepia', 'night'];
 const FONT_STEPS = [0.7, 0.8, 0.9, 1, 1.1, 1.25, 1.4, 1.6, 1.8];
+const TOC_THUMBS_MIN = 30; // contents entries before a list in title order gets a thumb index
+const TOC_THUMBS = 9; // its stops
 
 const easeInOut = (t) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
 
@@ -165,7 +167,7 @@ export class Interaction {
     const libLine = !place ? 'No libraries'
       : room && isFaceted(place, this.booksByLib[place.id])
         ? `${place.title} · ${roomLabel(room)} · ${shelved.length.toLocaleString()} on the shelves`
-        : `${place.title} · ${shelved.length.toLocaleString()} books`;
+        : `${place.title} · ${shelved.length.toLocaleString()} ${shelved.length === 1 ? unitOf(place).slice(0, -1) : unitOf(place)}`;
     p.add({ type: 'text', x: pad, y: y0, w: W - 2 * pad, h: 36, text: libLine, size: 26, color: UI.muted, maxLines: 1 });
 
     // Sort toggle.
@@ -454,9 +456,31 @@ export class Interaction {
       return;
     }
     const minLevel = Math.min(...toc.map((e) => e.level));
+    // The entry being read: highlighted, and the list opens there.
+    const c = this._currentRef()?.c ?? 0;
+    let current = -1;
+    toc.forEach((e, i) => { if (e.c <= c) current = i; });
+    // A long contents list in title order (a Wikipedia volume's 1,000 articles) gets a thumb
+    // index beside it: evenly spaced stops labelled with how their titles start.
+    const titles = toc.map((e) => e.title);
+    const listY = 96;
+    const listH = p.h - 120;
+    const stops = toc.length > TOC_THUMBS_MIN && inTitleOrder(titles) ? thumbIndex(titles, TOC_THUMBS) : [];
+    const thumbW = stops.length ? 96 : 0;
+    stops.forEach(({ index, label }, k) => {
+      const h = listH / TOC_THUMBS;
+      p.add({
+        type: 'button', x: 20, y: listY + k * h, w: thumbW - 12, h: h - 6, label, size: 24,
+        onClick: () => {
+          p.get('list').scroll = index;
+          p.markDirty();
+        },
+      });
+    });
     p.add({
-      id: 'list', type: 'list', x: 20, y: 96, w: p.w - 40, h: p.h - 120, rowH: 64, size: 26, serif: true,
-      items: toc.map((e) => ({ label: e.title, indent: e.level - minLevel, onClick: () => this.jumpToToc(e) })),
+      id: 'list', type: 'list', x: 20 + thumbW, y: listY, w: p.w - 40 - thumbW, h: listH, rowH: 64, size: 26, serif: true,
+      scroll: Math.max(0, current - 3),
+      items: toc.map((e, i) => ({ label: e.title, indent: e.level - minLevel, active: i === current, onClick: () => this.jumpToToc(e) })),
     });
   }
 
@@ -708,8 +732,11 @@ export class Interaction {
   // ===========================================================================================
   // Reading
 
-  /** Opens the inspected book for reading. */
-  async read({ fromStart = false } = {}) {
+  /**
+   * Opens the inspected book for reading: at the saved position, at the start (fromStart), or at
+   * a block anchor (at: { c, b }, e.g. a Wikipedia article found by search).
+   */
+  async read({ fromStart = false, at = null } = {}) {
     if (this.state !== 'inspect' || !this.book.readable) return;
     this.state = 'busy';
     this.inspectPanel.visible = false;
@@ -721,7 +748,7 @@ export class Interaction {
     let startRef;
     try {
       await reader.load();
-      const pos = !fromStart && load(`pos:${book.libId}:${book.id}`, null);
+      const pos = at ?? (!fromStart && load(`pos:${book.libId}:${book.id}`, null));
       startRef = pos ? await reader.refForAnchor(pos) : reader.firstRef();
     } catch (err) {
       console.error(err);
@@ -1181,6 +1208,21 @@ export class Interaction {
     await this._tween(0.4, () => {});
     await this.pick(book);
     if (this.state === 'inspect' && book.readable) await this.read();
+  }
+
+  /** Article search result: take its Wikipedia volume off the shelf and open it at the article. */
+  async openArticle(libId, bookId, n) {
+    if (this.state === 'inspect' || this.state === 'read') await this.putBack();
+    if (this.state !== 'browse') return;
+    const book = (this.booksByLib[libId] || []).find((b) => b.id === bookId);
+    if (!book || !(await this.ensureShelved(book))) {
+      this.overlay?.showToast('That volume is not on the shelves.', 'error');
+      return;
+    }
+    this.showBook(book);
+    await this._tween(0.4, () => {});
+    await this.pick(book);
+    if (this.state === 'inspect') await this.read({ at: { c: n, b: 0 } });
   }
 
   /** Overlay search result: go there, highlight, and take it out on non-XR. */

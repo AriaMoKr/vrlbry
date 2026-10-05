@@ -14,8 +14,10 @@ It understands two kinds of [Kiwix ZIM files](https://library.kiwix.org/) especi
   genre.
 - **Wikipedia** (mwoffliner): a room of encyclopedia volumes, each holding 1,000 articles in
   title order with a matching blue-and-gilt binding, the volume number and title range on the
-  spine, and every article starting on a fresh page. The first time a Wikipedia ZIM is opened,
-  its articles are indexed in the background (about a minute for Simple English).
+  spine, and every article starting on a fresh page. The search box finds articles by title and
+  opens the right volume at that article. Infoboxes become a "Quick facts" section after the
+  introduction, and formulas sit in the text. The first time a Wikipedia ZIM is opened, its
+  articles are indexed in the background (about a minute for Simple English).
 
 Other ZIM files also work: their HTML articles become the books, up to 2,000 per file (`--max-generic`).
 

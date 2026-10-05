@@ -284,9 +284,18 @@ Conversion rules:
 - `dt` → paragraph with bold; `dd` → paragraph with `q+1`.
 - Headings `h1–h6` → `t:'h'`, `l` = level. Heading text containing only whitespace → dropped.
 - Images: `img` → `t:'img'` block (`src` resolved via `resolveHref`, `alt`, `w`/`h` from numeric
-  `width`/`height` attributes if present). An `img` inside running text still becomes its own
-  block (splitting the paragraph). Skip images whose src resolves to null, except emit the alt
-  text as an italic paragraph when non-empty. `figcaption` / `.caption` text following an image →
+  `width`/`height` attributes if present). A large `img` inside running text becomes its own
+  block (splitting the paragraph). Inline images stay in the text as image runs (§3.5):
+  MediaWiki formulas (`img.mwe-math-fallback-image-inline`, sized from the `width` / `height` /
+  `vertical-align` in ex of their style, at 8 px per ex) and images with a numeric size at most
+  32 px tall (icons, flags). A block that would hold nothing but image runs becomes image blocks
+  (a formula on its own line). `mw-invert` / `skin-invert` images get `inv: 1`. Skip images whose
+  src resolves to null, except emit the alt text as an italic paragraph when non-empty.
+- MediaWiki: `navbox`, `sidebar`, `ambox`, `side-box`, `sistersitebox`, `portalbox` and the other
+  chrome classes in `MW_CHROME_CLASSES` are dropped. A top-level `table.infobox` is moved: its
+  first image (with a one-cell caption row right after it, centred and smaller) stays where the
+  infobox was, and the rest goes under a "Quick facts" heading (`h` level 2) before the next
+  heading of level ≤ 2, or at the end. `figcaption` / `.caption` text following an image →
   paragraph `a:'c'` with smaller style.
 - `hr` → `t:'hr'`. `pre` → `t:'pre'` with `x` = raw text (preserve whitespace/newlines; strip one
   leading newline; drop if blank).
@@ -323,12 +332,18 @@ A book is an array of blocks. Each block is a JSON object with a type tag `t`:
 | `'li'`  | `r` Run[], `d` int ≥1, `m` string, `q`? | list item |
 | `'tr'`  | `c` Run[][], `g` int, `hd`? bool, `q`? | table row |
 | `'pre'` | `x` string, `q`? | preformatted text |
-| `'img'` | `src` string, `w`? `h`? numbers (natural px), `alt`? string, `q`? | image |
+| `'img'` | `src` string, `w`? `h`? numbers (natural px), `alt`? string, `inv`? 1, `em`? 1, `q`? | image (`inv`: black on transparent, inverted on dark paper; `em`: a formula standing alone, sized with the text like image runs) |
 | `'hr'`  | — | separator |
 
 `Run` = `[text, styleBits]` tuple (compact on the wire), `styleBits` integer:
 `1` italic, `2` bold, `4` mono, `8` sup, `16` sub, `32` smallcaps, `64` underline, `128` smaller,
 `256` larger. Adjacent runs with equal bits are merged. Text may contain `"\n"` (hard break).
+An **image run** `["￼", styleBits, { src, w, h, va?, alt?, inv? }]` is an image inside the
+text: `w` × `h` CSS px at a 16 px font (the reader scales them with the text), `va` its
+vertical-align in px (negative = below the baseline), `inv` as for image blocks. It counts as one
+character, is never merged with text runs, and is part of the word it touches (no break before a
+following comma). The reader grows a line to fit a tall one, shrinks one wider than the line,
+and caps them at the line height in table cells; contents titles leave them out.
 Optional fields are omitted when default (`a` absent = justified/left, `q` absent = 0).
 
 `TocEntry` = `{ title: string, level: 1–6, c: chunkIndex, b: blockIndexWithinChunk }`.
@@ -527,6 +542,13 @@ replaces each with the real character count when the chunk arrives (§5.2).
 accepts it (recommended: large chunks compress ~4×).
 
 **`GET /api/libraries/:lib/books/:id/res/<path>`** → raw EPUB-internal file with its mime.
+
+**`GET /api/libraries/:lib/articles?q=<prefix>&limit=<n>`** (Wikipedia libraries only, 404
+otherwise) → `{ "library": lib, "articles": [ { "title", "book": "v<N>", "n" } ] }`: articles whose
+title starts with `q` in title order (matched by `titleKey`, so case, accents, a leading "The" and
+punctuation are ignored), the one titled exactly `q` first; `book` is the volume and `n` the
+article's chunk in it. `limit` defaults to 12, at most 50. A binary search over the sorted index
+reads ~20 directory entries (a few ms on 1 M articles); empty while indexing.
 
 **`GET /zim/:lib/<archivePath>`** → raw entry content. `<archivePath>` is `ns/url` with each
 segment percent-encoded (decode each segment, join with `/`). Follows ZIM redirects internally.
@@ -828,7 +850,10 @@ States: `browse` → `inspect` → `read` (and back).
   the slot, `showBook`, → **browse**.
 - **read:** book moves to the reading pose (§`config.READ`), opens, shows the saved or first spread.
   Toolbar panel under the book: ◀ ▶, progress bar (click to jump), Contents, A− A+, theme, Close.
-  Contents opens a scrollable TOC panel. Page turn: right-stick flick left/right, trigger on the
+  Contents opens a scrollable TOC panel at the entry being read (highlighted). A list of more
+  than 30 entries in title order (`inTitleOrder`: a Wikipedia volume's articles) gets a thumb
+  index beside it: 9 evenly spaced stops, each labelled with the shortest start of its title
+  that differs from the stop before (`thumbIndex` in `util/books.js`: "Kad", "Kae", "Kal"). Page turn: right-stick flick left/right, trigger on the
   right/left page, toolbar buttons, keyboard ←/→/PageUp/PageDown/Space, swipe on touch. Right stick
   up/down = move book nearer/farther, left stick up/down = scale (READ.minScale..maxScale), grip
   drag = reposition (bonus). Next spread is pre-rendered for instant turns. Saves position on every
@@ -889,7 +914,10 @@ States: `browse` → `inspect` → `read` (and back).
   `libId` for this.
 - DOM overlay (non-VR): see `ui/overlay.js` — title with the same "Updated …" stamp, library
   cards (with indexing progress), a ⟳ rescan button, search box (filters by title / author across *all* books of all libraries;
-  picking a result = switch room if needed, teleport to it and select it), Enter VR button
+  picking a result = switch room if needed, teleport to it and select it; for Wikipedia
+  libraries it also asks the server for articles by title, 150 ms after typing stops, listed
+  after up to 6 books; picking an article takes its volume off the shelf and opens it at that
+  article, `interaction.openArticle` / `read({ at })`), Enter VR button
   (only when `immersive-vr` is supported), control help, loading progress, error toasts.
 
 ### 5.7 Bootstrap (`main.js`)

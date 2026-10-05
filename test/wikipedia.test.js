@@ -18,11 +18,16 @@ let tmp;
 before(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vrlbry-wp-')); });
 after(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
 
-/** An mwoffliner 2-shaped article: first heading (chrome), lead, a collapsible section, an image. */
+/**
+ * An mwoffliner 2-shaped article: first heading (chrome), a sidebar, an infobox, a lead with a
+ * formula, a collapsible section, an image.
+ */
 function article(title, lead) {
   return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${title}</title></head><body>
 <div class="mw-body"><h1 id="firstHeading">${title}</h1><div id="mw-content-text"><div class="mw-parser-output">
-<p>${lead}</p>
+<table class="sidebar nomobile"><tr><td>Series box</td></tr></table>
+<table class="infobox"><tr><td colspan="2"><img src="./_assets_/pic.png" width="200" height="300"></td></tr><tr><th>Kind</th><td>Thing</td></tr></table>
+<p>${lead} <span class="mwe-math-element"><img src="./_assets_/f.svg" class="mwe-math-fallback-image-inline mw-invert" style="vertical-align: -0.5ex; width:2ex; height:2ex;" alt="x"></span>.</p>
 <details data-level="2" open><summary class="section-heading"><h2 id="History">History</h2></summary>
 <p>The history of ${title}.</p><figure><img src="./_assets_/pic.png" width="200" height="300" alt="A picture"></figure></details>
 <div class="navbox">Navigation box</div>
@@ -50,6 +55,7 @@ function writeWikipediaZim(file) {
     { ns: 'C', url: 'Zebra_stripes', title: 'Zebra stripes', mime: 'text/html', content: redirectPage('Zebra stripes', 'Zebra#History') },
     { ns: 'C', url: '_assets_/pic.png', mime: 'image/png', content: png },
     { ns: 'C', url: '_assets_/style.css', mime: 'text/css', content: 'body{}' },
+    { ns: 'C', url: '_assets_/f.svg', mime: 'image/svg+xml', content: '<svg xmlns="http://www.w3.org/2000/svg" width="2ex" height="2ex"/>' },
     { ns: 'M', url: 'Source', mime: 'text/plain', content: 'en.wikipedia.org' },
     { ns: 'M', url: 'Title', mime: 'text/plain', content: 'Wikipedia Test' },
     { ns: 'M', url: 'Language', mime: 'text/plain', content: 'eng' },
@@ -143,10 +149,25 @@ describe('wikipedia', () => {
       assert.equal(img.src, '/zim/wp/C/_assets_/pic.png');
       assert.deepEqual([img.w, img.h], [200, 300]);
       assert.ok(!JSON.stringify(blocks).includes('Navigation box'));
+      assert.ok(!JSON.stringify(blocks).includes('Series box'), 'sidebars are dropped');
+      // The infobox image opens the article, the facts follow the lead, the formula stays inline.
+      assert.deepEqual(blocks.slice(0, 4).map((b) => b.t === 'h' ? 'h:' + b.r[0][0] : b.t), ['h:The Beatles', 'img', 'p', 'h:Quick facts']);
+      const formula = blocks[2].r.find((r) => r.length > 2)[2];
+      assert.deepEqual(formula, { src: '/zim/wp/C/_assets_/f.svg', w: 16, h: 16, va: -4, alt: 'x', inv: 1 });
       assert.equal(lib.conversions, 1);
       assert.equal(await lib.chunk('v2', 1), chunk, 'cached');
       assert.equal(await lib.chunk('v2', 3), null, 'out of range');
       assert.equal(await lib.chunk('v9', 0), undefined, 'unknown volume');
+      // Article search: title prefixes in the index's own terms, with the volume and chunk.
+      assert.deepEqual(await lib.searchArticles('a'), [{ title: 'Ant', book: 'v1', n: 1 }, { title: 'apple', book: 'v1', n: 2 }]);
+      assert.deepEqual(await lib.searchArticles('APPLE'), [{ title: 'apple', book: 'v1', n: 2 }]);
+      assert.deepEqual(await lib.searchArticles('the beat'), [{ title: 'The Beatles', book: 'v2', n: 1 }], 'a leading The is ignored');
+      assert.deepEqual(await lib.searchArticles('ecl'), [{ title: 'Éclair', book: 'v2', n: 2 }], 'accents are ignored');
+      assert.deepEqual(await lib.searchArticles('zeb'), [{ title: 'Zebra', book: 'v3', n: 0 }]);
+      assert.deepEqual(await lib.searchArticles('apples'), [], 'redirect pages are not articles');
+      assert.deepEqual(await lib.searchArticles('  '), []);
+      assert.equal((await lib.searchArticles('', 3)).length, 0);
+      assert.deepEqual((await lib.searchArticles('2001')).map((a) => a.title), ['2001: A Space Odyssey']);
       await lib.close();
 
       // Reopened: the cached index is used at once.
@@ -176,6 +197,11 @@ describe('wikipedia', () => {
       assert.equal(body.index, 6);
       assert.deepEqual(body.blocks[0].r, [['Zebra', 0]]);
       assert.equal((await fetch(`${base}/chunks/7`)).status, 404);
+      const search = `http://127.0.0.1:${server.address().port}/api/libraries/wiki/articles`;
+      const found = await (await fetch(`${search}?q=ban&limit=5`)).json();
+      assert.deepEqual(found, { library: 'wiki', articles: [{ title: 'Banana', book: 'v1', n: 3 }] });
+      assert.deepEqual((await (await fetch(`${search}?q=`)).json()).articles, []);
+      assert.equal((await fetch(`http://127.0.0.1:${server.address().port}/api/libraries/nope/articles?q=a`)).status, 404);
     } finally {
       server.close();
       await library.close();

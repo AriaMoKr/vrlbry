@@ -72,6 +72,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .ov-results li { display: flex; gap: 10px; align-items: center; padding: 6px 8px; border-radius: 10px; cursor: pointer; }
 .ov-results li.sel, .ov-results li:hover { background: rgba(217,178,106,.16); }
 .ov-results img, .ov-nocover { width: 34px; height: 48px; object-fit: cover; border-radius: 3px; background: #3a2e22; flex: none; box-shadow: 0 2px 6px rgba(0,0,0,.4); }
+.ov-results img.ov-r-icon { height: 34px; object-fit: contain; background: none; box-shadow: none; }
 .ov-r-title { font: 600 14px/1.25 var(--serif); }
 .ov-r-sub { color: var(--muted); font-size: 12px; }
 .ov-empty { color: var(--muted); cursor: default !important; }

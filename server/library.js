@@ -407,6 +407,22 @@ export class ArchiveLibrary {
   }
 
   /**
+   * Wikipedia articles whose titles start with `query` (§2.5), in title order: each with its
+   * volume's book id and its chunk in that volume. Empty for other libraries and while indexing.
+   * @param {string} query
+   * @param {number} [limit]
+   * @returns {Promise<Array<{ title: string, book: string, n: number }>>}
+   */
+  async searchArticles(query, limit) {
+    const idx = this._wikipedia;
+    if (!idx) return [];
+    const found = await wikipedia.searchIndex(this.archive, idx, query, limit);
+    return found.map(({ title, position }) => ({
+      title, book: `v${Math.floor(position / idx.volumeSize) + 1}`, n: position % idx.volumeSize,
+    }));
+  }
+
+  /**
    * One chunk of a book's content (§3.6). Most books are converted whole by content(); the
    * articles of a Wikipedia volume are converted one by one, when first asked for, and cached
    * in the same LRU.
@@ -1010,8 +1026,17 @@ export class ArchiveLibrary {
    */
   async _fixImages(blocks, { lookup, fallback, url }) {
     const imgs = [];
-    for (let i = 0; i < blocks.length; i++) if (blocks[i].t === 'img') imgs.push(i);
-    if (!imgs.length) return;
+    const inline = []; // image runs (SPEC §3.5): their size is known, only the path is resolved
+    for (let i = 0; i < blocks.length; i++) {
+      const b = blocks[i];
+      if (b.t === 'img') imgs.push(i);
+      else if (b.r) {
+        for (const run of b.r) if (run.length > 2) inline.push(run);
+      } else if (b.c) {
+        for (const cell of b.c) for (const run of cell) if (run.length > 2) inline.push(run);
+      }
+    }
+    if (!imgs.length && !inline.length) return;
     const resolved = new Map(); // src → { path, info } (books repeat decorative images)
     const resolve = async (src, size) => {
       const key = `${size ? 1 : 0}${src}`;
@@ -1060,6 +1085,19 @@ export class ArchiveLibrary {
       }
       if (info.w && info.h) Object.assign(blk, fillSize(blk, info));
       blk.src = url(p);
+    });
+    await mapLimit(inline, IMAGE_PROBE_CONCURRENCY, async (run) => {
+      const img = run[2];
+      if (img.src.startsWith('data:')) return;
+      const { path: p, info } = await resolve(img.src, false);
+      if (info.ok) {
+        img.src = url(p);
+      } else {
+        // Missing: its alt text in italics, as for block images.
+        run.length = 2;
+        run[0] = img.alt || '';
+        run[1] |= 1;
+      }
     });
     if (drop.size) {
       let w = 0;

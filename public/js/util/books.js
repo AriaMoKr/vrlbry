@@ -101,6 +101,41 @@ export function letterOf(book, mode) {
   return c >= 'A' && c <= 'Z' ? c : '#';
 }
 
+/** True when titles are in title order (as sortBooks sorts by title), e.g. a Wikipedia volume's contents. */
+export function inTitleOrder(titles) {
+  for (let i = 1; i < titles.length; i++) {
+    if (collator.compare(titleKey(titles[i - 1]), titleKey(titles[i])) > 0) return false;
+  }
+  return true;
+}
+
+/**
+ * A dictionary-style thumb index over titles in title order: `stops` evenly spaced entries, each
+ * labelled with the shortest start of its title key (at most 4 letters) that tells it from the
+ * stops on either side. A Wikipedia volume runs e.g. "Kad", "Kae", "Kaf", "Kal", where letters
+ * alone would all read "K".
+ * @returns {Array<{ index: number, label: string }>}
+ */
+export function thumbIndex(titles, stops) {
+  const n = titles.length;
+  const count = Math.min(stops, n);
+  const at = Array.from({ length: count }, (_, k) => Math.floor((k * n) / count));
+  const keys = at.map((i) => titleKey(titles[i]) || (titles[i] || '').toLowerCase());
+  // Letters needed to tell a from b: up to and including their first difference.
+  const needed = (a, b) => {
+    if (b === undefined) return 1;
+    let i = 0;
+    while (i < a.length && a[i] === b[i]) i++;
+    return i + 1;
+  };
+  return at.map((index, k) => {
+    const key = keys[k];
+    const len = Math.max(1, Math.min(4, key.length, Math.max(needed(key, keys[k - 1]), needed(key, keys[k + 1]))));
+    const label = key.slice(0, len);
+    return { index, label: label.charAt(0).toUpperCase() + label.slice(1) };
+  });
+}
+
 /**
  * Physical size of a book in metres: { w: spine thickness (x), h: height (y), d: depth (z) }.
  * Thickness grows with the logarithm of the book's byte size when known, else is hash-derived.

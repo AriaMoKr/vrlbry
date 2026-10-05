@@ -9,7 +9,7 @@
   - Articles are in the **app's title order** (`titleKey` + `Intl.Collator`, as in
     `util/books.js`), not the ZIM's byte order. The server sorts all titles once while indexing.
   - Each article starts on a **fresh page** (one chunk per article). A volume's contents list is
-    its 1,000 article titles, so the contents panel needs a letter jump.
+    its 1,000 article titles, with a thumb index ("Kad", "Kae", "Kal") beside it.
   - The index reads no article text: it reads every directory entry, then each page's HTML size
     (to drop mwoffliner's section-redirect pages and estimate lengths), sorts, cuts into
     volumes and caches in `.cache/`. Measured on this PC (2026-10-04):
@@ -30,31 +30,15 @@
       number and range, with the ZIM's globe illustration as an emblem.
     - Volumes are numbered 1–N in title order. Bookcase plates show their first and last
       article ("Aa – Ac"), and the section sign reads "Wikipedia (English) · 6,800 volumes".
-- **Wikipedia: still to do.** A letter jump in the contents panel (a volume lists 1,000
-  articles); trying the full English maxi (~6.8 M articles, ~119 GB): at the top-1M rate its
-  index would take roughly 1¾ hours, so consider speeding up the size pass (e.g. decompressing
-  clusters in worker threads) and check the memory of the 6.8 M-title sort; trying a volume on
-  the Quest.
-- **Wikipedia: infoboxes and sidebars come first.** Popular articles open with their infobox (a
-  table of facts with flags and icons) and sidebars such as the "African Americans" series box,
-  converted to tables and long lists. In "African Americans" that is 235 list items, 14 table
-  rows and 14 images, so the article text starts on page ~14 of 185. The converter strips
-  `navbox` but not `infobox` or `sidebar` (`MW_CHROME_CLASSES` in `server/content/html.js`).
-  Options: drop them, move them after the article, or keep only the infobox's main image and a
-  few facts.
-- **Wikipedia: formulas split paragraphs.** Math is stored as small SVG images inside the
-  sentence, and the converter makes every image its own block, so a sentence with a formula
-  breaks into text, a centred formula, then more text. "Kalman filter" has 347 such images.
-  Inline images need a place in the block format (e.g. an image run inside `r`, SPEC §3.5)
-  and in the layout's line breaking.
-- **Wikipedia: the kiosk says "books".** The Shelves & settings tab reads "Wikipedia's 1m Top
-  Articles · 1,000 books"; it should say volumes (`interaction.js`, the shelved count; `unitOf`
-  in `rooms.js` already knows the word).
+- **Wikipedia: the full English maxi** (~6.8 M articles, ~119 GB). At the top-1M rate its index
+  would take roughly 1¾ hours: consider speeding up the size pass (e.g. decompressing clusters in
+  worker threads), and check the memory of the 6.8 M-title sort.
+- **Wikipedia: search in VR.** Article search (and book search) is in the desktop/phone overlay
+  only; a headset needs a keyboard on the kiosk.
+- **Wikipedia: search by redirects.** Search matches article titles only. ZIM redirects ("NYC" →
+  "New York City") could serve as aliases, through the ZIM's own title index.
 - **Wikipedia: follow links** (later). Tapping a link in an article goes to that article, taking
   its volume off the shelf if needed. The reader cannot follow links today.
-- **Wikipedia: article search.** Typing an article title opens the right volume at that article.
-  This needs a server endpoint, because the client cannot hold millions of titles; redirects
-  could serve as aliases.
 - **Wikipedia in the all-libraries hall.** It stays out for now. Decide later whether it gets a
   fair share of the 200 bookcases.
 - **Dropped frames while walking.** A Quest 3 still drops ~4 % of frames walking an ordinary room

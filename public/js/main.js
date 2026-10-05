@@ -143,6 +143,7 @@ async function start() {
   }).catch(() => {});
   overlay.onEnterVR(enterVR);
   overlay.onSearchPick((book) => interaction.searchPick(book));
+  overlay.onArticlePick((libId, article) => interaction.openArticle(libId, article.book, article.n));
 
   // Folder rescans: the server bumps `generation` when ZIM files are added or removed; poll it and
   // re-shelve (the rebuild waits until no book is open).

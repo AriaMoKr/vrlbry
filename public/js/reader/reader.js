@@ -508,7 +508,11 @@ export class BookReader {
           if (img) {
             const ti = performance.now();
             g.globalAlpha = t.img;
+            // Black-on-transparent images (formulas) would vanish on dark paper.
+            const invert = it.inv && this.theme === 'night';
+            if (invert) g.filter = 'invert(1)';
             g.drawImage(img, it.x, y + it.y, it.w, it.h);
+            if (invert) g.filter = 'none';
             g.globalAlpha = 1;
             imageMs += performance.now() - ti;
             images++;

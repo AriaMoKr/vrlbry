@@ -66,12 +66,24 @@ const NAV_CLASSES = new Set(['totoc', 'toclink', 'return', 'back', 'backlink', '
 const MW_CHROME_CLASSES = new Set([
   'ws-noexport', 'noprint', 'mw-editsection', 'navbox', 'catlinks', 'printfooter', 'zim-footer',
   'licensecontainer', 'licensebanner', 'pr_quality', 'mw-jump-link', 'mw-indicators', 'mw-cite-backlink',
-  'mw-empty-elt',
+  'mw-empty-elt', 'sidebar', 'ambox', 'side-box', 'sistersitebox', 'portalbox',
 ]);
 const MW_CHROME_IDS = new Set([
   'firstHeading', 'contentSub', 'mw-content-subtitle', 'siteSub', 'catlinks', 'jump-to-nav',
   'mw-navigation', 'footer', 'mw-panel', 'mw-head', 'mw-page-base', 'mw-head-base', 'toc-toggle',
 ]);
+
+// Inline images (SPEC §3.5 image runs) stay in the line of text: MediaWiki's inline formulas (sized
+// in ex in their style) and small images with an explicit size. A block holding nothing but
+// images still becomes image blocks.
+const INLINE_IMG_MAX_H = 32;
+const EX_PX = 8; // CSS px per ex at a 16 px font, as the SVG sniffer assumes
+const RE_MATH_INLINE = /(?:^|\s)mwe-math-fallback-image-inline(?:\s|$)/;
+const RE_INVERT = /(?:^|\s)(?:mw-invert|skin-invert)(?:\s|$)/;
+const RE_INFOBOX = /(?:^|\s)infobox(?:\s|$)/;
+const OBJ = '￼'; // the text of an image run
+const FACTS_TITLE = 'Quick facts';
+const FORMULAS = new WeakSet(); // image-run objects of formulas (sized in ex: they scale with the text)
 
 const RE_VERSE = /^(poem|poetry|stanza|verse|linegroup|lines$|lines-container|lg-container)/i;
 const RE_STANZA = /^stanza/i;
@@ -327,7 +339,7 @@ class Runs {
     this.len += text.length;
     const r = this.r;
     const last = r[r.length - 1];
-    if (last !== undefined && last[1] === bits) last[0] += text;
+    if (last !== undefined && last[1] === bits && last.length === 2) last[0] += text;
     else r.push([text, bits]);
   }
 
@@ -352,12 +364,15 @@ class Runs {
     if (this.r.length !== 0 && this.nl === 0 && this.sp < 0) this.sp = bits;
   }
 
-  /** Appends text that has no leading/trailing collapsible whitespace. */
-  word(core, bits) {
+  /** Materializes pending line breaks and indentation before new content. */
+  lead(bits) {
     const r = this.r;
     if (this.nl > 0) {
       // Newlines attach to the preceding run so a line break never starts a new styled run.
-      r[r.length - 1][0] += this.nl > 1 ? '\n\n' : '\n';
+      const nl = this.nl > 1 ? '\n\n' : '\n';
+      const last = r[r.length - 1];
+      if (last.length === 2) last[0] += nl;
+      else r.push([nl, last[1]]); // after an image
       this.nl = 0;
       this.sp = -1;
     }
@@ -365,6 +380,11 @@ class Runs {
       if (this.sp < 0) this.push(NBSP.repeat(2 * this.ind), bits);
       this.ind = 0;
     }
+  }
+
+  /** Appends text that has no leading/trailing collapsible whitespace. */
+  word(core, bits) {
+    this.lead(bits);
     if (this.sp >= 0) {
       if (this.sp === bits) core = ' ' + core;
       else this.push(' ', this.sp);
@@ -372,6 +392,19 @@ class Runs {
     }
     this.push(core, bits);
     if (!this.vis && VISIBLE.test(core)) this.vis = true;
+  }
+
+  /** An inline image: a run of one U+FFFC carrying { src, w, h, va?, alt?, inv? } (SPEC §3.5). */
+  image(img, bits) {
+    if (this.done) return;
+    this.lead(bits);
+    if (this.sp >= 0) {
+      this.push(' ', this.sp);
+      this.sp = -1;
+    }
+    this.r.push([OBJ, bits, img]);
+    this.len += 1;
+    this.vis = true;
   }
 
   /** Explicit `<br>`: ignored at the start of the block; trailing ones are dropped at finish(). */
@@ -423,11 +456,59 @@ class Runs {
 function appendRuns(dst, src) {
   let i = 0;
   const last = dst[dst.length - 1];
-  if (last && src.length && src[0][1] === last[1]) {
+  if (last && src.length && src[0][1] === last[1] && last.length === 2 && src[0].length === 2) {
     last[0] += src[0][0];
     i = 1;
   }
   for (; i < src.length; i++) dst.push(src[i]);
+}
+
+/** The images of runs that hold nothing visible besides images, else null. */
+function imagesOnly(r) {
+  let imgs = null;
+  for (const run of r) {
+    if (run.length > 2) (imgs ??= []).push(run[2]);
+    else if (VISIBLE.test(run[0])) return null;
+  }
+  return imgs;
+}
+
+/** An image block for an inline image that stands alone; a formula stays sized with the text (`em`). */
+function imageBlock(img, q) {
+  const blk = { t: 'img', src: img.src, w: Math.max(1, Math.round(img.w)), h: Math.max(1, Math.round(img.h)) };
+  if (FORMULAS.has(img)) blk.em = 1;
+  if (img.alt) blk.alt = img.alt;
+  if (img.inv) blk.inv = 1;
+  if (q) blk.q = q;
+  return blk;
+}
+
+/** Inline size of an <img> (CSS px at a 16 px font), or null for a block image. */
+function inlineSize(attribs) {
+  const cls = attribs.class;
+  const inv = !!cls && RE_INVERT.test(cls);
+  if (cls && RE_MATH_INLINE.test(cls)) {
+    const st = attribs.style ?? '';
+    const w = exLength(st, 'width');
+    const h = exLength(st, 'height');
+    if (w > 0 && h > 0) {
+      return { w: round1(w * EX_PX), h: round1(h * EX_PX), va: round1(exLength(st, 'vertical-align') * EX_PX), inv, formula: true };
+    }
+  }
+  const w = numericAttr(attribs.width);
+  const h = numericAttr(attribs.height);
+  if (w && h && h <= INLINE_IMG_MAX_H) return { w, h, va: 0, inv };
+  return null;
+}
+
+/** A CSS length in ex from an inline style, or 0. */
+function exLength(style, prop) {
+  const m = new RegExp(`(?:^|;)\\s*${prop}\\s*:\\s*(-?\\d*\\.?\\d+)ex`, 'i').exec(style);
+  return m ? +m[1] : 0;
+}
+
+function round1(v) {
+  return Math.round(v * 10) / 10;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -516,6 +597,8 @@ class Converter {
     this.tableCount = 0;
     this.lastVerse = null; // { vg, q, a, blk } for merging verse lines into one block
     this.emitted = 0;
+    this.box = null; // the MediaWiki infobox being captured: { main, frame }
+    this.facts = null; // its blocks, waiting for the end of the lead section
   }
 
   get top() {
@@ -571,8 +654,54 @@ class Converter {
       const prev = this.out[this.out.length - 1];
       if (prev && prev.t === 'hr') return;
     }
+    if (this.facts && !this.box && blk.t === 'h' && blk.l <= 2) this.emitFacts();
     this.out.push(blk);
     this.emitted++;
+  }
+
+  // --- MediaWiki infoboxes -----------------------------------------------------------------------
+  // A Wikipedia article starts with its infobox (a table of facts, flags and icons). It is laid
+  // out in a book as: its first image at the top (with its caption), the article's lead, then the
+  // rest of the infobox under "Quick facts" before the first section.
+
+  startInfobox(frame) {
+    this.box = { main: this.out, frame };
+    this.out = [];
+  }
+
+  endInfobox() {
+    const blocks = this.out;
+    this.out = this.box.main;
+    this.box = null;
+    const i = blocks.findIndex((b) => b.t === 'img');
+    if (i >= 0) {
+      const [img] = blocks.splice(i, 1);
+      this.emit(img);
+      // A one-cell row right after the image is its caption.
+      const next = blocks[i];
+      const cells = next?.t === 'tr' ? next.c.filter((c) => c.length) : [];
+      if (cells.length === 1 && next.c.length === 1) {
+        blocks.splice(i, 1);
+        const r = []; // the caption's runs, smaller
+        for (const run of cells[0]) {
+          const bits = run[1] | 128;
+          const last = r[r.length - 1];
+          if (run.length > 2) r.push([run[0], bits, run[2]]);
+          else if (last && last.length === 2 && last[1] === bits) last[0] += run[0];
+          else r.push([run[0], bits]);
+        }
+        this.emit({ t: 'p', r, a: 'c' });
+      }
+    }
+    if (blocks.some((b) => b.t !== 'hr')) (this.facts ??= []).push(...blocks);
+  }
+
+  emitFacts() {
+    const facts = this.facts;
+    this.facts = null;
+    this.out.push({ t: 'h', l: 2, r: [[FACTS_TITLE, 0]] });
+    for (const b of facts) this.out.push(b);
+    this.emitted += facts.length + 1;
   }
 
   startBlock(ctx) {
@@ -612,6 +741,17 @@ class Converter {
       if (b.id && !this.pendingId) this.pendingId = b.id;
       return;
     }
+    const imgs = imagesOnly(r);
+    if (imgs) {
+      // Small images standing alone (a formula on its own line, an ornament): image blocks.
+      imgs.forEach((img, i) => {
+        const blk = imageBlock(img, b.q);
+        if (i === 0 && b.id) blk.id = own(b.id);
+        this.emit(blk);
+      });
+      this.lastVerse = null;
+      return;
+    }
     let blk;
     if (b.t === 'h') {
       blk = { t: 'h', l: b.l, r };
@@ -632,7 +772,9 @@ class Converter {
         if (!stanzaStart && b.vg && lv && lv.vg === b.vg && lv.q === b.q && lv.a === b.a &&
             this.out[this.out.length - 1] === lv.blk) {
           const dst = lv.blk.r;
-          dst[dst.length - 1][0] += '\n';
+          const last = dst[dst.length - 1];
+          if (last.length === 2) last[0] += '\n';
+          else dst.push(['\n', last[1]]);
           appendRuns(dst, r);
           if (!lv.blk.id && b.id) lv.blk.id = own(b.id);
           this.emitted++;
@@ -689,6 +831,16 @@ class Converter {
     const alt = (attribs.alt ?? '').replace(SHY, '').replace(WS_RUN, ' ').trim();
     if (!src) {
       if (alt) this.altText(alt, ctx, true);
+      return;
+    }
+    const inline = ctx.pre ? null : inlineSize(attribs);
+    if (inline) {
+      const img = { src: own(src), w: inline.w, h: inline.h };
+      if (inline.va) img.va = inline.va;
+      if (alt) img.alt = own(alt);
+      if (inline.inv) img.inv = 1;
+      if (inline.formula) FORMULAS.add(img);
+      this.sink(ctx).image(img, ctx.bits);
       return;
     }
     const blk = { t: 'img', src: own(src) };
@@ -793,6 +945,16 @@ class Converter {
       } else {
         row.cells.forEach((c, i) => {
           if (!c.length) return;
+          const imgs = imagesOnly(c);
+          if (imgs) {
+            for (const img of imgs) {
+              const blk = imageBlock(img, row.q);
+              if (id) blk.id = own(id);
+              id = null;
+              this.emit(blk);
+            }
+            return;
+          }
           const blk = { t: 'p', r: c };
           if (row.aligns[i]) blk.a = row.aligns[i];
           if (row.q) blk.q = row.q;
@@ -1023,6 +1185,7 @@ class Converter {
         ctx.nest = 0;
         frame.kind = K_BLOCK | K_TABLE;
         frame.table = table;
+        if (!this.box && attribs.class && RE_INFOBOX.test(attribs.class)) this.startInfobox(frame);
         break;
       }
       case 'ul': case 'ol': case 'menu': case 'dir': {
@@ -1130,6 +1293,7 @@ class Converter {
     if (kind & K_TABLE) {
       this.flush();
       this.endTable(frame.table);
+      if (this.box?.frame === frame) this.endInfobox();
       return;
     }
     if (kind & K_PRE) {
@@ -1175,6 +1339,8 @@ class Converter {
     if (this.pre) this.endPre();
     this.flush();
     this.emitDeferred();
+    if (this.box) this.endInfobox(); // unclosed
+    if (this.facts) this.emitFacts();
   }
 }
 
@@ -1300,7 +1466,7 @@ export function chunkBlocks(blocks, { targetChars = 40000, maxBlocks = 3000 } = 
 
 function tocTitle(block) {
   let s = '';
-  for (const run of block.r) s += run[0];
+  for (const run of block.r) if (run.length === 2) s += run[0]; // no image runs
   s = s.replace(/\n/g, ' ').replace(/ {2,}/g, ' ').trim();
   if (s.length > TOC_TITLE_MAX) s = s.slice(0, TOC_TITLE_MAX - 1).trimEnd() + '\u2026';
   return s;

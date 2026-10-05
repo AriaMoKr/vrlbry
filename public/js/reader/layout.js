@@ -152,6 +152,25 @@ function smallCapsFlagged(f) {
  * @typedef {{ k: 'w', pieces: Piece[], w: number } | { k: 's', w: number } | { k: 'br' }} Token
  */
 
+/** Inline image sizes are CSS px at this font size (SPEC §3.5); they scale with the text. */
+const INLINE_REF_PX = 16;
+
+/** A piece for an inline image run, scaled to the text and to at most `maxH` tall. */
+function imagePiece(img, f, basePx, maxH) {
+  let k = basePx / INLINE_REF_PX;
+  if (img.h * k > maxH) k = maxH / img.h;
+  const w = Math.max(1, img.w * k);
+  const h = Math.max(1, img.h * k);
+  return { text: '', f, w, img: { src: img.src, alt: img.alt || '', inv: !!img.inv, w, h, va: (img.va || 0) * k } };
+}
+
+/** Shrinks an image piece to `w` wide. */
+function shrinkImage(p, w) {
+  const k = w / p.w;
+  p.w = w;
+  p.img = { ...p.img, w, h: p.img.h * k, va: p.img.va * k };
+}
+
 function pushPieces(pieces, text, f, m) {
   if (!text) return;
   if (f.sc) {
@@ -170,7 +189,7 @@ function pushPieces(pieces, text, f, m) {
     return;
   }
   const last = pieces[pieces.length - 1];
-  if (last && last.f === f) {
+  if (last && last.f === f && !last.img) {
     last.text += text;
     last.w = m.width(last.text, f.font);
   } else {
@@ -179,10 +198,12 @@ function pushPieces(pieces, text, f, m) {
 }
 
 /**
- * Splits runs into tokens. Only U+0020 and newlines break; NBSP stays inside words.
- * @param {Array<[string, number]>} runs
+ * Splits runs into tokens. Only U+0020 and newlines break; NBSP stays inside words. An image run
+ * is one piece of a word, so punctuation right after a formula stays with it.
+ * @param {Array<[string, number] | [string, number, object]>} runs
+ * @param {number} [imgMaxH] height limit for inline images
  */
-function tokenize(runs, basePx, bold, mono, m) {
+function tokenize(runs, basePx, bold, mono, m, imgMaxH = Infinity) {
   const tokens = [];
   let pieces = [];
   const flush = () => {
@@ -192,9 +213,13 @@ function tokenize(runs, basePx, bold, mono, m) {
     tokens.push({ k: 'w', pieces, w });
     pieces = [];
   };
-  for (const [text, bits] of runs) {
+  for (const [text, bits, img] of runs) {
     if (!text) continue;
     let f = fontFor(bits, basePx, bold, mono);
+    if (img) {
+      pieces.push(imagePiece(img, f, basePx, imgMaxH));
+      continue;
+    }
     if (bits & STYLE.SMALLCAPS) f = smallCapsFlagged(f);
     const parts = text.split(/(\n| +)/);
     for (const part of parts) {
@@ -233,6 +258,19 @@ function splitWord(word, avail, m) {
   let cur = [];
   let curW = 0;
   for (const p of word.pieces) {
+    if (p.img) {
+      // Images are never split: one wider than the line shrinks to fit it.
+      const img = { ...p };
+      if (img.w > avail) shrinkImage(img, avail);
+      if (curW + img.w > avail && curW > 0) {
+        parts.push(finishWord(cur, m));
+        cur = [];
+        curW = 0;
+      }
+      cur.push(img);
+      curW += img.w;
+      continue;
+    }
     for (const ch of p.text) {
       const w = m.width(ch, p.f.font);
       if (curW + w > avail && curW > 0) {
@@ -241,7 +279,7 @@ function splitWord(word, avail, m) {
         curW = 0;
       }
       const last = cur[cur.length - 1];
-      if (last && last.f === p.f) last.text += ch;
+      if (last && last.f === p.f && !last.img) last.text += ch;
       else cur.push({ text: ch, f: p.f, w: 0 });
       curW += w;
     }
@@ -253,7 +291,7 @@ function splitWord(word, avail, m) {
 function finishWord(pieces, m) {
   let w = 0;
   for (const p of pieces) {
-    p.w = m.width(p.text, p.f.font);
+    if (!p.img) p.w = m.width(p.text, p.f.font);
     w += p.w;
   }
   return { k: 'w', pieces, w };
@@ -373,9 +411,35 @@ function lineItems(line, x0, avail, align, justify, baseline) {
       }
       continue;
     }
-    for (const p of t.pieces) emit(p.text, p.f, p.w);
+    for (const p of t.pieces) {
+      if (p.img) {
+        // Bottom at the baseline, moved by its vertical-align (positive raises).
+        const im = p.img;
+        items.push({ k: 'img', x, y: baseline - im.va - im.h, w: im.w, h: im.h, src: im.src, alt: im.alt, inv: im.inv });
+        x += p.w;
+        run = null;
+      } else {
+        emit(p.text, p.f, p.w);
+      }
+    }
   }
-  return items.map((it) => ({ k: 't', x: it.x, y: it.y, text: it.text, font: it.f.font, u: it.f.u ? it.w : 0 }));
+  return items.map((it) => (it.k === 'img' ? it : { k: 't', x: it.x, y: it.y, text: it.text, font: it.f.font, u: it.f.u ? it.w : 0 }));
+}
+
+/**
+ * Grows a line box to hold its inline images (a tall formula): moves the items down when an
+ * image reaches above the line, and returns the box height.
+ */
+function fitImages(items, lh) {
+  let top = 0;
+  let bottom = lh;
+  for (const it of items) {
+    if (it.k !== 'img') continue;
+    top = Math.min(top, it.y - 2);
+    bottom = Math.max(bottom, it.y + it.h + 2);
+  }
+  if (top < 0) for (const it of items) it.y -= top;
+  return bottom - top;
 }
 
 function textBoxes(block, bi, ctx) {
@@ -435,7 +499,7 @@ function textBoxes(block, bi, ctx) {
   }
 
   const avail = M.textWidth - left - right;
-  const tokens = tokenize(block.r || [], basePx, bold, false, m);
+  const tokens = tokenize(block.r || [], basePx, bold, false, m, M.textHeight * 0.5);
   if (!tokens.length && block.t !== 'p') return [];
   // [x offset, width] of line i. Lists hang every line behind the marker; verse hangs only the
   // continuations of soft-wrapped lines; body text indents the paragraph's first line.
@@ -456,7 +520,8 @@ function textBoxes(block, bi, ctx) {
       const mw = m.width(marker, mf.font);
       items.push({ k: 't', x: left + hang - mw - 0.45 * em, y: baseline, text: marker, font: mf.font, u: 0 });
     }
-    boxes.push({ h: lh, before: i === 0 ? before : 0, after: i === lines.length - 1 ? after : 0, block: bi, line: i, lines: lines.length, keep, items });
+    const h = fitImages(items, lh);
+    boxes.push({ h, before: i === 0 ? before : 0, after: i === lines.length - 1 ? after : 0, block: bi, line: i, lines: lines.length, keep, items });
   }
   return boxes;
 }
@@ -522,13 +587,14 @@ function imageBox(block, bi, ctx) {
   // Pages are ~1024 px wide like a typical screen, so natural size is about right; small images
   // get a modest boost (they were authored for low-DPI screens), large ones are capped.
   const maxH = M.textHeight - 0.4 * em;
-  const scale = Math.min(nw < 160 ? 1.6 : 1.25, avail / nw, maxH / nh);
+  // `em` images (a formula on its own line) are sized like inline images, with the text.
+  const scale = Math.min(block.em ? em / INLINE_REF_PX : nw < 160 ? 1.6 : 1.25, avail / nw, maxH / nh);
   const w = Math.max(1, Math.round(nw * scale));
   const h = Math.max(1, Math.round(nh * scale));
   return [{
     h, before: 0.7 * em, after: 0.7 * em, block: bi, line: 0, lines: 1, keep: false,
     img: { nw, nh, avail, maxH },
-    items: [{ k: 'img', x: left + (avail - w) / 2, y: 0, w, h, src: block.src, alt: block.alt || '' }],
+    items: [{ k: 'img', x: left + (avail - w) / 2, y: 0, w, h, src: block.src, alt: block.alt || '', inv: !!block.inv }],
   }];
 }
 
@@ -562,7 +628,7 @@ function tableBoxes(rows, firstIndex, ctx) {
       // last column — page-number columns stay aligned.
       r.c.forEach((cell, i) => {
         const col = i === r.c.length - 1 && r.c.length < ncol ? ncol - 1 : i;
-        out[col] = tokenize(cell, basePx, !!r.hd, false, m);
+        out[col] = tokenize(cell, basePx, !!r.hd, false, m, Math.round(basePx * 1.34) - 2);
       });
       return out;
     });
@@ -607,7 +673,10 @@ function tableBoxes(rows, firstIndex, ctx) {
       r.c.forEach((cell, i) => {
         if (!cell.length) return;
         if (runs.length) runs.push(['\n', 0]);
-        for (const run of cell) runs.push([run[0], run[1] | (i === 0 ? STYLE.BOLD : 0)]);
+        for (const run of cell) {
+          const bits = run[1] | (i === 0 ? STYLE.BOLD : 0);
+          runs.push(run.length > 2 ? [run[0], bits, run[2]] : [run[0], bits]);
+        }
       });
       const b = textBoxes({ t: 'p', r: runs, a: undefined, v: 1, q }, firstIndex + ri, { ...ctx, prev: null });
       boxes.push(...b);
@@ -640,7 +709,10 @@ function tableBoxes(rows, firstIndex, ctx) {
     const items = [];
     cellLines.forEach((lines, col) => {
       lines.forEach((line, li) => {
-        items.push(...lineItems(line, colX[col], widths[col], rightAlign[col] ? 'r' : null, false, pad + li * lh + baseline));
+        for (const it of lineItems(line, colX[col], widths[col], rightAlign[col] ? 'r' : null, false, pad + li * lh + baseline)) {
+          if (it.k === 'img') it.y = pad + li * lh + (lh - it.h) / 2; // capped to the line: centred in it
+          items.push(it);
+        }
       });
     });
     const h = n * lh + 2 * pad;
