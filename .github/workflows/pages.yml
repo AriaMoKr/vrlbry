@@ -1,5 +1,5 @@
-# Builds the static site (tools/build-pages.mjs: the client without the Node server) and publishes
-# it to GitHub Pages, on every push to main or by hand.
+# Builds the static site (tools/build-pages.mjs: the client without the Node server, with the demo
+# set's ZIMs pre-rendered) and publishes it to GitHub Pages, on every push to main or by hand.
 # One-time setup: the repository's Settings → Pages → Build and deployment → Source: GitHub Actions.
 name: Pages
 
@@ -29,7 +29,21 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
-      - run: npm run build:pages
+      # The demo set (tools/demo-set.txt, one ZIM URL per line), cached until the list changes.
+      - uses: actions/cache@v4
+        with:
+          path: .demo
+          key: demo-set-${{ hashFiles('tools/demo-set.txt') }}
+      - name: Download the demo set
+        run: |
+          mkdir -p .demo
+          while read -r url; do
+            [ -n "$url" ] || continue
+            file=".demo/$(basename "$url")"
+            [ -f "$file" ] || curl -fsSL --retry 3 -o "$file" "$url"
+          done < tools/demo-set.txt
+          ls -l .demo
+      - run: npm run build:pages -- --zims .demo
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

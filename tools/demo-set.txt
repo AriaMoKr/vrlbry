@@ -1,0 +1,2 @@
+https://download.kiwix.org/zim/gutenberg/gutenberg_en_lcc-p_2026-03.zim
+https://download.kiwix.org/zim/wikipedia/wikipedia_en_mathematics_mini_2026-06.zim

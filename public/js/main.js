@@ -84,6 +84,8 @@ async function start() {
   // World.
   overlay.setLoading('Shelving the books…', 0.55);
   await new Promise((r) => setTimeout(r, 0)); // let the overlay paint before the heavy build
+  // Online (a static build), a first visit opens the demo set when the site has it.
+  if (catalog.static && !load('settings', {}).place) settings.place = 'demo';
   const world = new World({ renderer, scene });
   if (catalog.static) world.emptyText = ['No books here yet', 'This online version has no libraries yet'];
   await world.build(collectionsFor(libraries, booksByLib, settings), { sort: settings.sort });

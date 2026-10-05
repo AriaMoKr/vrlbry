@@ -11,6 +11,7 @@ Thumbs.db
 
 # The static site built by tools/build-pages.mjs (GitHub Pages)
 dist/
+.demo/
 
 # Performance dumps from tools/quest-perf.mjs
 perf/

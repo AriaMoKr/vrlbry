@@ -438,6 +438,23 @@ export class ArchiveLibrary {
   }
 
   /**
+   * Every article title of a Wikipedia in title order, with the volume size (§2.5): what a static
+   * build (tools/build-pages.mjs) needs to search articles in the browser. Null for other libraries
+   * and while indexing.
+   * @returns {Promise<{ volumeSize: number, titles: string[] } | null>}
+   */
+  async articleTitles() {
+    const idx = this._wikipedia;
+    if (!idx) return null;
+    const titles = new Array(idx.count);
+    await mapLimit(titles, 32, async (_, i) => {
+      const e = await this.archive.getEntryByIndex(idx.order[i]);
+      titles[i] = (e.title || e.url).replace(/\s+/g, ' ').trim();
+    });
+    return { volumeSize: idx.volumeSize, titles };
+  }
+
+  /**
    * One chunk of a book's content (§3.6). Most books are converted whole by content(); the
    * articles of a Wikipedia volume are converted one by one, when first asked for, and cached
    * in the same LRU.

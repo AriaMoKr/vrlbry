@@ -480,10 +480,16 @@ export async function collectWork(archive, rootUrl, { maxParts = 1200, maxBytes 
 
 ## 4. HTTP API
 
-(A static build for GitHub Pages, `tools/build-pages.mjs`, answers only `GET api/libraries`,
-`{ "generation": 0, "libraries": [], "static": true }`, and `GET api/version`, with `"static":
-true` too, as plain files. With `static`, the client hides the Rescan buttons and says the online
-version has no books. All client URLs are relative, so the site works under a path.)
+(A static build for GitHub Pages, `tools/build-pages.mjs`, answers with plain files. `api/libraries`
+and `api/version` carry `"static": true`; with it, the client hides the Rescan buttons and asks for
+a library's files by their static names (`api.js`): a path cannot be both a file and a folder, so
+they are under `api/library/<id>/`: `books.json`, `books/<book>/index.json`,
+`books/<book>/chunks/<n>.json`. Without `--zims` the catalogue is empty and the client says the
+online version has no books. With `--zims` the server's answers are saved with every URL made
+relative (`/zim/…` → `zim/…`, `/api/libraries/…` → `api/library/…`), the images at their decoded
+paths, and a Wikipedia gets `titles.json`, `{ volumeSize, titles }` in the app's title order, which
+the client searches itself in place of `/articles` (same result shape, no redirect aliases). All
+client URLs are relative, so the site works under a path.)
 
 All JSON responses: `Content-Type: application/json; charset=utf-8`. Errors: `{ "error": "..." }`
 with 400/404/500. Unknown `/api/*` → 404 JSON.

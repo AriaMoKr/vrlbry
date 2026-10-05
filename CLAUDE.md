@@ -18,13 +18,14 @@ npm run start:https              # HTTP :8080 + HTTPS :8443 in one process (self
 node server/index.js --no-watch  # do not rescan the folder while running
 npm test                         # = node --test "test/*.test.js" (a bare directory arg does not work)
 npm run build:pages              # static site for GitHub Pages into dist/ (tools/build-pages.mjs)
+npm run build:pages -- --zims <dir>   # … with the ZIMs in <dir> pre-rendered as static files
 node --test test/zim.test.js     # one test file
 node --test --test-name-pattern="redirect" test/zim.test.js   # tests matching a name
 ```
 
 - Node **≥ 22.15** is required, because the server uses the built-in `zlib.zstdDecompress`.
 - **Client URLs must be relative** (to the page, or to the module via `import.meta.url`): the GitHub Pages site lives under a path (`https://ariamokr.github.io/vrlbry/`). `api.js` resolves the API against the site root it derives from its own URL; `index.html`'s import map uses `./vendor/…`. A test checks the built site for root-relative URLs and unresolved imports.
-- **GitHub Pages** (`.github/workflows/pages.yml`, on push to `main`): `tools/build-pages.mjs` copies `public/` (minus the dev pages, which need the server), the three/IWER modules the client imports (followed through their imports), and static API answers (`api/libraries` with `"static": true`, `api/version`). In static mode the client hides Rescan and says the online version has no books yet.
+- **GitHub Pages** (`.github/workflows/pages.yml`, on push to `main`): `tools/build-pages.mjs` copies `public/` (minus the dev pages, which need the server), the three/IWER modules the client imports (followed through their imports), and static API answers (`api/libraries` with `"static": true`, `api/version`). With `--zims` it runs the server in-process and saves every answer the client can ask for as a file under `api/library/<id>/` (`books.json`, `books/<id>/index.json`, `books/<id>/chunks/<n>.json`, Wikipedia `titles.json`) plus the images under `zim/` (§4). In static mode `api.js` asks for those names and searches Wikipedia titles itself; the client hides Rescan, and a first visit opens the demo set. The workflow pre-renders the ZIMs listed in `tools/demo-set.txt` (cached in `.demo/`).
 - There is no build step, bundler, linter or TypeScript. The client is plain ES modules in `public/`. An import map resolves `three` → `/vendor/three/build/three.module.js` and `three/addons/` → `/vendor/three/examples/jsm/`. The server maps `/vendor/three/*` to `node_modules/three/*` and `/vendor/iwer/*` to `node_modules/iwer/build/*`.
 - Conventional ports: **HTTP 8080, HTTPS 8443** (`--port`, `--https-port`).
 - WebXR needs a secure context. `http://localhost` works. A headset on the LAN needs `https://<ip>:8443`, or `adb reverse tcp:8080 tcp:8080`.

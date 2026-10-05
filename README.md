@@ -152,11 +152,20 @@ npm run build:pages
 ```
 
 This writes `dist/`: the client, the few Three.js and IWER files it imports, and static answers
-in place of the API (no libraries yet). The page addresses everything relative to itself, so it
-works under a path such as `https://<user>.github.io/vrlbry/`. The workflow in
-`.github/workflows/pages.yml` runs the tests, builds and publishes it on every push to `main`;
-enable it once in the repository's Settings → Pages → Source: *GitHub Actions*. For now the online
-version has no books; reading ZIM files without the server is planned (see the
+in place of the API. The page addresses everything relative to itself, so it works under a path
+such as `https://<user>.github.io/vrlbry/`.
+
+`npm run build:pages -- --zims <folder>` also pre-renders the ZIMs in that folder: the server runs
+inside the build and every answer the client can ask for (book lists, each book's chunks, the
+images) is saved as a file, so the site needs nothing but static hosting. Searching Wikipedia
+articles then happens in the browser, over a saved title list (by title only: redirects are not
+included). A first visit opens the *Demo set* place when the site has it.
+
+The workflow in `.github/workflows/pages.yml` runs the tests, downloads the demo set (the ZIMs
+listed in `tools/demo-set.txt`: Gutenberg LCC-P and Wikipedia Mathematics mini, cached between
+runs), builds with `--zims` and publishes it on every push to `main`; enable it once in the
+repository's Settings → Pages → Source: *GitHub Actions*. The demo set makes a site of about
+140 MB in 43,000 files. Reading any ZIM file without the server is planned (see the
 [TODO list](TODO.md)).
 
 ## Measuring performance on a Quest

@@ -73,6 +73,11 @@
     (`npm run build:pages` → `dist/`, 3 MB) and `.github/workflows/pages.yml` publishes it on
     pushes to `main`, at https://ariamokr.github.io/vrlbry/ once Pages' source is set to GitHub
     Actions.
+  - *Step 1 (done):* the demo set is pre-rendered into the site (`build:pages -- --zims`):
+    every book list, chunk and image as a static file (~140 MB, 43,000 files, ~1.5 min to
+    build), with Wikipedia title search in the browser. No redirect aliases (the server searches
+    those in the ZIM's URL index), and nothing beyond the files the build saved: reading ZIMs in
+    the browser is the next step.
   - *Demo set* (chosen 2026-10-05, 93 MB together, both under the 100 MB file limit):
     - Gutenberg LCC-P, *Language and literature* (19 books, 37 MB):
       https://mirror.download.kiwix.org/zim/gutenberg/gutenberg_en_lcc-p_2026-03.zim

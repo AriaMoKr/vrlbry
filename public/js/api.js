@@ -1,11 +1,25 @@
 // Thin client for the vrlbry HTTP API (see SPEC.md §4). All functions throw on HTTP errors.
 
 import { perf } from './perf.js';
+import { titleKey } from './util/books.js';
 
 // The site's root, from this module's own URL (js/api.js): the API is found whether the app is
 // served at / (the Node server) or under a path (GitHub Pages, /vrlbry/).
 const ROOT = new URL('../', import.meta.url);
 const api = (path) => new URL(path, ROOT).href;
+
+// A static build (GitHub Pages, tools/build-pages.mjs) answers with files, and a path cannot be both
+// a file and a folder: the catalogue is the file api/libraries, so a library's files are under
+// api/library/<id>/ (books.json, books/<id>/index.json, books/<id>/chunks/<n>.json, titles.json).
+// Set by getCatalog().
+let staticSite = false;
+const lib = (id) => `${staticSite ? 'api/library' : 'api/libraries'}/${enc(id)}`;
+const paths = {
+  books: (id) => `${lib(id)}/books${staticSite ? '.json' : ''}`,
+  meta: (id, book) => `${lib(id)}/books/${enc(book)}${staticSite ? '/index.json' : ''}`,
+  chunk: (id, book, n) => `${lib(id)}/books/${enc(book)}/chunks/${n}${staticSite ? '.json' : ''}`,
+  titles: (id) => `${lib(id)}/titles.json`,
+};
 
 const chunkCache = new Map(); // `${lib}\n${id}\n${n}` -> Promise<blocks[]>
 const metaCache = new Map(); // `${lib}\n${id}` -> Promise<meta>
@@ -36,8 +50,9 @@ export async function getLibraries() {
 /** @returns {Promise<{ generation: number, libraries: object[] }>} libraries + change counter */
 export async function getCatalog() {
   const r = await getJSON(api('api/libraries'));
-  // static: a build without a server (GitHub Pages): no rescans, nothing to index.
-  return { generation: r.generation ?? 0, libraries: r.libraries, static: !!r.static };
+  // static: a build without a server (GitHub Pages): no rescans, answers are files.
+  staticSite = !!r.static;
+  return { generation: r.generation ?? 0, libraries: r.libraries, static: staticSite };
 }
 
 /** @returns {Promise<{ changed: string|null, file: string|null }>} when the website's files last changed */
@@ -54,19 +69,53 @@ export async function rescan() {
 
 /** @returns {Promise<Array<object>>} book descriptors for one library */
 export async function getBooks(libId) {
-  return (await getJSON(api(`api/libraries/${enc(libId)}/books`))).books;
+  return (await getJSON(api(paths.books(libId)))).books;
 }
 
-/** Wikipedia articles whose titles start with `q` (SPEC §2.5): [{ title, book, n }]. */
+/** Wikipedia articles whose titles start with `q` (SPEC §2.5): [{ title, book, n, from? }]. */
 export async function searchArticles(libId, q, limit = 8) {
+  if (staticSite) return searchTitles(libId, q, limit);
   return (await getJSON(api(`api/libraries/${enc(libId)}/articles?q=${enc(q)}&limit=${limit}`))).articles;
+}
+
+const collator = new Intl.Collator(); // the server's title order (wikipedia.js), as util/books.js sorts
+const titleLists = new Map(); // libId -> Promise<{ volumeSize, titles, keys }>
+
+/**
+ * The server's article search, in the browser of a static build: a prefix search over the sorted
+ * title list (titles.json), by title key like the server (no other names: redirects are not there).
+ */
+async function searchTitles(libId, q, limit) {
+  const qk = titleKey(String(q ?? '').replace(/\s+/g, ' ').trim());
+  if (!qk) return [];
+  if (!titleLists.has(libId)) {
+    const p = getJSON(api(paths.titles(libId))).then((t) => ({ ...t, keys: t.titles.map(titleKey) }));
+    p.catch(() => titleLists.delete(libId));
+    titleLists.set(libId, p);
+  }
+  const { volumeSize, titles, keys } = await titleLists.get(libId);
+  let lo = 0;
+  let hi = keys.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (collator.compare(keys[mid], qk) < 0) lo = mid + 1;
+    else hi = mid;
+  }
+  const out = [];
+  for (let i = lo; i < keys.length && out.length < limit && keys[i].startsWith(qk); i++) {
+    out.push({ title: titles[i], book: `v${Math.floor(i / volumeSize) + 1}`, n: i % volumeSize });
+  }
+  const typed = String(q).replace(/\s+/g, ' ').trim().toLowerCase();
+  const exact = out.findIndex((a) => a.title.toLowerCase() === typed);
+  if (exact > 0) out.unshift(...out.splice(exact, 1));
+  return out;
 }
 
 /** Book reading metadata: chunks, toc, totals. Cached. */
 export function getBookMeta(libId, bookId) {
   const key = `${libId}\n${bookId}`;
   if (!metaCache.has(key)) {
-    const p = getJSON(api(`api/libraries/${enc(libId)}/books/${enc(bookId)}`));
+    const p = getJSON(api(paths.meta(libId, bookId)));
     p.catch(() => metaCache.delete(key));
     metaCache.set(key, p);
   }
@@ -77,7 +126,7 @@ export function getBookMeta(libId, bookId) {
 export function getChunk(libId, bookId, n) {
   const key = `${libId}\n${bookId}\n${n}`;
   if (!chunkCache.has(key)) {
-    const p = getJSON(api(`api/libraries/${enc(libId)}/books/${enc(bookId)}/chunks/${n}`)).then((r) => r.blocks);
+    const p = getJSON(api(paths.chunk(libId, bookId, n))).then((r) => r.blocks);
     p.catch(() => chunkCache.delete(key));
     chunkCache.set(key, p);
   }
