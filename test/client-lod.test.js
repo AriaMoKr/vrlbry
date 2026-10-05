@@ -14,6 +14,7 @@ import { BOOKCASE } from '../public/js/config.js';
 let Bookshelves;
 let packBookcases;
 let sortBooks;
+let AtlasWorker;
 
 /** A canvas whose 2D context accepts every call; measureText is proportional to length. */
 function stubCanvas() {
@@ -36,7 +37,7 @@ function stubCanvas() {
 
 before(async () => {
   globalThis.document ??= { createElement: (tag) => (tag === 'canvas' ? stubCanvas() : {}) };
-  ({ Bookshelves, packBookcases } = await import('../public/js/world/shelves.js'));
+  ({ Bookshelves, packBookcases, AtlasWorker } = await import('../public/js/world/shelves.js'));
   ({ sortBooks } = await import('../public/js/util/books.js'));
 });
 
@@ -225,6 +226,20 @@ describe('atlas worker', () => {
     await turn();
     assert.equal(worker.images.length, 4, 'three low, one sharp');
     assert.ok(worker.images.every((im) => im.closed));
+  });
+
+  it('sends the worker what the spine art needs, including a Wikipedia volume’s number and range', () => {
+    const posted = [];
+    const w = new AtlasWorker({ postMessage: (m) => posted.push(m) });
+    const dims = { w: 0.05, h: 0.3, d: 0.2 };
+    w.paint({}, [
+      { book: { id: 'b1', title: 'A Book', author: 'Someone', cover: 'x.jpg', size: 1000 }, dims },
+      { book: { id: 'v7', title: 'Aa – Ac', author: 'Wikipedia', volume: 7, range: ['Aa', 'Ac'], emblem: 'e.png' }, dims },
+    ], 'Aa – Ac', 1);
+    assert.deepEqual(posted[0].items.map((it) => it.book), [
+      { id: 'b1', title: 'A Book', author: 'Someone' },
+      { id: 'v7', title: 'Aa – Ac', author: 'Wikipedia', volume: 7, range: ['Aa', 'Ac'] },
+    ]);
   });
 
   it('falls back to painting on the main thread when the worker fails', async () => {

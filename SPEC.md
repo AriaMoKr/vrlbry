@@ -889,8 +889,8 @@ States: `browse` → `inspect` → `read` (and back).
   (`ordered`: never re-sorted, bookcase plates from the first and last article). It is never
   split by filters, and its sign reads "N volumes · M articles". With more than one library
   there is one more place, `ALL_PLACE`
-  (`settings.place = '*'`), that shelves every library except Wikipedias (for now) in one hall,
-  with no filters.
+  (`settings.place = '*'`), that shelves every library in one hall, with no filters. Wikipedia
+  volumes keep their own order and sign there too.
   - No room has more than `MAX_BOOKCASES` = 200 bookcases (`world.js`); in practice only this
     hall reaches the limit.
   - Libraries share the limit fairly (`shareBookcases`, max-min fair): each gets an equal share,

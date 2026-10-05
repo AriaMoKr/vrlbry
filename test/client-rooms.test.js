@@ -127,13 +127,18 @@ describe('rooms', () => {
   });
 
   it('can shelve every library whole in one hall', () => {
-    const books = { pg: pgBooks, ws: works(ROOM_CAP + 10, () => 'Poetry'), empty: [] };
+    const wp = { id: 'wp', kind: 'wikipedia', title: 'Wikipedia', articles: 2500 };
+    const volumes = [1, 2, 3].map((v) => ({ id: `v${v}`, title: `Range ${4 - v}`, volume: v }));
+    const books = { pg: pgBooks, ws: works(ROOM_CAP + 10, () => 'Poetry'), wp: volumes, empty: [] };
     const empty = { id: 'empty', kind: 'generic', title: 'Still indexing' };
     const settings = { sort: 'title', place: ALL_PLACE.id };
-    assert.equal(currentPlace([pg, ws, empty], books, settings), ALL_PLACE);
-    const cols = collectionsFor([pg, ws, empty], books, settings);
-    assert.deepEqual(cols.map((c) => [c.library.id, c.books.length, c.room, c.capped]), [['pg', 10, null, false], ['ws', ROOM_CAP + 10, null, false]]);
-    assert.equal(placeBookCount(ALL_PLACE, [pg, ws, empty], books), ROOM_CAP + 20);
+    assert.equal(currentPlace([pg, ws, wp, empty], books, settings), ALL_PLACE);
+    const cols = collectionsFor([pg, ws, wp, empty], books, settings);
+    assert.deepEqual(cols.map((c) => [c.library.id, c.books.length, c.room, c.capped, c.ordered]),
+      [['pg', 10, null, false, false], ['ws', ROOM_CAP + 10, null, false, false], ['wp', 3, null, false, true]]);
+    assert.equal(cols[2].books, volumes, 'Wikipedia volumes keep their own order');
+    assert.equal(cols[2].subtitle, '3 volumes · 2,500 articles');
+    assert.equal(placeBookCount(ALL_PLACE, [pg, ws, wp, empty], books), ROOM_CAP + 23);
     assert.equal(placeBookCount(ws, [pg, ws], books), ROOM_CAP + 10);
     // With a single library there is no such place.
     assert.equal(currentPlace([pg], books, settings).id, 'pg');

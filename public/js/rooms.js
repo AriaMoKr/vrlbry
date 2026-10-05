@@ -29,8 +29,10 @@ export function unitOf(library) {
   return library.kind === 'wikisource' ? 'works' : library.kind === 'wikipedia' ? 'volumes' : 'books';
 }
 
-/** Libraries in the all-libraries hall: Wikipedia stays out of it for now. */
-const inAllPlace = (library) => library.kind !== 'wikipedia';
+/** The section sign's subtitle of a Wikipedia: its volumes and articles. */
+function volumesSubtitle(library, volumes) {
+  return `${volumes.toLocaleString()} volume${volumes === 1 ? '' : 's'} · ${(library.articles ?? 0).toLocaleString()} articles`;
+}
 
 const genreOf = (b) => b.genre || b.shelf || 'Other works';
 
@@ -125,24 +127,24 @@ export function collectionsFor(libraries, booksByLib, settings) {
   const lib = currentPlace(libraries, booksByLib, settings);
   if (!lib) return [];
   if (lib === ALL_PLACE) {
-    return libraries.filter((l) => inAllPlace(l) && booksByLib[l.id]?.length).map((library) => {
+    return libraries.filter((l) => booksByLib[l.id]?.length).map((library) => {
       const books = booksByLib[library.id];
-      return { library, books, room: null, total: books.length, capped: false };
+      // Wikipedia volumes keep their own order (by article range) whatever the shelf order.
+      const wiki = library.kind === 'wikipedia';
+      return { library, books, room: null, total: books.length, capped: false, ordered: wiki, subtitle: wiki ? volumesSubtitle(library, books.length) : undefined };
     });
   }
   return shelfCollections([lib], booksByLib, settings.rooms, settings.sort).map((c) => ({
     ...c,
     subtitle: c.room
       ? `${roomLabel(c.room)} · ${c.total.toLocaleString()} works${c.capped ? ` (first ${ROOM_CAP.toLocaleString()})` : ''}`
-      : lib.kind === 'wikipedia'
-        ? `${c.total.toLocaleString()} volume${c.total === 1 ? '' : 's'} · ${(lib.articles ?? 0).toLocaleString()} articles`
-        : undefined,
+      : lib.kind === 'wikipedia' ? volumesSubtitle(lib, c.total) : undefined,
   }));
 }
 
 /** Number of books a place shelves in total (all libraries for ALL_PLACE). */
 export function placeBookCount(place, libraries, booksByLib) {
-  if (place === ALL_PLACE) return libraries.reduce((n, l) => n + (inAllPlace(l) ? booksByLib[l.id]?.length || 0 : 0), 0);
+  if (place === ALL_PLACE) return libraries.reduce((n, l) => n + (booksByLib[l.id]?.length || 0), 0);
   return booksByLib[place.id]?.length || 0;
 }
 

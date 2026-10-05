@@ -324,7 +324,7 @@ function buildGeometry(arr) {
  * the finished ImageBitmap. Even time-sliced, main-thread painting caused frame spikes: the
  * browser defers canvas rasterization to the upload.
  */
-class AtlasWorker {
+export class AtlasWorker {
   /** @returns {AtlasWorker|null} null where module workers or OffscreenCanvas are missing */
   static create() {
     if (typeof Worker === 'undefined' || typeof OffscreenCanvas === 'undefined' || typeof createImageBitmap === 'undefined') return null;
@@ -361,8 +361,14 @@ class AtlasWorker {
     const id = ++this.seq;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
-      // Only what the spine art reads: whole book descriptors would be cloned for nothing.
-      const slim = items.map(({ book, dims }) => ({ book: { id: book.id, title: book.title, author: book.author }, dims }));
+      // Only what the spine art reads (textures.js drawSpine): whole book descriptors would be
+      // cloned for nothing. A Wikipedia volume's spine needs its number and range.
+      const slim = items.map(({ book, dims }) => ({
+        book: book.volume
+          ? { id: book.id, title: book.title, author: book.author, volume: book.volume, range: book.range }
+          : { id: book.id, title: book.title, author: book.author },
+        dims,
+      }));
       this.worker.postMessage({ id, layout, items: slim, label, scale });
     });
   }

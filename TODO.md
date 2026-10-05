@@ -39,8 +39,6 @@
   "New York City") could serve as aliases, through the ZIM's own title index.
 - **Wikipedia: follow links** (later). Tapping a link in an article goes to that article, taking
   its volume off the shelf if needed. The reader cannot follow links today.
-- **Wikipedia in the all-libraries hall.** It stays out for now. Decide later whether it gets a
-  fair share of the 200 bookcases.
 - **Dropped frames while walking.** A Quest 3 still drops ~4 % of frames walking an ordinary room
   and ~8 % in the all-libraries hall, with no clear cause since atlas uploads were fixed. Next:
   record GC and long-task timing per scenario (`?perf`, `tools/quest-perf.mjs`).
