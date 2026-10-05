@@ -382,6 +382,58 @@ export class AtlasWorker {
   }
 }
 
+/** Gaps in a row narrower than this still block the view (bookcases stand 2 cm apart). */
+const ROW_GAP = 0.05;
+/** Margin at a row's plane before it counts as hiding a bookcase: both eyes, the row's ends. */
+const ROW_MARGIN = 0.1;
+
+/**
+ * The rows of a hall: bookcases back to back, facing ±z (yaw 0 or π). Each row is the plane
+ * where their backs meet, and the solid stretches along it (`segments`, [x0, x1]). Each case
+ * gets its row's `rowZ`. Null for other layouts (the rotunda) and for a single row.
+ */
+export function hallRows(cases) {
+  if (!cases.length || !cases.every((cs) => cs.yaw === 0 || cs.yaw === Math.PI)) return null;
+  const { width: W, depth: D } = BOOKCASE;
+  const byZ = new Map();
+  for (const cs of cases) {
+    cs.rowZ = Math.round((cs.position.z + (cs.yaw === 0 ? -D / 2 : D / 2)) * 100) / 100;
+    if (!byZ.has(cs.rowZ)) byZ.set(cs.rowZ, []);
+    byZ.get(cs.rowZ).push([cs.position.x - W / 2, cs.position.x + W / 2]);
+  }
+  if (byZ.size < 2) return null;
+  return [...byZ].map(([z, spans]) => {
+    spans.sort((a, b) => a[0] - b[0]);
+    const segments = [];
+    for (const [x0, x1] of spans) {
+      const last = segments[segments.length - 1];
+      if (last && x0 <= last[1] + ROW_GAP) last[1] = Math.max(last[1], x1);
+      else segments.push([x0, x1]);
+    }
+    return { z, segments };
+  });
+}
+
+/**
+ * True when a hall row stands between the viewer (below the top of the rows) and a bookcase's
+ * front: the front, projected from the eye onto that row's plane, falls within one of its solid
+ * stretches.
+ */
+export function behindRow(cs, cam, rows) {
+  const { width: W, depth: D } = BOOKCASE;
+  const fz = cs.position.z + (cs.yaw === 0 ? D / 2 : -D / 2); // the plane of its front
+  for (const r of rows) {
+    if (r.z === cs.rowZ || (r.z - cam.z) * (r.z - fz) >= 0) continue; // not in between
+    const t = (r.z - cam.z) / (fz - cam.z);
+    const xa = cam.x + (cs.position.x - W / 2 - cam.x) * t;
+    const xb = cam.x + (cs.position.x + W / 2 - cam.x) * t;
+    const lo = Math.min(xa, xb);
+    const hi = Math.max(xa, xb);
+    for (const [s0, s1] of r.segments) if (lo >= s0 + ROW_MARGIN && hi <= s1 - ROW_MARGIN) return true;
+  }
+  return false;
+}
+
 export class Bookshelves {
   /**
    * @param {{ renderer: THREE.WebGLRenderer, atlasWorker?: { paint(layout, items, label, scale): Promise<ImageBitmap> } | null }} o
@@ -394,6 +446,7 @@ export class Bookshelves {
     this.group = new THREE.Group();
     this.group.name = 'bookshelves';
     this.cases = [];
+    this._rows = null; // hall rows, for culling bookcases behind them (hallRows)
     this._records = new Map(); // key -> record
     this._order = [];
     this._highlight = null;
@@ -479,6 +532,7 @@ export class Bookshelves {
         box: new THREE.Box3(new THREE.Vector3(-W / 2, 0, -D / 2), new THREE.Vector3(W / 2, H, D / 2 + 0.05)),
       });
     });
+    this._rows = hallRows(this.cases);
     if (woodParts.length) {
       const woodGeo = mergeGeometries(woodParts);
       woodParts.forEach((p) => p.dispose());
@@ -715,7 +769,7 @@ export class Bookshelves {
    */
   update(dt, camera) {
     if (!camera || !this.cases.length) return;
-    this._cullFacingAway(camera.getWorldPosition(this._tmp));
+    this._cull(camera.getWorldPosition(this._tmp));
     if (this._job) {
       const job = this._job;
       if (job.painter ? job.painter.step(JOB_BUDGET_MS) : job.done) this._finishJob();
@@ -753,13 +807,18 @@ export class Bookshelves {
   }
 
   /**
-   * Hides the books of bookcases the viewer stands behind (behind the mid-plane, where the back
-   * and side panels cover every book). In a hall that is half of them, every frame, which matters
-   * once a room has more bookcases than the Quest's draw-call budget.
+   * Hides the books the viewer cannot see, every frame: those of bookcases they stand behind
+   * (behind the mid-plane, where the back and side panels cover every book; in a hall that is
+   * half of them), and in a hall those behind a nearer row. That matters once a room has more
+   * bookcases than the Quest's draw-call budget: at the hall's entrance only ~10 of the 100
+   * bookcases facing the viewer can be seen at all.
    */
-  _cullFacingAway(cam) {
+  _cull(cam) {
+    // A row is a wall as tall as a bookcase: from below its top, nothing behind it shows over it.
+    const rows = cam.y < BOOKCASE.height ? this._rows : null;
     for (const cs of this.cases) {
-      cs.mesh.visible = (cam.x - cs.position.x) * Math.sin(cs.yaw) + (cam.z - cs.position.z) * Math.cos(cs.yaw) > 0;
+      const facing = (cam.x - cs.position.x) * Math.sin(cs.yaw) + (cam.z - cs.position.z) * Math.cos(cs.yaw) > 0;
+      cs.mesh.visible = facing && !(rows && behindRow(cs, cam, rows));
     }
   }
 
@@ -826,6 +885,7 @@ export class Bookshelves {
     }
     this.group.clear();
     this.cases = [];
+    this._rows = null;
     this._records.clear();
     this._order = [];
   }

@@ -15,6 +15,8 @@ let Bookshelves;
 let packBookcases;
 let sortBooks;
 let AtlasWorker;
+let hallRows;
+let behindRow;
 
 /** A canvas whose 2D context accepts every call; measureText is proportional to length. */
 function stubCanvas() {
@@ -37,7 +39,7 @@ function stubCanvas() {
 
 before(async () => {
   globalThis.document ??= { createElement: (tag) => (tag === 'canvas' ? stubCanvas() : {}) };
-  ({ Bookshelves, packBookcases, AtlasWorker } = await import('../public/js/world/shelves.js'));
+  ({ Bookshelves, packBookcases, AtlasWorker, hallRows, behindRow } = await import('../public/js/world/shelves.js'));
   ({ sortBooks } = await import('../public/js/util/books.js'));
 });
 
@@ -174,6 +176,80 @@ function fakeWorker({ fail = false } = {}) {
 }
 
 const turn = () => new Promise((r) => setImmediate(r));
+
+/** A hall like World._layoutHall: rows of K bookcases back to back, aisles of 2.4 m. */
+function hallCases(rows, K) {
+  const { width: W, depth: D } = BOOKCASE;
+  const step = W + 0.02;
+  const cases = [];
+  for (let r = 0; r < rows; r++) {
+    const zc = -2.5 - r * (2 * D + 2.4);
+    for (let k = 0; k < K; k++) cases.push({ position: new THREE.Vector3((k - (K - 1) / 2) * step, 0, zc + D / 2), yaw: 0, row: r, side: 'front', k });
+    for (let k = K - 1; k >= 0; k--) cases.push({ position: new THREE.Vector3((k - (K - 1) / 2) * step, 0, zc - D / 2), yaw: Math.PI, row: r, side: 'back', k });
+  }
+  return cases;
+}
+
+describe('hall row culling', () => {
+  const eye = (x, z, y = 1.6) => new THREE.Vector3(x, y, z);
+
+  it('finds the rows of a hall, and none in a ring or a single row', () => {
+    const cases = hallCases(3, 6);
+    const rows = hallRows(cases);
+    assert.equal(rows.length, 3);
+    assert.equal(rows[0].z, -2.5);
+    assert.equal(rows[0].segments.length, 1, 'bookcases 2 cm apart make one solid stretch');
+    assert.ok(Math.abs(rows[0].segments[0][1] - rows[0].segments[0][0] - (6 * 1.22 - 0.02)) < 1e-9);
+    assert.equal(hallRows(hallCases(1, 6)), null);
+    assert.equal(hallRows([{ position: new THREE.Vector3(1, 0, 0), yaw: 0.5 }, { position: new THREE.Vector3(0, 0, 1), yaw: 2 }]), null);
+    // A gap wider than a few centimetres splits a row.
+    const gappy = hallCases(2, 6).filter((cs) => !(cs.row === 0 && (cs.k === 2 || cs.k === 3)));
+    assert.equal(hallRows(gappy)[0].segments.length, 2);
+  });
+
+  it('hides bookcases behind a nearer row, never those in view', () => {
+    const cases = hallCases(3, 6);
+    const rows = hallRows(cases);
+    const at = (row, side, k) => cases.find((cs) => cs.row === row && cs.side === side && cs.k === k);
+    // From the entrance: the first row's fronts show; the second row's fronts are behind it.
+    assert.equal(behindRow(at(0, 'front', 2), eye(0, 3), rows), false);
+    assert.equal(behindRow(at(1, 'front', 2), eye(0, 3), rows), true);
+    assert.equal(behindRow(at(2, 'front', 0), eye(0, 3), rows), true);
+    // Standing in the first aisle, facing the second row: it shows, the third does not.
+    assert.equal(behindRow(at(1, 'front', 2), eye(0, -4.1), rows), false);
+    assert.equal(behindRow(at(2, 'front', 2), eye(0, -4.1), rows), true);
+    // Looking past the end of the first row (from beside the hall) the far bookcase shows.
+    assert.equal(behindRow(at(1, 'front', 5), eye(7, 3), rows), false);
+    // A gap in the first row lets the view through.
+    const gappy = hallCases(3, 6).filter((cs) => !(cs.row === 0 && (cs.k === 2 || cs.k === 3)));
+    const g = (row, side, k) => gappy.find((cs) => cs.row === row && cs.side === side && cs.k === k);
+    assert.equal(behindRow(g(1, 'front', 2), eye(0, 3), hallRows(gappy)), false);
+  });
+
+  it('culls in update: behind rows, and nothing extra from above the rows', () => {
+    const books = Array.from({ length: 10 * 90 }, (_, i) => ({ id: String(i), title: `Book ${i}`, author: 'A', libId: 'lib', size: 200000 }));
+    const packed = packBookcases(sortBooks(books, 'title'));
+    assert.ok(packed.length > 6 && packed.length <= 12, `${packed.length} bookcases fit 3 rows of 2 + 2`);
+    const layout = hallCases(3, 2).slice(0, packed.length);
+    packed.forEach((cs, i) => { cs.position = layout[i].position; cs.yaw = layout[i].yaw; cs.label = 'A'; });
+    const shelves = new Bookshelves({ renderer, atlasWorker: null });
+    shelves.build(packed);
+    try {
+      const shown = (cam) => {
+        shelves.update(1 / 72, cam);
+        return shelves.cases.filter((cs) => cs.mesh.visible).length;
+      };
+      const front = camAt(0, 3);
+      assert.equal(shown(front), 2, 'only the first row’s two fronts');
+      const high = new THREE.Object3D();
+      high.position.set(0, 3, 3);
+      high.updateMatrixWorld(true);
+      assert.equal(shown(high), layout.filter((c) => c.yaw === 0).length, 'from above every front shows');
+    } finally {
+      shelves.dispose();
+    }
+  });
+});
 
 describe('atlas worker', () => {
   it('loads only relative modules (module workers have no import map, so no three.js)', () => {

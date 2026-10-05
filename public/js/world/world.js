@@ -16,24 +16,25 @@ import { makeSignCanvas } from './textures.js';
 const CASE_GAP = 0.06; // between neighbouring bookcases
 const SIGN_DEPTH = 0.025;
 
-let signBackMat = null;
-/** Back and edges of every sign: the brass plate without text, shared and never disposed. */
-function signBack() {
-  signBackMat ||= new THREE.MeshLambertMaterial({ map: canvasTexture(makeSignCanvas('', ''), { anisotropy: 4 }), emissive: 0x221608 });
-  return signBackMat;
-}
-
 /**
- * A sign: a thin brass board, the canvas on its front (+Z, at z = 0) and a plain plate on the back
+ * A sign: a thin brass board, the canvas on its front (+Z, at z = 0) and plain brass on the back
  * and edges, so it does not vanish when seen from behind (a plane is one-sided). No text on the
- * back: in a hall the bookcase behind a sign may belong to another section.
+ * back: in a hall the bookcase behind a sign may belong to another section. One material and no
+ * face groups, so one draw call per sign (a material per face cost six): the back and edges show
+ * the canvas's own plain margin, left of its engraved frame (makeSignCanvas: 1024 × 256, frame
+ * from x ≈ 15 px).
  */
 function makeSign(canvas, w, h, anisotropy) {
   const front = new THREE.MeshLambertMaterial({ map: canvasTexture(canvas, { anisotropy }), emissive: 0x221608 });
-  const back = signBack();
   const geo = new THREE.BoxGeometry(w, h, SIGN_DEPTH);
   geo.translate(0, 0, -SIGN_DEPTH / 2);
-  const sign = new THREE.Mesh(geo, [back, back, back, back, front, back]); // box faces: ±x, ±y, +z, −z
+  // Box faces in order ±x, ±y, +z, −z, 4 vertices each: all but the front (+z) show the margin.
+  const uv = geo.attributes.uv;
+  for (let i = 0; i < uv.count; i++) {
+    if (Math.floor(i / 4) !== 4) uv.setXY(i, 0.003 + uv.getX(i) * 0.007, 0.3 + uv.getY(i) * 0.4);
+  }
+  geo.clearGroups();
+  const sign = new THREE.Mesh(geo, front);
   sign.userData.front = front;
   return sign;
 }

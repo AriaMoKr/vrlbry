@@ -39,7 +39,9 @@
   and ~8 % in the all-libraries hall, with no clear cause since atlas uploads were fixed.
   `quest-perf run` now traces garbage collection and counts the dropped frames that had a GC
   pause in them, per scenario: run it on the Quest to see whether GC explains the drops.
-- **All-libraries hall draw calls.** Walking reaches ~134 draw calls per eye. Reduce them, or
-  lower the 200-bookcase cap.
+- **All-libraries hall draw calls.** Cut at the entrance from 182 to 52 per eye (desktop
+  measurement, 2026-10-04): one draw call per sign, and bookcases behind a nearer row are not
+  drawn. Confirm on the Quest; the room itself (chandeliers, walls, wainscots, ~31 calls) could
+  still be merged per material.
 - **Server code review.** An earlier review recorded 5 minor findings that were never fixed, and
   3 of its reviewers never finished.

@@ -724,11 +724,19 @@ export class Book3D {
   filled until the next book does not fit; occasional book leaning/lying stacks are optional decor.
   The top of each bookcase carries a small label with its range (e.g. `"Ab – Ch"` for title/author
   sort, `"#1 – #160"` for popularity); the first bookcase of a section has a larger section sign
-  with the library title: a thin brass board with the text on its front and a plain plate (shared,
-  no text) on its back and edges, so it is visible from behind too.
+  with the library title: a thin brass board with the text on its front and plain brass (no text)
+  on its back and edges, so it is visible from behind too. It is one mesh with one material (the
+  back and edges are UV-mapped to the canvas's plain margin), so one draw call: a material per box
+  face cost six.
 - **Room:** an inviting library hall sized to the content. ≤ ~24 bookcases: a rotunda (bookcases
   on a circle, facing inward, around a central area with the kiosk and a reading table/armchair
-  decor); more: a rectangular hall with parallel aisles of double-sided bookcases. Warm lighting
+  decor); more: a rectangular hall with parallel aisles of double-sided bookcases. Every frame the
+  shelves hide the books of bookcases the viewer stands behind (their back faces the viewer), and
+  in a hall those behind a nearer row: a row is as tall as a bookcase, so from below its top a
+  bookcase whose front, projected from the eye onto the row's middle plane, falls within the row's
+  solid stretch (`hallRows`, `behindRow` in `shelves.js`; 10 cm margin) cannot be seen. At the
+  hall's entrance that leaves ~10 of the 100 bookcases facing the viewer (52 instead of 182 draw
+  calls per eye); a check by ray sampling from 92 places never found a hidden one in view. Warm lighting
   (hemisphere + a few point lights; no shadows), wooden floor, walls, tall windows or arches,
   ceiling. Procedural canvas textures only (no external image files required).
 - **Spines:** canvas-rendered into atlases (e.g. 2048² per bookcase): base colour per book
