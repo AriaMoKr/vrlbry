@@ -138,6 +138,7 @@ export class Overlay {
    * @param {Record<string, object[]>} booksByLib
    */
   setLibraries(libraries, booksByLib) {
+    this._shown = [libraries, booksByLib];
     const total = libraries.reduce((n, l) => n + (booksByLib[l.id]?.length || 0), 0);
     this.$('.ov-libs').innerHTML = libraries.length
       ? libraries.map((l) => `
@@ -149,7 +150,7 @@ export class Overlay {
             ? `indexing… ${Math.round((l.indexing.progress || 0) * 100)}%`
             : `${(booksByLib[l.id]?.length || 0).toLocaleString()} ${l.kind === 'wikisource' ? 'works' : l.kind === 'wikipedia' ? `volumes (${(l.articles ?? 0).toLocaleString()} articles)` : 'books'}`} · ${esc(l.file)}</div></div>
         </div>`).join('') + (libraries.length > 1 ? `<div class="ov-lib-meta">${total.toLocaleString()} books in ${libraries.length} libraries</div>` : '')
-      : '<div class="ov-lib-desc">No .zim files were found in the server folder. Add some and reload.</div>';
+      : `<div class="ov-lib-desc">${this._static ? 'This online version has no books yet. Run vrlbry yourself (see the README) to read your own ZIM files.' : 'No .zim files were found in the server folder. Add some and reload.'}</div>`;
     this._index = bookIndex(libraries, booksByLib);
     this._libraries = libraries;
   }
@@ -161,6 +162,12 @@ export class Overlay {
   /** cb(libId, { title, book, n }) for a Wikipedia article chosen in the search results. */
   onArticlePick(cb) { this._pickArticle = cb; }
   onRescan(cb) { this._rescan = cb; }
+  /** A build without a server (GitHub Pages): no rescan button. */
+  setStatic(on) {
+    this._static = !!on;
+    this.$('.ov-rescan').hidden = this._static;
+    if (this._shown) this.setLibraries(...this._shown);
+  }
   onEnterVR(cb) { this._enterVR = cb; }
 
   setVRSupported(ok) {

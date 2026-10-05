@@ -9,5 +9,8 @@ Thumbs.db
 # derived indexes (Wikisource works), rebuilt on demand
 .cache/
 
+# The static site built by tools/build-pages.mjs (GitHub Pages)
+dist/
+
 # Performance dumps from tools/quest-perf.mjs
 perf/

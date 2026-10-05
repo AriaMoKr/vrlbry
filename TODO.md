@@ -69,6 +69,10 @@
     local files in the browser and cache the result.
   - *Phases:* local ZIMs (Gutenberg, generic) → remote ZIMs from a curated list → Wikipedia and
     Wikisource with prebuilt indexes. The Node server keeps working throughout.
+  - *Step 0 (prepared 2026-10-05):* the client builds as a static site without books
+    (`npm run build:pages` → `dist/`, 3 MB) and `.github/workflows/pages.yml` publishes it on
+    pushes to `main`, at https://ariamokr.github.io/vrlbry/ once Pages' source is set to GitHub
+    Actions.
   - *Demo set* (chosen 2026-10-05, 93 MB together, both under the 100 MB file limit):
     - Gutenberg LCC-P, *Language and literature* (19 books, 37 MB):
       https://mirror.download.kiwix.org/zim/gutenberg/gutenberg_en_lcc-p_2026-03.zim

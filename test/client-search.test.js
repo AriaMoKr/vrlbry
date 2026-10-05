@@ -46,7 +46,9 @@ describe('search', () => {
       return { ok: true, json: async () => ({ library: 'wp', articles: [{ title: 'Paris', book: 'v706', n: 432 }] }) };
     };
     const found = await findArticles([...libraries, { ...wp, id: 'wp2' }], 'Paris ', 5);
-    assert.deepEqual(asked, ['/api/libraries/wp/articles?q=Paris&limit=5', '/api/libraries/wp2/articles?q=Paris&limit=5']);
+    // Relative to the site root (js/api.js's parent), so the app also works under a path (GitHub Pages).
+    assert.deepEqual(asked.map((u) => u.slice(u.indexOf('/api/'))), ['/api/libraries/wp/articles?q=Paris&limit=5', '/api/libraries/wp2/articles?q=Paris&limit=5']);
+    assert.ok(asked.every((u) => u.includes('/public/api/')), asked[0]);
     assert.deepEqual(found.map((e) => [e.lib.id, e.article.title]), [['wp', 'Paris'], ['wp2', 'Paris']]);
     assert.deepEqual(await findArticles(libraries, 'p'), [], 'at least two letters');
     globalThis.fetch = async () => { throw new Error('offline'); };

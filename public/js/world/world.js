@@ -65,6 +65,8 @@ export class World {
     this.shelves = new Bookshelves({ renderer });
     this.group.add(this.shelves.group);
     this.room = null;
+    /** What the sign in a room without books says (a build without a server says something else). */
+    this.emptyText = ['No ZIM files found', 'Put .zim files in the server folder and reload'];
     this.signs = [];
     this.teleportTargets = [];
     this.spawn = { position: new THREE.Vector3(0, 0, 2), yaw: 0 };
@@ -207,7 +209,7 @@ export class World {
   }
 
   _emptySign() {
-    const canvas = makeSignCanvas('No ZIM files found', 'Put .zim files in the server folder and reload');
+    const canvas = makeSignCanvas(...this.emptyText);
     const sign = makeSign(canvas, 2, 0.5, 4);
     sign.position.set(0, 1.8, -2.5);
     this.group.add(sign);

@@ -11,7 +11,7 @@
   #stats { font: 12px ui-monospace, Consolas, monospace; }
   canvas { display: block; }
 </style>
-<script type="importmap">{"imports":{"three":"/vendor/three/build/three.module.js","three/addons/":"/vendor/three/examples/jsm/"}}</script>
+<script type="importmap">{"imports":{"three":"../vendor/three/build/three.module.js","three/addons/":"../vendor/three/examples/jsm/"}}</script>
 </head>
 <body>
 <div id="ui">
@@ -27,9 +27,9 @@
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { getLibraries, getBooks } from '/js/api.js';
-import { World } from '/js/world/world.js';
-import { Book3D } from '/js/world/book3d.js';
+import { getLibraries, getBooks } from '../js/api.js';
+import { World } from '../js/world/world.js';
+import { Book3D } from '../js/world/book3d.js';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));

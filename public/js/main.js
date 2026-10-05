@@ -19,7 +19,7 @@ const overlay = new Overlay({ root: document.getElementById('overlay') });
 let xrDevice = null;
 if (params.get('xr') === 'emulate' || params.has('emulate')) {
   try {
-    const { XRDevice, metaQuest3 } = await import('/vendor/iwer/iwer.module.js');
+    const { XRDevice, metaQuest3 } = await import(new URL('../vendor/iwer/iwer.module.js', import.meta.url).href);
     xrDevice = new XRDevice(metaQuest3);
     // Chromium exposes a native navigator.xr even without a headset; replace it on request.
     xrDevice.installRuntime({ forceInstall: true });
@@ -85,12 +85,18 @@ async function start() {
   overlay.setLoading('Shelving the books…', 0.55);
   await new Promise((r) => setTimeout(r, 0)); // let the overlay paint before the heavy build
   const world = new World({ renderer, scene });
+  if (catalog.static) world.emptyText = ['No books here yet', 'This online version has no libraries yet'];
   await world.build(collectionsFor(libraries, booksByLib, settings), { sort: settings.sort });
 
   const controls = new Controls({ renderer, camera, rig, scene, world, domElement: renderer.domElement });
   controls.smoothMove = settings.smoothMove;
   controls.teleportTo(world.spawn.position, world.spawn.yaw);
   const interaction = new Interaction({ renderer, scene, camera, rig, world, controls, overlay, libraries, booksByLib, settings });
+  if (catalog.static) {
+    // A build without a server (GitHub Pages, tools/build-pages.mjs): nothing to rescan.
+    interaction.setStatic(true);
+    overlay.setStatic(true);
+  }
 
   // XR session handling.
   let session = null;
@@ -258,7 +264,10 @@ async function start() {
     overlay.showToast('Recording performance (?perf)', 'info', 4000);
   }
   overlay.setLoading(null);
-  if (!libraries.length) overlay.showToast('No .zim files found in the server folder.', 'error', 8000);
+  if (!libraries.length) {
+    overlay.showToast(catalog.static ? 'This online version has no books yet. Run vrlbry yourself to read your ZIM files.'
+      : 'No .zim files found in the server folder.', catalog.static ? 'info' : 'error', 8000);
+  }
 }
 
 start().catch((err) => {

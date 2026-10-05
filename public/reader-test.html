@@ -28,7 +28,7 @@
   #stats { font: 12px ui-monospace, Consolas, monospace; min-width: 190px; }
   #status { color: var(--muted); }
 </style>
-<script type="importmap">{"imports":{"three":"/vendor/three/build/three.module.js","three/addons/":"/vendor/three/examples/jsm/"}}</script>
+<script type="importmap">{"imports":{"three":"./vendor/three/build/three.module.js","three/addons/":"./vendor/three/examples/jsm/"}}</script>
 </head>
 <body>
 <header>
@@ -52,10 +52,10 @@
   <span id="stats"></span>
 </footer>
 <script type="module">
-import { getLibraries, getBooks } from '/js/api.js';
-import { sortBooks } from '/js/util/books.js';
-import { load, save } from '/js/util/storage.js';
-import { BookReader } from '/js/reader/reader.js';
+import { getLibraries, getBooks } from './js/api.js';
+import { sortBooks } from './js/util/books.js';
+import { load, save } from './js/util/storage.js';
+import { BookReader } from './js/reader/reader.js';
 
 const $ = (id) => document.getElementById(id);
 const leftCanvas = $('left');

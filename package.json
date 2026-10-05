@@ -15,7 +15,8 @@
     "start": "node server/index.js",
     "start:https": "node server/index.js --https",
     "test": "node --test \"test/*.test.js\"",
-    "perf:quest": "node tools/quest-perf.mjs"
+    "perf:quest": "node tools/quest-perf.mjs",
+    "build:pages": "node tools/build-pages.mjs"
   },
   "dependencies": {
     "htmlparser2": "^12.0.0",

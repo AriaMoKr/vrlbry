@@ -2,6 +2,11 @@
 
 import { perf } from './perf.js';
 
+// The site's root, from this module's own URL (js/api.js): the API is found whether the app is
+// served at / (the Node server) or under a path (GitHub Pages, /vrlbry/).
+const ROOT = new URL('../', import.meta.url);
+const api = (path) => new URL(path, ROOT).href;
+
 const chunkCache = new Map(); // `${lib}\n${id}\n${n}` -> Promise<blocks[]>
 const metaCache = new Map(); // `${lib}\n${id}` -> Promise<meta>
 
@@ -25,42 +30,43 @@ const enc = encodeURIComponent;
 
 /** @returns {Promise<Array<object>>} library descriptors */
 export async function getLibraries() {
-  return (await getJSON('/api/libraries')).libraries;
+  return (await getJSON(api('api/libraries'))).libraries;
 }
 
 /** @returns {Promise<{ generation: number, libraries: object[] }>} libraries + change counter */
 export async function getCatalog() {
-  const r = await getJSON('/api/libraries');
-  return { generation: r.generation ?? 0, libraries: r.libraries };
+  const r = await getJSON(api('api/libraries'));
+  // static: a build without a server (GitHub Pages): no rescans, nothing to index.
+  return { generation: r.generation ?? 0, libraries: r.libraries, static: !!r.static };
 }
 
 /** @returns {Promise<{ changed: string|null, file: string|null }>} when the website's files last changed */
 export async function getVersion() {
-  return getJSON('/api/version');
+  return getJSON(api('api/version'));
 }
 
 /** Asks the server to re-read its ZIM folder now. */
 export async function rescan() {
-  const res = await fetch('/api/rescan', { method: 'POST' });
+  const res = await fetch(api('api/rescan'), { method: 'POST' });
   if (!res.ok) throw new Error(`rescan: ${res.status} ${res.statusText}`);
   return res.json(); // { generation, added, removed, reopened, failed, libraries }
 }
 
 /** @returns {Promise<Array<object>>} book descriptors for one library */
 export async function getBooks(libId) {
-  return (await getJSON(`/api/libraries/${enc(libId)}/books`)).books;
+  return (await getJSON(api(`api/libraries/${enc(libId)}/books`))).books;
 }
 
 /** Wikipedia articles whose titles start with `q` (SPEC §2.5): [{ title, book, n }]. */
 export async function searchArticles(libId, q, limit = 8) {
-  return (await getJSON(`/api/libraries/${enc(libId)}/articles?q=${enc(q)}&limit=${limit}`)).articles;
+  return (await getJSON(api(`api/libraries/${enc(libId)}/articles?q=${enc(q)}&limit=${limit}`))).articles;
 }
 
 /** Book reading metadata: chunks, toc, totals. Cached. */
 export function getBookMeta(libId, bookId) {
   const key = `${libId}\n${bookId}`;
   if (!metaCache.has(key)) {
-    const p = getJSON(`/api/libraries/${enc(libId)}/books/${enc(bookId)}`);
+    const p = getJSON(api(`api/libraries/${enc(libId)}/books/${enc(bookId)}`));
     p.catch(() => metaCache.delete(key));
     metaCache.set(key, p);
   }
@@ -71,7 +77,7 @@ export function getBookMeta(libId, bookId) {
 export function getChunk(libId, bookId, n) {
   const key = `${libId}\n${bookId}\n${n}`;
   if (!chunkCache.has(key)) {
-    const p = getJSON(`/api/libraries/${enc(libId)}/books/${enc(bookId)}/chunks/${n}`).then((r) => r.blocks);
+    const p = getJSON(api(`api/libraries/${enc(libId)}/books/${enc(bookId)}/chunks/${n}`)).then((r) => r.blocks);
     p.catch(() => chunkCache.delete(key));
     chunkCache.set(key, p);
   }

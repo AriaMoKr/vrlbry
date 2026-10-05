@@ -143,6 +143,22 @@ node --test test/zim.test.js
   can be exercised in a desktop browser. `window.__vrlbry` exposes the app for scripted tests;
   `__vrlbry.tick(dt, n)` advances frames manually when the page is not being painted.
 
+## Online version (GitHub Pages)
+
+The same client can run as a static website, without the Node server:
+
+```bash
+npm run build:pages
+```
+
+This writes `dist/`: the client, the few Three.js and IWER files it imports, and static answers
+in place of the API (no libraries yet). The page addresses everything relative to itself, so it
+works under a path such as `https://<user>.github.io/vrlbry/`. The workflow in
+`.github/workflows/pages.yml` runs the tests, builds and publishes it on every push to `main`;
+enable it once in the repository's Settings → Pages → Source: *GitHub Actions*. For now the online
+version has no books; reading ZIM files without the server is planned (see the
+[TODO list](TODO.md)).
+
 ## Measuring performance on a Quest
 
 `/?perf` turns on a recorder in the page: every frame's timing, room switches, atlas painting,

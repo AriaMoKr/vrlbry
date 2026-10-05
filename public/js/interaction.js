@@ -128,8 +128,11 @@ export class Interaction {
     const pad = 36;
     p.clear();
     p.add({ type: 'text', x: pad, y: 26, w: W - 2 * pad, h: 54, text: 'Catalogue', size: 46, weight: '600', serif: true, color: UI.accent });
-    p.add({ id: 'rescan', type: 'button', x: W - pad - 230, y: 24, w: 230, h: 56, label: '⟳ Rescan folder', size: 24, onClick: () => this.onRescan?.() });
-    let right = W - pad - 230;
+    let right = W - pad;
+    if (!this.staticSite) {
+      right -= 230;
+      p.add({ id: 'rescan', type: 'button', x: right, y: 24, w: 230, h: 56, label: '⟳ Rescan folder', size: 24, onClick: () => this.onRescan?.() });
+    }
     if (this.controls.presenting) {
       right -= 12 + 170;
       p.add({ id: 'exit-vr', type: 'button', x: right, y: 24, w: 170, h: 56, label: 'Exit VR', size: 24, onClick: () => this.onExitVR?.() });
@@ -155,6 +158,12 @@ export class Interaction {
     if (this._version) {
       p.add({ id: 'version', type: 'text', x: pad, y: p.h - 40, w: W - 2 * pad, h: 28, text: this._version, size: 21, color: UI.muted, align: 'right', maxLines: 1 });
     }
+  }
+
+  /** A build without a server (GitHub Pages): nothing to rescan. */
+  setStatic(on) {
+    this.staticSite = !!on;
+    this._fillKiosk();
   }
 
   /** Shows when the website last changed, at the foot of the kiosk. */
