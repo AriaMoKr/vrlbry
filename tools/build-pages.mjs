@@ -15,8 +15,15 @@
 //
 // Everything in the client is addressed relative to the page or to js/, so the site works under a
 // path (https://<user>.github.io/vrlbry/) as well as at the root of the Node server.
+//
+// GitHub Pages lets browsers reuse every file for 10 minutes (max-age=600), and a reload only
+// checks the page itself. So every module URL in the built site carries a version tag (?v=<hash>
+// of the module group's files: the app, three, IWER), from index.html's script, stylesheet and
+// import map through every relative import: a reload after a deploy loads the new modules, never
+// a mix of old and new ones (versionUrls).
 
 import { execFileSync } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -80,6 +87,93 @@ function closure(entries) {
     }
   }
   return [...seen];
+}
+
+/** Relative specifiers of imports, re-exports and dynamic imports: (head)(quote)(specifier). */
+const IMPORT_SPEC = /(\bimport\s*(?:[^'"()]*?\bfrom\s*)?|\bexport\s+[^'"]*?\bfrom\s*|\bimport\s*\(\s*)(['"])(\.\.?\/[^'"?]+)\2/g;
+/** A module or worker addressed from the module itself: new URL('./x.js', import.meta.url). */
+const MODULE_URL = /\bnew URL\(\s*(['"])(\.\.?\/[^'"?]+\.js)\1(\s*,\s*import\.meta\.url\s*\))/g;
+
+/**
+ * Adds ?v=<tag> to every relative module URL of a JS source: imports, re-exports, dynamic
+ * imports and new URL('….js', import.meta.url). tagOf(specifier) gives the tag, or null to leave
+ * the URL as it is. Bare specifiers ('three') are the import map's business.
+ */
+export function tagModuleUrls(source, tagOf) {
+  const tagged = (spec) => {
+    const tag = tagOf(spec);
+    return tag ? `${spec}?v=${tag}` : spec;
+  };
+  return source
+    .replace(IMPORT_SPEC, (_, head, q, spec) => `${head}${q}${tagged(spec)}${q}`)
+    .replace(MODULE_URL, (_, q, spec, tail) => `new URL(${q}${tagged(spec)}${q}${tail}`);
+}
+
+/** Every file under dir (absolute paths), or none when it does not exist. */
+function filesUnder(dir) {
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir, { withFileTypes: true })
+    .flatMap((e) => (e.isDirectory() ? filesUnder(path.join(dir, e.name)) : [path.join(dir, e.name)]));
+}
+
+/** A short hash of files (their paths relative to base, and contents) and of `extra` strings. */
+function hashFiles(files, base, extra = []) {
+  const h = crypto.createHash('sha256');
+  for (const f of [...files].sort()) {
+    h.update(path.relative(base, f).split(path.sep).join('/')).update('\0').update(fs.readFileSync(f)).update('\0');
+  }
+  for (const e of extra) h.update(e).update('\0');
+  return h.digest('hex').slice(0, 10);
+}
+
+/**
+ * Tags every module URL of the built site in `out` with its group's version (see the top): the
+ * app (js/ and css/), three and IWER, each hashed from its files before tagging. The app's tag also
+ * covers the vendor tags, since its modules name them. A file gets the same URL from every module
+ * that imports it, so nothing is loaded twice.
+ * @returns {{ app: string, three: string, iwer: string }}
+ */
+function versionUrls(out) {
+  const three = filesUnder(path.join(out, 'vendor', 'three'));
+  const iwer = filesUnder(path.join(out, 'vendor', 'iwer'));
+  const app = [...filesUnder(path.join(out, 'js')), ...filesUnder(path.join(out, 'css'))];
+  const tags = { three: hashFiles(three, out), iwer: hashFiles(iwer, out) };
+  tags.app = hashFiles(app, out, [tags.three, tags.iwer]);
+  const tagFor = (file) => {
+    const rel = path.relative(out, file).split(path.sep).join('/');
+    if (rel.startsWith('vendor/three/')) return tags.three;
+    if (rel.startsWith('vendor/iwer/')) return tags.iwer;
+    return tags.app;
+  };
+  for (const file of [...app, ...three, ...iwer].filter((f) => f.endsWith('.js'))) {
+    const source = fs.readFileSync(file, 'utf8');
+    const tagged = tagModuleUrls(source, (spec) => tagFor(path.resolve(path.dirname(file), spec)));
+    if (tagged !== source) fs.writeFileSync(file, tagged);
+  }
+
+  // index.html: the entry module, the stylesheet, and the import map. A prefix entry
+  // ("three/addons/") cannot carry a query, so each add-on the app imports gets its own entry.
+  const bare = new Set();
+  for (const file of app.filter((f) => f.endsWith('.js'))) {
+    for (const spec of importsOf(fs.readFileSync(file, 'utf8'))) if (!/^(\.|\/|[a-z]+:)/.test(spec)) bare.add(spec);
+  }
+  const indexFile = path.join(out, 'index.html');
+  const html = fs.readFileSync(indexFile, 'utf8')
+    .replace(/(\b(?:src|href)=")((?:\.\/)?(?:js|css)\/[^"?]+)"/g, (_, attr, url) => `${attr}${url}?v=${tags.app}"`)
+    .replace(/(<script type="importmap">)([\s\S]*?)(<\/script>)/, (_, open, json, close) => {
+      const { imports } = JSON.parse(json);
+      const mapped = {};
+      for (const spec of bare) {
+        const key = Object.keys(imports).filter((k) => k === spec || (k.endsWith('/') && spec.startsWith(k)))
+          .sort((a, b) => b.length - a.length)[0];
+        if (!key) throw new Error(`the import map has no entry for '${spec}'`);
+        const url = imports[key] + spec.slice(key.length);
+        mapped[spec] = `${url}?v=${tagFor(path.resolve(out, url))}`;
+      }
+      return open + JSON.stringify({ imports: { ...imports, ...mapped } }) + close;
+    });
+  fs.writeFileSync(indexFile, html);
+  return tags;
 }
 
 /** When the site last changed: the last commit's time, else now. */
@@ -230,6 +324,7 @@ async function main() {
     ...closure([path.join(IWER, 'iwer.module.js')]).map((file) => [file, path.join(OUT, 'vendor', 'iwer', path.relative(IWER, file))]),
   ];
   for (const [from, to] of vendor) copy(from, to);
+  const tags = versionUrls(OUT);
 
   // The API's static answers: the libraries of --zims (or none), and when the site last changed.
   const api = path.join(OUT, 'api');
@@ -259,7 +354,7 @@ async function main() {
   };
   count(OUT);
   console.log(`Built ${path.relative(ROOT, OUT) || OUT}: ${files} files, ${(bytes / 1048576).toFixed(1)} MB `
-    + `(${vendor.length} vendor modules).`);
+    + `(${vendor.length} vendor modules; versions: app ${tags.app}, three ${tags.three}, IWER ${tags.iwer}).`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

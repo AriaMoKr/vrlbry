@@ -24,8 +24,8 @@ const paths = {
 const chunkCache = new Map(); // `${lib}\n${id}\n${n}` -> Promise<blocks[]>
 const metaCache = new Map(); // `${lib}\n${id}` -> Promise<meta>
 
-async function getJSON(url) {
-  const res = await fetch(url);
+async function getJSON(url, init) {
+  const res = await fetch(url, init);
   if (!res.ok) {
     let msg = `${res.status} ${res.statusText}`;
     try { msg = (await res.json()).error || msg; } catch { /* not JSON */ }
@@ -42,14 +42,19 @@ async function getJSON(url) {
 
 const enc = encodeURIComponent;
 
+// What says which libraries and which version of the site there are is always checked with the
+// server (a 304 when unchanged): GitHub Pages lets browsers reuse any file for 10 minutes, and a
+// reload would otherwise keep showing the libraries of the previous deploy.
+const FRESH = { cache: 'no-cache' };
+
 /** @returns {Promise<Array<object>>} library descriptors */
 export async function getLibraries() {
-  return (await getJSON(api('api/libraries'))).libraries;
+  return (await getJSON(api('api/libraries'), FRESH)).libraries;
 }
 
 /** @returns {Promise<{ generation: number, libraries: object[] }>} libraries + change counter */
 export async function getCatalog() {
-  const r = await getJSON(api('api/libraries'));
+  const r = await getJSON(api('api/libraries'), FRESH);
   // static: a build without a server (GitHub Pages): no rescans, answers are files.
   staticSite = !!r.static;
   return { generation: r.generation ?? 0, libraries: r.libraries, static: staticSite };
@@ -57,7 +62,7 @@ export async function getCatalog() {
 
 /** @returns {Promise<{ changed: string|null, file: string|null }>} when the website's files last changed */
 export async function getVersion() {
-  return getJSON(api('api/version'));
+  return getJSON(api('api/version'), FRESH);
 }
 
 /** Asks the server to re-read its ZIM folder now. */

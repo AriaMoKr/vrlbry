@@ -489,7 +489,9 @@ online version has no books. With `--zims` the server's answers are saved with e
 relative (`/zim/…` → `zim/…`, `/api/libraries/…` → `api/library/…`), the images at their decoded
 paths, and a Wikipedia gets `titles.json`, `{ volumeSize, titles }` in the app's title order, which
 the client searches itself in place of `/articles` (same result shape, no redirect aliases). All
-client URLs are relative, so the site works under a path.)
+client URLs are relative, so the site works under a path. Pages sends `max-age=600`: the client
+fetches `api/libraries` and `api/version` with `cache: 'no-cache'`, and the build gives every module
+URL a version tag (`?v=<hash>`), so a reload after a deploy never mixes old and new modules.)
 
 All JSON responses: `Content-Type: application/json; charset=utf-8`. Errors: `{ "error": "..." }`
 with 400/404/500. Unknown `/api/*` → 404 JSON.

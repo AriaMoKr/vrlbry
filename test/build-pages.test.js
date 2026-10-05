@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { blockImages, importsOf, prerender, relativeUrls, staticPath } from '../tools/build-pages.mjs';
+import { blockImages, importsOf, prerender, relativeUrls, staticPath, tagModuleUrls } from '../tools/build-pages.mjs';
 import { writeZim } from './helpers/zimwriter.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -82,16 +82,49 @@ describe('GitHub Pages build', () => {
     // Under a path (https://<user>.github.io/vrlbry/), nothing may be addressed from the root.
     const html = fs.readFileSync(path.join(out, 'index.html'), 'utf8');
     assert.ok(!/(?:href|src)="\//.test(html), 'no root-relative href/src');
-    assert.ok(html.includes('"three":"./vendor/three/build/three.module.js"'));
-    // Every relative import of every module resolves to a file that was built.
+    // Every module URL carries its version tag (Pages lets browsers reuse files for 10 minutes),
+    // and a file has one URL wherever it is imported from (else it would load twice).
+    const tag = (url) => url.match(/\?v=([0-9a-f]{10})$/)?.[1];
+    const app = tag(html.match(/<script type="module" src="(js\/main\.js[^"]*)"/)[1]);
+    assert.ok(app, 'the entry module is tagged');
+    assert.equal(html.match(/href="(css\/style\.css[^"]*)"/)[1], `css/style.css?v=${app}`);
+    const { imports } = JSON.parse(html.match(/<script type="importmap">([\s\S]*?)<\/script>/)[1]);
+    assert.match(imports.three, /^\.\/vendor\/three\/build\/three\.module\.js\?v=[0-9a-f]{10}$/);
+    const urlOf = new Map(); // built file → the one URL (with its tag) it is loaded by
+    const loads = (target, url, from) => {
+      assert.ok(all.includes(target), `${from} → ${url}: no such file`);
+      assert.ok(tag(url), `${from} → ${url}: no version tag`);
+      assert.equal(urlOf.get(target) ?? url.slice(url.indexOf('?')), url.slice(url.indexOf('?')), `${target} has one version`);
+      urlOf.set(target, url.slice(url.indexOf('?')));
+    };
+    loads('js/main.js', `js/main.js?v=${app}`, 'index.html');
+    for (const [spec, url] of Object.entries(imports)) if (!spec.endsWith('/')) loads(path.posix.normalize(url.split('?')[0]), url, `import map ${spec}`);
     for (const f of all.filter((x) => x.endsWith('.js'))) {
-      for (const spec of importsOf(fs.readFileSync(path.join(out, f), 'utf8'))) {
+      const source = fs.readFileSync(path.join(out, f), 'utf8');
+      const relative = [...source.matchAll(/\bnew URL\(\s*['"](\.\.?\/[^'"]+\.js[^'"]*)['"]\s*,\s*import\.meta\.url/g)].map((m) => m[1]);
+      for (const spec of [...importsOf(source), ...relative]) {
         if (spec.startsWith('/')) assert.fail(`${f} imports ${spec} from the root`);
-        if (!spec.startsWith('.')) continue;
-        const target = path.relative(out, path.resolve(path.dirname(path.join(out, f)), spec)).split(path.sep).join('/');
-        assert.ok(all.includes(target), `${f} → ${spec}`);
+        if (spec.startsWith('.')) {
+          const target = path.posix.join(path.posix.dirname(f), spec.split('?')[0]);
+          loads(target, spec, f);
+        } else if (f.startsWith('js/')) {
+          // A bare specifier of the app: an exact import map entry, so that it is tagged too.
+          assert.ok(imports[spec], `${f} → ${spec}: not in the import map`);
+        }
       }
     }
+    assert.ok(urlOf.has('js/world/atlas-worker.js') && urlOf.has('vendor/iwer/iwer.module.js') && urlOf.has('vendor/three/build/three.core.js'));
+  });
+
+  it('tags relative module URLs, and nothing else', () => {
+    const src = `import a from './a.js';\nimport './side.js';\nexport { b } from '../b.js';\nconst c = await import('./c.js');
+      import * as THREE from 'three';\nimport { m } from 'three/addons/m.js';\nconst root = new URL('../', import.meta.url);
+      new Worker(new URL('./w.js', import.meta.url), { type: 'module' });\nconst s = 'from here';`;
+    const tagged = tagModuleUrls(src, (spec) => (spec === '../b.js' ? 'b0' : 'a1'));
+    assert.deepEqual(importsOf(tagged).sort(), ['../b.js?v=b0', './a.js?v=a1', './c.js?v=a1', './side.js?v=a1', 'three', 'three/addons/m.js']);
+    assert.ok(tagged.includes(`new URL('./w.js?v=a1', import.meta.url)`));
+    assert.ok(tagged.includes(`new URL('../', import.meta.url)`) && tagged.includes(`'from here'`));
+    assert.equal(tagModuleUrls(src, () => null), src);
   });
 });
 
@@ -168,11 +201,13 @@ describe('GitHub Pages build: pre-rendered ZIMs (--zims)', () => {
   it('serves the client in static mode: the same API, answered by files, and article search in the browser', async () => {
     const publicUrl = `${pathToFileURL(path.join(ROOT, 'public')).href}/`;
     const asked = [];
+    const fresh = [];
     const realFetch = globalThis.fetch;
-    globalThis.fetch = async (url) => {
+    globalThis.fetch = async (url, init) => {
       assert.ok(url.startsWith(publicUrl), url);
       const rel = url.slice(publicUrl.length);
       asked.push(rel);
+      if (init?.cache === 'no-cache') fresh.push(rel);
       const file = path.join(site, ...rel.split('/').map(decodeURIComponent));
       if (!fs.existsSync(file)) return { ok: false, status: 404, statusText: 'Not Found', json: async () => ({}) };
       const text = fs.readFileSync(file, 'utf8');
@@ -200,6 +235,10 @@ describe('GitHub Pages build: pre-rendered ZIMs (--zims)', () => {
         'api/libraries', 'api/library/wp/books.json', 'api/library/wp/books/v1/index.json',
         'api/library/wp/books/v1/chunks/1.json', 'api/library/wp/titles.json',
       ], 'the title list is fetched once');
+      // The catalogue and the version are always checked with the server (Pages' max-age=600 would
+      // keep a reload on the previous deploy's libraries); the rest may come from the cache.
+      await api.getVersion().catch(() => {});
+      assert.deepEqual(fresh, ['api/libraries', 'api/version']);
     } finally {
       globalThis.fetch = realFetch;
     }
