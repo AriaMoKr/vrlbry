@@ -42,6 +42,14 @@
   `navbox` but not `infobox` or `sidebar` (`MW_CHROME_CLASSES` in `server/content/html.js`).
   Options: drop them, move them after the article, or keep only the infobox's main image and a
   few facts.
+- **Wikipedia: formulas split paragraphs.** Math is stored as small SVG images inside the
+  sentence, and the converter makes every image its own block, so a sentence with a formula
+  breaks into text, a centred formula, then more text. "Kalman filter" has 347 such images.
+  Inline images need a place in the block format (e.g. an image run inside `r`, SPEC §3.5)
+  and in the layout's line breaking.
+- **Wikipedia: the kiosk says "books".** The Shelves & settings tab reads "Wikipedia's 1m Top
+  Articles · 1,000 books"; it should say volumes (`interaction.js`, the shelved count; `unitOf`
+  in `rooms.js` already knows the word).
 - **Wikipedia: follow links** (later). Tapping a link in an article goes to that article, taking
   its volume off the shelf if needed. The reader cannot follow links today.
 - **Wikipedia: article search.** Typing an article title opens the right volume at that article.

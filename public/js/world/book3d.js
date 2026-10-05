@@ -29,7 +29,7 @@ const coverCache = new Map(); // url -> Promise<THREE.Texture|null>
 function loadImage(url) {
   return new Promise((resolve) => {
     const img = new Image();
-    img.onload = () => resolve(img);
+    img.onload = () => img.decode().catch(() => {}).then(() => resolve(img)); // decoded off the main thread
     img.onerror = () => resolve(null);
     img.src = url;
   });

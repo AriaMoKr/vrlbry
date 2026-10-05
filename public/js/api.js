@@ -1,5 +1,7 @@
 // Thin client for the vrlbry HTTP API (see SPEC.md §4). All functions throw on HTTP errors.
 
+import { perf } from './perf.js';
+
 const chunkCache = new Map(); // `${lib}\n${id}\n${n}` -> Promise<blocks[]>
 const metaCache = new Map(); // `${lib}\n${id}` -> Promise<meta>
 
@@ -10,7 +12,13 @@ async function getJSON(url) {
     try { msg = (await res.json()).error || msg; } catch { /* not JSON */ }
     throw new Error(`GET ${url}: ${msg}`);
   }
-  return res.json();
+  if (!perf.enabled) return res.json();
+  // Parsing happens on the main thread: a long Wikipedia article is ~200 KB of JSON.
+  const text = await res.text();
+  const t0 = performance.now();
+  const value = JSON.parse(text);
+  perf.event('json', { t: t0, ms: performance.now() - t0, kb: Math.round(text.length / 1024), url: url.slice(0, 120) });
+  return value;
 }
 
 const enc = encodeURIComponent;

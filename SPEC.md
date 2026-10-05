@@ -637,7 +637,8 @@ export class BookReader {
   smaller/larger. Hyphenation not required; break long words that do not fit a line.
 - Lines must never be split across pages; a heading must not be the last thing on a page
   (keep-with-next). Widows/orphans: best-effort.
-- Images are loaded with `new Image()` (`decoding = 'async'`), cached; `render` awaits images on
+- Images are loaded with `new Image()` (`decoding = 'async'`) and decoded (`img.decode()`, off the
+  main thread) before use, cached; `render` awaits images on
   that page (timeout 8 s → draw a placeholder box with alt text). Missing `w/h` → use the loaded
   image's natural size at layout time (layout may await image loads for that chunk).
 - `reader-test.html` demonstrates the reader with a library/book picker, two-page spread view,
@@ -931,7 +932,9 @@ States: `browse` → `inspect` → `read` (and back).
   - Per frame (ring buffer, 20 min at 72 Hz): start time, interval between frame timestamps (XR
     or rAF time), main-thread cost of the callback, draw calls, triangles (both eyes in VR).
   - Events with durations: `rebuild` (fade-out, synchronous build, waiting for the low atlases),
-    `lows`, `atlas` (per level, worker or main thread), `turn`, `layout` (one chunk).
+    `lows`, `atlas` (per level, worker or main thread), `turn`, `layout` (one chunk), `render`
+    (one page: drawing time, image count and image drawing time), `json` (parsing one API
+    response).
   - Segments (scenarios), long tasks and JS heap samples.
   - `summary()` gives frame statistics per segment (fps, interval percentiles, dropped frames
     against the session's frame rate, JS cost, draw calls) and each rebuild's worst frame gap;

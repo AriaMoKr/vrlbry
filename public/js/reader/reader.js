@@ -96,7 +96,8 @@ function loadImage(src) {
       const img = new Image();
       img.decoding = 'async';
       const timer = setTimeout(() => resolve(null), IMAGE_TIMEOUT);
-      img.onload = () => { clearTimeout(timer); resolve(img); };
+      // Decoded before use, off the main thread: otherwise the page's drawImage decodes it there.
+      img.onload = () => img.decode().catch(() => {}).then(() => { clearTimeout(timer); resolve(img); });
       img.onerror = () => { clearTimeout(timer); resolve(null); };
       img.src = src;
     });
@@ -487,6 +488,8 @@ export class BookReader {
     let font = '';
     g.fillStyle = t.ink;
     g.strokeStyle = t.rule;
+    let images = 0;
+    let imageMs = 0;
     for (const { y, box } of page.boxes) {
       for (const it of box.items) {
         if (it.k === 't') {
@@ -503,9 +506,12 @@ export class BookReader {
         } else if (it.k === 'img') {
           const img = imgs.get(it.src);
           if (img) {
+            const ti = performance.now();
             g.globalAlpha = t.img;
             g.drawImage(img, it.x, y + it.y, it.w, it.h);
             g.globalAlpha = 1;
+            imageMs += performance.now() - ti;
+            images++;
           } else {
             this._placeholder(g, it, y);
             font = '';
@@ -515,6 +521,7 @@ export class BookReader {
     }
     g.restore();
     this.stats.lastRenderMs = performance.now() - t0;
+    perf.event('render', { t: t0, ms: this.stats.lastRenderMs, imageMs, images, chunk: r.c, page: r.p });
   }
 
   _placeholder(g, it, y) {
