@@ -487,8 +487,12 @@ they are under `api/library/<id>/`: `books.json`, `books/<book>/index.json`,
 `books/<book>/chunks/<n>.json`. Without `--zims` the catalogue is empty and the client says the
 online version has no books. With `--zims` the server's answers are saved with every URL made
 relative (`/zim/…` → `zim/…`, `/api/libraries/…` → `api/library/…`), the images at their decoded
-paths, and a Wikipedia gets `titles.json`, `{ volumeSize, titles }` in the app's title order, which
-the client searches itself in place of `/articles` (same result shape, no redirect aliases). All
+paths (each name as `fileName` in `util/file-names.js` makes it: names Windows cannot store, such
+as Wikipedia images with quotes, get `" < > : | ? * \ /`, control characters, `%`, a final dot or
+space and device names percent-escaped, and the URL names the escaped file, encoded once more;
+library and book ids are named the same way, and `api.js` asks for them so), and a Wikipedia gets
+`titles.json`, `{ volumeSize, titles }` in the app's title order, which the client searches
+itself in place of `/articles` (same result shape, no redirect aliases). All
 client URLs are relative, so the site works under a path. Pages sends `max-age=600`: the client
 fetches `api/libraries` and `api/version` with `cache: 'no-cache'`, and the build gives every module
 URL a version tag (`?v=<hash>`), so a reload after a deploy never mixes old and new modules.)

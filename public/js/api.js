@@ -2,6 +2,7 @@
 
 import { perf } from './perf.js';
 import { titleKey } from './util/books.js';
+import { fileName } from './util/file-names.js';
 
 // The site's root, from this module's own URL (js/api.js): the API is found whether the app is
 // served at / (the Node server) or under a path (GitHub Pages, /vrlbry/).
@@ -10,14 +11,15 @@ const api = (path) => new URL(path, ROOT).href;
 
 // A static build (GitHub Pages, tools/build-pages.mjs) answers with files, and a path cannot be both
 // a file and a folder: the catalogue is the file api/libraries, so a library's files are under
-// api/library/<id>/ (books.json, books/<id>/index.json, books/<id>/chunks/<n>.json, titles.json).
-// Set by getCatalog().
+// api/library/<id>/ (books.json, books/<id>/index.json, books/<id>/chunks/<n>.json, titles.json),
+// with ids as the build names their folders (fileName). Set by getCatalog().
 let staticSite = false;
-const lib = (id) => `${staticSite ? 'api/library' : 'api/libraries'}/${enc(id)}`;
+const seg = (id) => enc(staticSite ? fileName(id) : id);
+const lib = (id) => `${staticSite ? 'api/library' : 'api/libraries'}/${seg(id)}`;
 const paths = {
   books: (id) => `${lib(id)}/books${staticSite ? '.json' : ''}`,
-  meta: (id, book) => `${lib(id)}/books/${enc(book)}${staticSite ? '/index.json' : ''}`,
-  chunk: (id, book, n) => `${lib(id)}/books/${enc(book)}/chunks/${n}${staticSite ? '.json' : ''}`,
+  meta: (id, book) => `${lib(id)}/books/${seg(book)}${staticSite ? '/index.json' : ''}`,
+  chunk: (id, book, n) => `${lib(id)}/books/${seg(book)}/chunks/${n}${staticSite ? '.json' : ''}`,
   titles: (id) => `${lib(id)}/titles.json`,
 };
 

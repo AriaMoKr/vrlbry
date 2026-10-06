@@ -30,6 +30,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
+import { fileName } from '../public/js/util/file-names.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PUBLIC = path.join(ROOT, 'public');
@@ -201,9 +202,37 @@ export function staticPath(url) {
   return url.replace(/^\/api\/libraries\//, 'api/library/').replace(/^\//, '');
 }
 
-/** Server URLs in a JSON text, made the static site's (staticPath). */
+const decode = (segment) => {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment; // not percent-encoded after all
+  }
+};
+
+/**
+ * The file a server URL is saved as, relative to the site's root: staticPath's segments decoded
+ * (Pages decodes a request's path to find the file), as names every system can store (fileName).
+ */
+export function staticFile(url) {
+  return staticPath(url).split('/').map((s) => fileName(decode(s))).join('/');
+}
+
+/**
+ * A server URL as the static site's page asks for it: relative (staticPath), naming staticFile's
+ * file. A segment whose file name is escaped is encoded once more, since Pages decodes it.
+ */
+export function staticUrl(url) {
+  return staticPath(url).split('/').map((s) => {
+    const name = decode(s);
+    const file = fileName(name);
+    return file === name ? s : encodeURIComponent(file);
+  }).join('/');
+}
+
+/** Server URLs (whole JSON strings starting /zim/ or /api/libraries/) made the static site's (staticUrl). */
 export function relativeUrls(json) {
-  return json.replaceAll('"/zim/', '"zim/').replaceAll('"/api/libraries/', '"api/library/');
+  return json.replace(/"(\/(?:zim|api\/libraries)\/[^"\\]*)"/g, (_, url) => `"${staticUrl(url)}"`);
 }
 
 /** The image URLs (as the server writes them) that the blocks of a chunk refer to. */
@@ -258,7 +287,7 @@ export async function prerender(dir, out, { log = console.log } = {}) {
     for (const info of catalog.libraries) {
       stats.libraries++;
       if (info.illustration) images.add(info.illustration);
-      const lib = `api/library/${info.id}`;
+      const lib = `api/library/${fileName(info.id)}`;
       const booksText = await (await get(`/api/libraries/${enc(info.id)}/books`)).text();
       write(`${lib}/books.json`, relativeUrls(booksText));
       const { books } = JSON.parse(booksText);
@@ -266,12 +295,13 @@ export async function prerender(dir, out, { log = console.log } = {}) {
       await each(books.filter((b) => b.readable), 4, async (b) => {
         const bookPath = `/api/libraries/${enc(info.id)}/books/${enc(b.id)}`;
         const metaText = await (await get(bookPath)).text();
-        write(`${lib}/books/${b.id}/index.json`, relativeUrls(metaText));
+        const bookDir = `${lib}/books/${fileName(b.id)}`;
+        write(`${bookDir}/index.json`, relativeUrls(metaText));
         const meta = JSON.parse(metaText);
         if (meta.cover) images.add(meta.cover);
         await each(meta.chunks.map((_, n) => n), 8, async (n) => {
           const text = await (await get(`${bookPath}/chunks/${n}`)).text();
-          write(`${lib}/books/${b.id}/chunks/${n}.json`, relativeUrls(text));
+          write(`${bookDir}/chunks/${n}.json`, relativeUrls(text));
           blockImages(JSON.parse(text).blocks, images);
           stats.chunks++;
         });
@@ -281,12 +311,13 @@ export async function prerender(dir, out, { log = console.log } = {}) {
       if (titles) write(`${lib}/titles.json`, JSON.stringify(titles));
       log(`  ${info.id}: ${books.length} ${info.kind === 'wikipedia' ? 'volumes' : 'books'}`);
     }
-    // The images, at their decoded paths: Pages decodes a request's path to find the file.
+    // The images, at their decoded paths (Pages decodes a request's path to find the file), with
+    // names every system can store (staticFile, as the JSON names them: staticUrl).
     await each([...images], 16, async (src) => {
       if (!src.startsWith('/')) return; // data: URIs and the like stay inline
       const res = await fetch(base + src);
       if (!res.ok) return log(`  missing image ${src} (HTTP ${res.status})`);
-      write(staticPath(src).split('/').map(decodeURIComponent).join('/'), Buffer.from(await res.arrayBuffer()));
+      write(staticFile(src), Buffer.from(await res.arrayBuffer()));
       stats.images++;
     });
     return stats;

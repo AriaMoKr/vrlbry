@@ -7,7 +7,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { blockImages, importsOf, prerender, relativeUrls, staticPath, tagModuleUrls } from '../tools/build-pages.mjs';
+import { blockImages, importsOf, prerender, relativeUrls, staticFile, staticPath, staticUrl, tagModuleUrls } from '../tools/build-pages.mjs';
+import { fileName } from '../public/js/util/file-names.js';
 import { writeZim } from './helpers/zimwriter.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -28,8 +29,10 @@ function writeDocsZim(file) {
     mainPage: 'C/index.html',
     entries: [
       { ns: 'C', url: 'index.html', title: 'Main Page', mime: 'text/html', content: page('Main', '<p>Welcome.</p>') },
-      { ns: 'C', url: 'guide.html', title: 'A Guide', mime: 'text/html', content: page('A Guide', '<p>See <img src="img/a%20b.png" alt="ab"></p>') },
+      { ns: 'C', url: 'guide.html', title: 'A Guide', mime: 'text/html', content: page('A Guide', '<p>See <img src="img/a%20b.png" alt="ab"> and <img src="img/%22q%22%3A1.png" alt="q"></p>') },
       { ns: 'C', url: 'img/a b.png', mime: 'image/png', content: png },
+      // Wikipedia image names have quotes: no file may be named so on Windows.
+      { ns: 'C', url: 'img/"q":1.png', mime: 'image/png', content: png },
       { ns: 'M', url: 'Title', mime: 'text/plain', content: 'Docs' },
     ],
   });
@@ -148,6 +151,25 @@ describe('GitHub Pages build: pre-rendered ZIMs (--zims)', () => {
 
   it('maps server URLs to the static site’s', () => {
     assert.equal(staticPath('/zim/wp/C/_assets_/a%20b.png'), 'zim/wp/C/_assets_/a%20b.png');
+    // Names every system can store: unchanged when possible, else percent-escaped (and % itself).
+    assert.equal(fileName('Pythagorean theorem é.svg'), 'Pythagorean theorem é.svg');
+    assert.equal(fileName('"Nancy"_(1945).jpg'), '%22Nancy%22_(1945).jpg');
+    assert.equal(fileName('a<b>c:d|e?f*g\\h/i\u0001'), 'a%3Cb%3Ec%3Ad%7Ce%3Ff%2Ag%5Ch%2Fi%01');
+    assert.equal(fileName('50%_off.png'), '50%25_off.png');
+    assert.equal(fileName('name.'), 'name%2E');
+    assert.equal(fileName('trailing '), 'trailing%20');
+    assert.equal(fileName('..'), '.%2E');
+    assert.equal(fileName('CON.jpg'), '%43ON.jpg');
+    assert.equal(fileName('nul'), '%6Eul');
+    assert.equal(fileName('Console.jpg'), 'Console.jpg');
+    // The page asks for the escaped name (encoded once more), and Pages, decoding it, finds the file.
+    const quoted = '/zim/wp/C/_assets_/h/%22Nancy%22_(1945).jpg';
+    assert.equal(staticFile(quoted), 'zim/wp/C/_assets_/h/%22Nancy%22_(1945).jpg');
+    assert.equal(staticUrl(quoted), 'zim/wp/C/_assets_/h/%2522Nancy%2522_(1945).jpg');
+    assert.equal(staticUrl('/zim/wp/C/a%20b.png'), 'zim/wp/C/a%20b.png', 'unchanged when the name can be stored');
+    for (const u of [quoted, '/zim/wp/C/a%20b.png', '/zim/wp/C/50%25.png', '/zim/wp/C/%C3%A9%3F.svg', '/api/libraries/x/books/v1']) {
+      assert.equal(staticUrl(u).split('/').map(decodeURIComponent).join('/'), staticFile(u), u);
+    }
     assert.equal(staticPath('/api/libraries/wp/books/v1'), 'api/library/wp/books/v1');
     assert.equal(relativeUrls('{"src":"/zim/x/C/a.png","u":"/api/libraries/x/books","t":"a /zim/ path in text"}'),
       '{"src":"zim/x/C/a.png","u":"api/library/x/books","t":"a /zim/ path in text"}');
@@ -187,6 +209,7 @@ describe('GitHub Pages build: pre-rendered ZIMs (--zims)', () => {
     }
     assert.equal(chunks, stats.chunks);
     assert.ok([...images].some((u) => u.includes('a%20b.png')), 'the encoded image path is referred to');
+    assert.ok([...images].some((u) => u.endsWith('img/%2522q%2522%253A1.png')), 'a name Windows cannot store, escaped');
     assert.ok([...images].some((u) => u.includes('_assets_/pic.png')));
     for (const u of images) {
       assert.ok(u.startsWith('zim/'), u);
@@ -231,6 +254,10 @@ describe('GitHub Pages build: pre-rendered ZIMs (--zims)', () => {
       assert.deepEqual((await api.searchArticles('wp', 'band', 8)).map((a) => a.title), ['The Band', 'Bandana']);
       assert.deepEqual((await api.searchArticles('wp', 'bandana', 1)).map((a) => a.title), ['Bandana']);
       assert.deepEqual(await api.searchArticles('wp', 'kiwi', 8), []);
+      // Ids are asked for by the names the build gives their folders.
+      await api.getBookMeta('a:b', 'c"d').catch(() => {});
+      assert.equal(asked.at(-1), 'api/library/a%253Ab/books/c%2522d/index.json');
+      asked.pop();
       assert.deepEqual(asked, [
         'api/libraries', 'api/library/wp/books.json', 'api/library/wp/books/v1/index.json',
         'api/library/wp/books/v1/chunks/1.json', 'api/library/wp/titles.json',
