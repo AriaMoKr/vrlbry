@@ -16,6 +16,7 @@ const HELP = {
     ['Read', 'Click the book or “Read” · turn pages with ← → / Space / click a page'],
     ['Text size', '+ / − or the A− A+ buttons'],
     ['Put it back', 'Esc or “Put back”'],
+    ['Search', 'The box at the top, or type on the catalogue stand’s Search tab (Esc to stop typing)'],
   ],
   touch: [
     ['Look around', 'Drag with one finger'],

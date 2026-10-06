@@ -94,6 +94,9 @@ export class Controls extends EventTarget {
       down: null,
     };
     this._touches = new Map();
+    // True while a 3D text field takes the keyboard (the kiosk's search, set by interaction.js):
+    // characters, Backspace, Enter and Escape are then text, not walking or turning.
+    this.textEntry = false;
     this._pad = this._makePad();
     this._bindDom();
     this._teleport = this._makeTeleportVisual();
@@ -605,9 +608,12 @@ export class Controls extends EventTarget {
     }, { passive: false });
     window.addEventListener('keydown', (e) => {
       if (isTyping(e)) return;
-      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' ', 'PageUp', 'PageDown'].includes(e.key)) e.preventDefault();
-      if (!e.repeat) this._emit('key', { code: e.code, key: e.key, pressed: true, shift: e.shiftKey });
-      this._keys.add(e.code);
+      const text = this.textEntry && !e.ctrlKey && !e.metaKey && !e.altKey
+        && (e.key.length === 1 || ['Backspace', 'Enter', 'Escape'].includes(e.key));
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' ', 'PageUp', 'PageDown'].includes(e.key) || (text && e.key === 'Backspace')) e.preventDefault();
+      // Typed keys repeat while held, like in any text field.
+      if (!e.repeat || text) this._emit('key', { code: e.code, key: e.key, pressed: true, shift: e.shiftKey, text });
+      if (!text) this._keys.add(e.code);
     });
     window.addEventListener('keyup', (e) => {
       this._keys.delete(e.code);

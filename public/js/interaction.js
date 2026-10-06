@@ -172,7 +172,12 @@ export class Interaction {
     tabs.forEach(([id, label], i) => {
       p.add({
         id: `tab-${id}`, type: 'button', x: pad + i * (tw + 12), y, w: tw, h: 54, label, size: 25,
-        active: this._kioskTab === id, onClick: () => { this._kioskTab = id; this._fillKiosk(); },
+        active: this._kioskTab === id,
+        onClick: () => {
+          this._kioskTab = id;
+          this._search.focus = id === 'search';
+          this._fillKiosk();
+        },
       });
     });
     y += 74;
@@ -207,7 +212,7 @@ export class Interaction {
       .filter((e) => e.type === 'list' && e.id && e.scroll).map((e) => [e.id, e.scroll]));
     const hover = this._hoveredBook;
     return {
-      kiosk: { tab: this._kioskTab, search: this._search.q || null, scroll: scrolled(this.kiosk) },
+      kiosk: { tab: this._kioskTab, search: this._search.q || null, typing: !!this._search.focus, scroll: scrolled(this.kiosk) },
       inspect: !!this.inspectPanel.visible,
       toolbar: !!this.toolbar.visible,
       contents: this.tocPanel.visible ? { scroll: this.tocPanel.get('list')?.scroll ?? 0 } : null,
@@ -222,6 +227,7 @@ export class Interaction {
       if (k.tab) this._kioskTab = k.tab;
       const st = this._search;
       clearTimeout(st.timer);
+      st.focus = false; // a restored scene does not take the keyboard
       st.q = k.search || '';
       st.pending = !!st.q.trim();
       st.results = [];
@@ -344,10 +350,17 @@ export class Interaction {
   _fillSearchTab(p, y0, pad) {
     const W = p.w;
     const st = this._search;
-    p.add({ type: 'rect', x: pad, y: y0, w: W - 2 * pad, h: 60, radius: 14, color: 'rgba(255,255,255,0.08)' });
+    // The field takes the physical keyboard (desktop) while it has focus, shown by the caret: from
+    // opening the tab, clicking the field or any key below, until Escape or a click elsewhere.
+    p.add({
+      id: 'search-field', type: 'button', x: pad, y: y0, w: W - 2 * pad, h: 60, radius: 14, label: '',
+      color: 'rgba(255,255,255,0.08)', onClick: () => this._focusSearch(true),
+    });
+    const caret = st.focus ? '|' : '';
     p.add({
       id: 'search-q', type: 'text', x: pad + 18, y: y0 + 13, w: W - 2 * pad - 36, h: 40, size: 30, maxLines: 1,
-      text: st.q ? `${st.q}|` : 'Type a title, an author or an article…', color: st.q ? UI.text : UI.muted,
+      text: st.q ? `${st.q}${caret}` : `${caret}${caret ? ' ' : ''}Type a title, an author or an article…`,
+      color: st.q ? UI.text : UI.muted,
     });
     const gap = 8;
     const kw = (W - 2 * pad - 9 * gap) / 10;
@@ -377,9 +390,26 @@ export class Interaction {
     });
   }
 
-  /** A key of the kiosk keyboard: a character, 'backspace', or null (clear). */
+  /** Gives the kiosk's search field the keyboard (or takes it away). */
+  _focusSearch(on) {
+    if (this._search.focus === on) return;
+    this._search.focus = on;
+    if (this._kioskTab === 'search') this._fillKiosk();
+  }
+
+  /** Enter in the kiosk's search: the first result, as if it were picked. */
+  _openFirstSearchResult() {
+    const e = this._search.results[0];
+    if (!e) return;
+    this._focusSearch(false);
+    if (e.article) this.openArticle(e.lib.id, e.article.book, e.article.n);
+    else this.searchPick(e.book, { take: true });
+  }
+
+  /** A key of the kiosk keyboard (or the physical one): a character, 'backspace', or null (clear). */
   typeSearch(ch) {
     const st = this._search;
+    st.focus = true;
     if (ch === null) st.q = '';
     else if (ch === 'backspace') st.q = st.q.slice(0, -1);
     else if (st.q.length < 60 && !(ch === ' ' && (!st.q || st.q.endsWith(' ')))) st.q += ch;
@@ -772,6 +802,7 @@ export class Interaction {
     }
     if (this.state === 'busy' || pointer.teleporting) return;
     const hit = this._hitTest(pointer);
+    if (this._search.focus && !(hit?.kind === 'panel' && hit.panel === this.kiosk)) this._focusSearch(false);
     if (!hit) return;
     if (hit.kind === 'panel') {
       if (hit.panel.click(hit.uv)) audio.click();
@@ -816,8 +847,15 @@ export class Interaction {
     }
   }
 
-  _key({ key, code }) {
+  _key({ key, code, text }) {
     if (this.state === 'busy') return;
+    if (text && this.state === 'browse') {
+      if (key === 'Escape') this._focusSearch(false);
+      else if (key === 'Enter') this._openFirstSearchResult();
+      else if (key === 'Backspace') this.typeSearch('backspace');
+      else this.typeSearch(key);
+      return;
+    }
     if (this.state === 'read') {
       if (['ArrowRight', 'PageDown', ' '].includes(key)) this.turn(1);
       else if (['ArrowLeft', 'PageUp'].includes(key)) this.turn(-1);
@@ -1700,6 +1738,8 @@ export class Interaction {
       pointer.setHovering(interactive);
       this._hover.set(pointer.id, { panel: hit?.kind === 'panel' ? hit.panel : null });
     }
+    this.controls.textEntry = !!this._search.focus && this.state === 'browse' && this._kioskTab === 'search'
+      && this.kiosk.visible && !this.controls.presenting;
     // A scroll bar being dragged follows its pointer, also off the panel (onto its plane).
     if (this._panelDrag) {
       const { pointer, panel } = this._panelDrag;

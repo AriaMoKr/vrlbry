@@ -854,7 +854,8 @@ export class Controls extends EventTarget {
 - **Desktop:** drag (any mouse button) to look, turning the way the mouse goes (drag right: look
   right; up: look up); a press that does not move more than a few pixels
   is a click = select at the mouse position. No pointer lock: it fights the DOM overlay and is
-  refused in embedded browsers. WASD/arrows move (constrained), Q/E or ←/→ turn, Shift runs.
+  refused in embedded browsers. WASD/arrows move (constrained), Q/E or ←/→ turn, Shift runs
+  (except while the kiosk's search field has the keyboard, see the Search tab).
   **Touch:** drag to look (grabbing the scene: the opposite of the mouse), tap = select at touch
   point, two-finger drag = move, pinch = `wheel`,
   horizontal swipe = `swipe` `{ dir }`. One finger is also a pointer with `selectstart` /
@@ -937,8 +938,13 @@ States: `browse` → `inspect` → `read` (and back).
     it, and the other filter is kept. Counts show what the room would hold with that choice
     (a genre's count respects the current letter and vice versa); choices that would give an
     empty room are disabled.
-  - *Search* (search in VR): the query with a caret, an on-screen keyboard (digits, QWERTY, ' - .
-    ,; Space, ⌫, Clear) and the results 250 ms after the last key: up to 12 books, then up to 6
+  - *Search* (search in VR): the query field, an on-screen keyboard (digits, QWERTY, ' - .
+    ,; Space, ⌫, Clear) and the results 250 ms after the last key. On a desktop the field also
+    takes the physical keyboard while it has focus (a caret shows): from opening the tab, clicking
+    the field or an on-screen key, until Escape or a click anywhere but the kiosk. Meanwhile
+    `controls.textEntry` makes characters, Backspace, Enter and Escape text (`key` events with
+    `text: true`, repeating while held) instead of walking or turning (arrows still move); Enter
+    takes the first result. Results: up to 12 books, then up to 6
     books and 6 articles per Wikipedia. A book result goes to the book and takes it out
     (`searchPick(book, { take: true })`); an article result opens its volume at the article
     (`openArticle`). Matching is `search.js`, shared with the overlay: book index per catalogue

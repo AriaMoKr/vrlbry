@@ -48,6 +48,13 @@
   (chandeliers, walls, wainscots, ~31 calls per eye) could still be merged per material.
 - **Server code review.** An earlier review recorded 5 minor findings that were never fixed, and
   3 of its reviewers never finished.
+- **Update banner after a deploy** ("This site has been updated", `showUpdate` in main.js and
+  overlay.js). Reported 2026-10-06 after deploying `e4a69f5`: the banner "didn't go away after
+  10 seconds". By design it has no timeout: it stays until Reload, × or Don't show again. To
+  check: whether it comes back after a reload of the new version (it should not: the page's
+  `api/version` then matches), whether a reload during the deploy (new `api/version`, old files
+  still served or cached) leaves a page that keeps seeing itself as outdated, and whether it
+  should hide by itself once the page is current.
 - **Possible: more in "Copy debug info"** (`debug-info.js`; it has browser, GPU, version, state,
   place, viewpoint, the open book and page, the dialogs and the last 20 errors; pasting it into
   the help dialog, or `__vrlbry.reproduce(report)`, restores that scene, see `scene.js`).
