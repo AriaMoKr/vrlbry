@@ -455,6 +455,25 @@ export class ArchiveLibrary {
   }
 
   /**
+   * Every article of a Wikipedia as [volume id, n], in the order the ZIM stores them (cluster,
+   * then blob). Converting all articles in title order decompresses a cluster for nearly every
+   * article (Medicine mini: 30 min); in this order each cluster once (24 s). For a static build
+   * (tools/build-pages.mjs). Null for other libraries and while indexing.
+   * @returns {Promise<Array<[string, number]> | null>}
+   */
+  async articlesInStorageOrder() {
+    const idx = this._wikipedia;
+    if (!idx) return null;
+    const where = new Array(idx.count);
+    await mapLimit(where, 32, async (_, i) => {
+      const e = await this.archive.getEntryByIndex(idx.order[i]);
+      where[i] = { i, cluster: e.cluster ?? -1, blob: e.blob ?? -1 };
+    });
+    where.sort((a, b) => a.cluster - b.cluster || a.blob - b.blob || a.i - b.i);
+    return where.map(({ i }) => [`v${Math.floor(i / idx.volumeSize) + 1}`, i % idx.volumeSize]);
+  }
+
+  /**
    * One chunk of a book's content (§3.6). Most books are converted whole by content(); the
    * articles of a Wikipedia volume are converted one by one, when first asked for, and cached
    * in the same LRU.

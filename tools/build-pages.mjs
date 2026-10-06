@@ -210,22 +210,45 @@ const decode = (segment) => {
   }
 };
 
+/** Longest file name kept whole, in UTF-8 bytes (Linux and macOS allow 255, Windows 255 UTF-16 units). */
+const MAX_NAME_BYTES = 200;
+
+/**
+ * fileName, shortened when too long for a file system (escaping makes names longer: Wikipedia
+ * image names reach 240 bytes): the name's start, `~`, a hash of the whole name, its extension.
+ */
+export function storableName(name) {
+  const file = fileName(name);
+  if (Buffer.byteLength(file) <= MAX_NAME_BYTES) return file;
+  const ext = /\.[A-Za-z0-9]{1,8}$/.exec(file)?.[0] ?? '';
+  const hash = crypto.createHash('sha256').update(name).digest('hex').slice(0, 16);
+  const budget = MAX_NAME_BYTES - ext.length - hash.length - 1;
+  let stem = '';
+  let bytes = 0;
+  for (const ch of file.slice(0, file.length - ext.length)) { // whole code points
+    bytes += Buffer.byteLength(ch);
+    if (bytes > budget) break;
+    stem += ch;
+  }
+  return `${stem.replace(/%[0-9A-F]?$/, '')}~${hash}${ext}`; // never ending inside an escape
+}
+
 /**
  * The file a server URL is saved as, relative to the site's root: staticPath's segments decoded
- * (Pages decodes a request's path to find the file), as names every system can store (fileName).
+ * (Pages decodes a request's path to find the file), as names every system can store.
  */
 export function staticFile(url) {
-  return staticPath(url).split('/').map((s) => fileName(decode(s))).join('/');
+  return staticPath(url).split('/').map((s) => storableName(decode(s))).join('/');
 }
 
 /**
  * A server URL as the static site's page asks for it: relative (staticPath), naming staticFile's
- * file. A segment whose file name is escaped is encoded once more, since Pages decodes it.
+ * file. A segment whose file name differs is encoded once more, since Pages decodes it.
  */
 export function staticUrl(url) {
   return staticPath(url).split('/').map((s) => {
     const name = decode(s);
-    const file = fileName(name);
+    const file = storableName(name);
     return file === name ? s : encodeURIComponent(file);
   }).join('/');
 }
@@ -262,14 +285,21 @@ export async function prerender(dir, out, { log = console.log } = {}) {
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const base = `http://127.0.0.1:${server.address().port}`;
   const enc = encodeURIComponent;
+  // Uncompressed: gzipping 70,000 answers only to unzip them again took a minute (Medicine mini).
+  const plain = { headers: { 'accept-encoding': 'identity' } };
   const get = async (p) => {
-    const res = await fetch(base + p);
+    const res = await fetch(base + p, plain);
     if (!res.ok) throw new Error(`GET ${p}: HTTP ${res.status}`);
     return res;
   };
+  const made = new Set(); // folders already created: tens of thousands of files share a few
   const write = (file, data) => {
     const to = path.join(out, ...file.split('/'));
-    fs.mkdirSync(path.dirname(to), { recursive: true });
+    const dir = path.dirname(to);
+    if (!made.has(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+      made.add(dir);
+    }
     fs.writeFileSync(to, data);
   };
   const stats = { libraries: 0, books: 0, chunks: 0, images: 0 };
@@ -292,21 +322,24 @@ export async function prerender(dir, out, { log = console.log } = {}) {
       write(`${lib}/books.json`, relativeUrls(booksText));
       const { books } = JSON.parse(booksText);
       for (const b of books) for (const u of [b.cover, b.emblem]) if (u) images.add(u);
+      const saveChunk = async (bookId, n) => {
+        const text = await (await get(`/api/libraries/${enc(info.id)}/books/${enc(bookId)}/chunks/${n}`)).text();
+        write(`${lib}/books/${fileName(bookId)}/chunks/${n}.json`, relativeUrls(text));
+        blockImages(JSON.parse(text).blocks, images);
+        stats.chunks++;
+      };
+      // A Wikipedia's articles are converted in the order the ZIM stores them, across volumes, so
+      // that each cluster is decompressed once (articlesInStorageOrder); other books one by one.
+      const storageOrder = await library.get(info.id).articlesInStorageOrder?.();
       await each(books.filter((b) => b.readable), 4, async (b) => {
-        const bookPath = `/api/libraries/${enc(info.id)}/books/${enc(b.id)}`;
-        const metaText = await (await get(bookPath)).text();
-        const bookDir = `${lib}/books/${fileName(b.id)}`;
-        write(`${bookDir}/index.json`, relativeUrls(metaText));
+        const metaText = await (await get(`/api/libraries/${enc(info.id)}/books/${enc(b.id)}`)).text();
+        write(`${lib}/books/${fileName(b.id)}/index.json`, relativeUrls(metaText));
         const meta = JSON.parse(metaText);
         if (meta.cover) images.add(meta.cover);
-        await each(meta.chunks.map((_, n) => n), 8, async (n) => {
-          const text = await (await get(`${bookPath}/chunks/${n}`)).text();
-          write(`${bookDir}/chunks/${n}.json`, relativeUrls(text));
-          blockImages(JSON.parse(text).blocks, images);
-          stats.chunks++;
-        });
+        if (!storageOrder) await each(meta.chunks.map((_, n) => n), 8, (n) => saveChunk(b.id, n));
         stats.books++;
       });
+      if (storageOrder) await each(storageOrder, 8, ([bookId, n]) => saveChunk(bookId, n));
       const titles = await library.get(info.id).articleTitles?.();
       if (titles) write(`${lib}/titles.json`, JSON.stringify(titles));
       log(`  ${info.id}: ${books.length} ${info.kind === 'wikipedia' ? 'volumes' : 'books'}`);
@@ -315,7 +348,7 @@ export async function prerender(dir, out, { log = console.log } = {}) {
     // names every system can store (staticFile, as the JSON names them: staticUrl).
     await each([...images], 16, async (src) => {
       if (!src.startsWith('/')) return; // data: URIs and the like stay inline
-      const res = await fetch(base + src);
+      const res = await fetch(base + src, plain);
       if (!res.ok) return log(`  missing image ${src} (HTTP ${res.status})`);
       write(staticFile(src), Buffer.from(await res.arrayBuffer()));
       stats.images++;

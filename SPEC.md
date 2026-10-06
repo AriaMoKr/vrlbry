@@ -490,6 +490,7 @@ relative (`/zim/…` → `zim/…`, `/api/libraries/…` → `api/library/…`),
 paths (each name as `fileName` in `util/file-names.js` makes it: names Windows cannot store, such
 as Wikipedia images with quotes, get `" < > : | ? * \ /`, control characters, `%`, a final dot or
 space and device names percent-escaped, and the URL names the escaped file, encoded once more;
+an image name longer than 200 bytes is shortened to its start, `~`, a hash and its extension;
 library and book ids are named the same way, and `api.js` asks for them so), and a Wikipedia gets
 `titles.json`, `{ volumeSize, titles }` in the app's title order, which the client searches
 itself in place of `/articles` (same result shape, no redirect aliases). All

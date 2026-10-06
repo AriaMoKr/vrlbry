@@ -131,6 +131,18 @@ describe('wikipedia', () => {
       const info = await lib.info();
       assert.deepEqual([info.kind, info.bookCount, info.articles, info.indexing], ['wikipedia', 3, 7, null]);
 
+      // A static build converts every article in the order the ZIM stores them (each cluster once).
+      const stored = await lib.articlesInStorageOrder();
+      const titleOrder = ['v1:0', 'v1:1', 'v1:2', 'v2:0', 'v2:1', 'v2:2', 'v3:0'];
+      assert.deepEqual(stored.map(([v, n]) => `${v}:${n}`).sort(), titleOrder, 'every article once');
+      const places = [];
+      for (const [v, n] of stored) {
+        const e = await lib.archive.getEntryByIndex(lib._wikipedia.order[(Number(v.slice(1)) - 1) * 3 + n]);
+        places.push([e.cluster, e.blob]);
+      }
+      assert.deepEqual(places, [...places].sort((a, b) => a[0] - b[0] || a[1] - b[1]), 'by cluster, then blob');
+      assert.notDeepEqual(stored.map(([v, n]) => `${v}:${n}`), titleOrder);
+
       // Reading metadata: one chunk per article, the article titles as contents.
       const { meta } = await lib.content('v2');
       assert.equal(meta.lazy, true);

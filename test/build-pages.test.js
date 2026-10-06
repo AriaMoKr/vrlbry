@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { blockImages, importsOf, prerender, relativeUrls, staticFile, staticPath, staticUrl, tagModuleUrls } from '../tools/build-pages.mjs';
+import { blockImages, importsOf, prerender, relativeUrls, staticFile, staticPath, staticUrl, storableName, tagModuleUrls } from '../tools/build-pages.mjs';
 import { fileName } from '../public/js/util/file-names.js';
 import { writeZim } from './helpers/zimwriter.js';
 
@@ -167,7 +167,15 @@ describe('GitHub Pages build: pre-rendered ZIMs (--zims)', () => {
     assert.equal(staticFile(quoted), 'zim/wp/C/_assets_/h/%22Nancy%22_(1945).jpg');
     assert.equal(staticUrl(quoted), 'zim/wp/C/_assets_/h/%2522Nancy%2522_(1945).jpg');
     assert.equal(staticUrl('/zim/wp/C/a%20b.png'), 'zim/wp/C/a%20b.png', 'unchanged when the name can be stored');
-    for (const u of [quoted, '/zim/wp/C/a%20b.png', '/zim/wp/C/50%25.png', '/zim/wp/C/%C3%A9%3F.svg', '/api/libraries/x/books/v1']) {
+    // Too long once escaped (Wikipedia image names with literal %2C): shortened, with a hash.
+    const long = `The_former_Tennis_player%2C_${'Shri_Vijay_Amritraj%2C_'.repeat(9)}é_(cropped).jpg`;
+    const short = storableName(long);
+    assert.ok(Buffer.byteLength(short) <= 200 && short.endsWith('.jpg') && /^The_former_Tennis_player%252C_.*~[0-9a-f]{16}\.jpg$/.test(short), short);
+    assert.notEqual(storableName(`${long}x.jpg`), short, 'names sharing a start stay distinct');
+    assert.equal(storableName('Console.jpg'), 'Console.jpg');
+    const longUrl = `/zim/wp/C/${encodeURIComponent(long)}`;
+    assert.equal(staticFile(longUrl), `zim/wp/C/${short}`);
+    for (const u of [quoted, longUrl, '/zim/wp/C/a%20b.png', '/zim/wp/C/50%25.png', '/zim/wp/C/%C3%A9%3F.svg', '/api/libraries/x/books/v1']) {
       assert.equal(staticUrl(u).split('/').map(decodeURIComponent).join('/'), staticFile(u), u);
     }
     assert.equal(staticPath('/api/libraries/wp/books/v1'), 'api/library/wp/books/v1');
