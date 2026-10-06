@@ -48,6 +48,21 @@
   (chandeliers, walls, wainscots, ~31 calls per eye) could still be merged per material.
 - **Server code review.** An earlier review recorded 5 minor findings that were never fixed, and
   3 of its reviewers never finished.
+- **Possible: more in "Copy debug info"** (`debug-info.js`; it has browser, GPU, version, state,
+  place, viewpoint and the last 20 errors, and `__vrlbry.reproduce(report)` restores the view).
+  Ideas, roughly by value:
+  - *A screenshot* of the 3D view (copied as an image, or saved as a PNG beside the text): the
+    report does not show what the person saw.
+  - *A "What went wrong?" box* whose text goes into the report.
+  - *Recent actions:* the last 20–30 steps (room changed, book taken, opened, page turned), by id
+    rather than title: how they got there.
+  - *Smoothness:* frame times of the last ~10 s, long tasks, WebGL context loss.
+  - *Failed downloads:* chunk, image or catalogue requests that failed, with their status (some
+    fail without a console error, especially on the static site).
+  - *Reading detail:* the block anchor of the shown page, text size, how much of the book is laid
+    out; `reproduce` could then reopen the book there.
+  - *From VR:* nothing can be pasted in a headset; with the Node server, a kiosk button could send
+    the report (POST) to be saved as a file on the PC. The static site has nowhere to send it.
 - **Possible: run without a server (GitHub Pages).** Reviewed 2026-10-05, not decided.
   - *Limits:* a Pages site is at most 1 GB (the source repo should be too), files at most 100 MB
     (git), 100 GB/month bandwidth (soft). Pages serves range requests (206, CORS `*`) and HTTPS,

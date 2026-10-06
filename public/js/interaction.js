@@ -66,6 +66,7 @@ export class Interaction {
     /** Set by main.js: reloads the page (a headset's browser controls are out of reach in VR). */
     this.onReload = null;
     this._version = ''; // "Updated …": when the website last changed (setVersion)
+    this._outdated = false; // the site changed since this page loaded (setOutdated)
     this._exitHold = null; // { name, t } while B/Y is held to leave VR
 
     this.tooltip = new Label({ width: 0.56, height: 0.13 });
@@ -137,7 +138,10 @@ export class Interaction {
       right -= 12 + 170;
       p.add({ id: 'exit-vr', type: 'button', x: right, y: 24, w: 170, h: 56, label: 'Exit VR', size: 24, onClick: () => this.onExitVR?.() });
     }
-    p.add({ id: 'reload', type: 'button', x: right - 12 - 190, y: 24, w: 190, h: 56, label: '↻ Reload page', size: 24, onClick: () => this.onReload?.() });
+    p.add({
+      id: 'reload', type: 'button', x: right - 12 - 190, y: 24, w: 190, h: 56, label: '↻ Reload page', size: 24,
+      active: this._outdated, onClick: () => this.onReload?.(),
+    });
     const place = this._place();
     // Rooms exist when there is more than one library, or a library too big to shelve whole.
     const hasRooms = this.libraries.length > 1 || (place && isFaceted(place, this.booksByLib[place.id]));
@@ -155,8 +159,9 @@ export class Interaction {
     if (this._kioskTab === 'rooms') this._fillRoomsTab(p, y, pad, place);
     else if (this._kioskTab === 'search') this._fillSearchTab(p, y, pad);
     else this._fillShelvesTab(p, y, pad, place);
-    if (this._version) {
-      p.add({ id: 'version', type: 'text', x: pad, y: p.h - 40, w: W - 2 * pad, h: 28, text: this._version, size: 21, color: UI.muted, align: 'right', maxLines: 1 });
+    if (this._version || this._outdated) {
+      const text = this._outdated ? 'A newer version of this site is available: reload the page' : this._version;
+      p.add({ id: 'version', type: 'text', x: pad, y: p.h - 40, w: W - 2 * pad, h: 28, text, size: 21, color: this._outdated ? UI.accent : UI.muted, align: 'right', maxLines: 1 });
     }
   }
 
@@ -170,6 +175,13 @@ export class Interaction {
   setVersion(text) {
     this._version = text;
     this._fillKiosk();
+  }
+
+  /** The site changed since this page loaded: the kiosk asks for a reload (and says so in VR). */
+  setOutdated(on) {
+    this._outdated = !!on;
+    this._fillKiosk();
+    if (on && this.controls.presenting) this.notice('This site has been updated', 'Reload the page (on the catalogue stand) to see the changes', 6);
   }
 
   _fillShelvesTab(p, y0, pad, place) {

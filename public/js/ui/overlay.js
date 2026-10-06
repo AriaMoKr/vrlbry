@@ -64,6 +64,7 @@ export class Overlay {
         <div class="ov-logo">vrlbry</div>
         <div class="ov-loading-text">Opening the library…</div>
         <div class="ov-progress"><div class="ov-progress-bar"></div></div>
+        <button class="ov-loading-debug" hidden>Copy debug info</button>
       </div>
       <section class="ov-card" aria-label="Library">
         <header><span class="ov-brand">vrlbry</span><span class="ov-version"></span><span class="ov-tools"><button class="ov-rescan" aria-label="Rescan the ZIM folder" title="Rescan the ZIM folder">⟳</button><button class="ov-collapse" aria-label="Collapse" title="Collapse">–</button></span></header>
@@ -82,8 +83,13 @@ export class Overlay {
         <div class="ov-help-inner">
           <header><h2>How to use the library</h2><button class="ov-help-close" aria-label="Close">×</button></header>
           <div class="ov-help-body"></div>
+          <footer class="ov-debug">
+            <div><button class="ov-debug-btn">Copy debug info</button><span class="ov-debug-note">Something wrong? Copy this and paste it into your bug report.</span></div>
+            <textarea class="ov-debug-text" readonly hidden aria-label="Debug info" spellcheck="false"></textarea>
+          </footer>
         </div>
       </div>
+      <div class="ov-update" role="status" hidden>This site has been updated. <button class="ov-update-btn">Reload</button></div>
       <div class="ov-toasts" aria-live="polite"></div>`;
     this.$ = (sel) => root.querySelector(sel);
     this.$('.ov-collapse').onclick = () => {
@@ -98,6 +104,11 @@ export class Overlay {
       if (e.target === this.$('.ov-help')) this.showHelp(false);
     };
     this.$('.ov-vr').onclick = () => this._enterVR?.();
+    this.$('.ov-debug-btn').onclick = () => this._debug?.();
+    this.$('.ov-loading-debug').onclick = () => {
+      this.showHelp(true);
+      this._debug?.();
+    };
     const input = this.$('.ov-search input');
     input.addEventListener('input', () => this._search(input.value));
     input.addEventListener('keydown', (e) => this._searchKey(e));
@@ -131,6 +142,24 @@ export class Overlay {
     el.classList.remove('done');
     el.classList.add('error');
     this.$('.ov-loading-text').textContent = message;
+    this.$('.ov-loading-debug').hidden = false;
+  }
+
+  /** cb() for "Copy debug info" (help dialog, error screen); it calls showDebugInfo. */
+  onDebugInfo(cb) { this._debug = cb; }
+
+  /** Shows the debug report in the help dialog; when copying failed, selected for copying by hand. */
+  showDebugInfo(text, copied) {
+    const ta = this.$('.ov-debug-text');
+    ta.value = text;
+    ta.hidden = false;
+    this.$('.ov-debug-note').textContent = copied ? 'Copied. Paste it into your bug report (this is all it contains).'
+      : 'This browser did not allow copying: select the text below and copy it.';
+    if (!copied) {
+      ta.focus();
+      ta.select();
+    }
+    ta.scrollTop = 0;
   }
 
   /**
@@ -157,6 +186,12 @@ export class Overlay {
 
   /** Shows when the website last changed (next to the brand). */
   setVersion(text) { this.$('.ov-version').textContent = text; }
+
+  /** The site changed since this page loaded (a new deploy): a banner with a reload button. */
+  showUpdate(onReload) {
+    this.$('.ov-update-btn').onclick = onReload;
+    this.$('.ov-update').hidden = false;
+  }
 
   onSearchPick(cb) { this._pick = cb; }
   /** cb(libId, { title, book, n }) for a Wikipedia article chosen in the search results. */

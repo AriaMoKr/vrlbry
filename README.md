@@ -123,6 +123,11 @@ keyboard (in a headset), finds any book by title or author and takes you to it, 
 Wikipedia article by title and opens its volume there. Your reading position, text size, theme and
 rooms are remembered in the browser.
 
+To report a problem, open the help (**?**) and press **Copy debug info**, then paste the result
+into your message: it says which browser, graphics and version of the site you have, where you
+were, and the page's last errors. If the library fails to open, the error screen has the same
+button.
+
 ## Development
 
 ```bash
@@ -154,7 +159,8 @@ npm run build:pages
 This writes `dist/`: the client, the few Three.js and IWER files it imports, and static answers
 in place of the API. The page addresses everything relative to itself, so it works under a path
 such as `https://<user>.github.io/vrlbry/`. Module URLs carry a version tag, so a plain reload
-picks up a new deploy even though Pages lets browsers cache files for 10 minutes.
+picks up a new deploy even though Pages lets browsers cache files for 10 minutes. A page left open
+notices a new deploy within 10 seconds and offers to reload.
 
 `npm run build:pages -- --zims <folder>` also pre-renders the ZIMs in that folder: the server runs
 inside the build and every answer the client can ask for (book lists, each book's chunks, the

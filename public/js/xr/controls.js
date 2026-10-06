@@ -373,6 +373,31 @@ export class Controls extends EventTarget {
   }
 
   /**
+   * Where the viewer stands and looks, for debug reports: floor position x/z and eye height (m),
+   * and the view's yaw and pitch (radians; yaw as in teleportTo, pitch up positive).
+   * @returns {{ x: number, z: number, eye: number, yaw: number, pitch: number }}
+   */
+  viewpoint() {
+    const eye = this.camera.getWorldPosition(new THREE.Vector3());
+    const dir = this.camera.getWorldDirection(new THREE.Vector3());
+    const round = (n, digits) => Math.round(n * 10 ** digits) / 10 ** digits;
+    return {
+      x: round(eye.x, 2), z: round(eye.z, 2), eye: round(eye.y - this.rig.position.y, 2),
+      yaw: round(Math.atan2(-dir.x, -dir.z), 3), pitch: round(Math.asin(Math.max(-1, Math.min(1, dir.y))), 3),
+    };
+  }
+
+  /** Puts the viewer at a viewpoint() (its pitch only outside XR, where the head decides). */
+  setViewpoint({ x, z, yaw, pitch }) {
+    this.teleportTo(new THREE.Vector3(x, 0, z), yaw);
+    if (!this.presenting && pitch != null) {
+      this.pitch = Math.max(-1.35, Math.min(1.35, pitch));
+      this.camera.rotation.set(this.pitch, 0, 0); // now, not at the next frame (_desktopUpdate)
+      this.camera.updateMatrixWorld(true);
+    }
+  }
+
+  /**
    * Moves the viewer rigidly along with a reference frame that went from `from` to `to`
    * ({ position, yaw }; e.g. the kiosk after a rebuild), so they keep their place relative to it.
    * Unlike teleportTo this never counters the head's own motion, so it is safe in XR at any time.

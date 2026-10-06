@@ -1,0 +1,142 @@
+// "Copy debug info" (the help dialog, and the error screen when loading fails): a short report for
+// a bug seen on someone else's computer, without opening the browser's console. Browser, graphics,
+// the site's version, where in the app they are, and the page's last errors. No reading history
+// or other personal data.
+
+const MAX_ERRORS = 20;
+const MAX_TEXT = 300;
+const errors = [];
+
+const short = (s) => {
+  const text = String(s ?? '');
+  return text.length > MAX_TEXT ? `${text.slice(0, MAX_TEXT)}…` : text;
+};
+
+/** An error or console argument as text: an Error's first stack lines, else JSON or String. */
+function describe(value) {
+  if (value instanceof Error) {
+    return value.stack ? value.stack.split('\n').slice(0, 3).map((l) => l.trim()).join(' | ') : `${value.name}: ${value.message}`;
+  }
+  if (typeof value === 'object' && value !== null) {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+  return String(value);
+}
+
+function remember(kind, message, where = null) {
+  errors.push({ t: Math.round(performance.now() / 100) / 10, kind, message: short(message), ...(where ? { where } : {}) });
+  if (errors.length > MAX_ERRORS) errors.shift();
+}
+
+/**
+ * Starts keeping the page's last errors for the report: uncaught errors, rejected promises,
+ * elements that failed to load, and console.error / console.warn calls (still printed as before).
+ * @param {{ target?: EventTarget, con?: Console }} [o] the window and console (tests pass fakes)
+ */
+export function startErrorLog({ target = globalThis, con = globalThis.console } = {}) {
+  target.addEventListener?.('error', (e) => {
+    if (e.error || e.message) {
+      remember('error', e.error ? describe(e.error) : e.message, e.filename ? `${e.filename}:${e.lineno}:${e.colno}` : null);
+    } else if (e.target?.src || e.target?.href) {
+      remember('load', `failed to load ${e.target.src || e.target.href}`);
+    }
+  }, true); // capture: an element's load error does not bubble
+  target.addEventListener?.('unhandledrejection', (e) => remember('rejection', describe(e.reason)));
+  for (const level of ['error', 'warn']) {
+    const real = con[level];
+    con[level] = (...args) => {
+      remember(level, args.map(describe).join(' '));
+      real.apply(con, args);
+    };
+  }
+}
+
+/** The errors kept so far, oldest first (t: seconds since the page started loading). */
+export const recentErrors = () => errors.slice();
+
+/**
+ * The report. Every part is collected on its own, so a broken one (or a page that failed before
+ * the app existed) still leaves the rest.
+ * @param {object} [app] window.__vrlbry (absent while loading or when loading failed)
+ * @returns {object}
+ */
+export function debugReport(app) {
+  const part = (fn) => {
+    try {
+      return fn();
+    } catch (err) {
+      return `unavailable (${err.message})`;
+    }
+  };
+  const I = app?.interaction;
+  const r = app?.renderer;
+  const s = app?.settings;
+  return {
+    app: 'vrlbry',
+    at: new Date().toISOString(),
+    url: part(() => location.href),
+    version: app?.version ?? null, // when the site's files last changed, as of this page's load
+    uptime: Math.round(performance.now() / 1000),
+    browser: part(() => ({
+      userAgent: navigator.userAgent,
+      language: navigator.language,
+      viewport: [innerWidth, innerHeight],
+      devicePixelRatio,
+      touchPoints: navigator.maxTouchPoints,
+      memoryMB: performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1048576) : null,
+    })),
+    gpu: part(() => {
+      const gl = r.getContext();
+      const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+      return {
+        renderer: gl.getParameter(dbg ? dbg.UNMASKED_RENDERER_WEBGL : gl.RENDERER),
+        maxTextureSize: gl.getParameter(gl.MAX_TEXTURE_SIZE),
+        drawCalls: r.info.render.calls,
+      };
+    }),
+    xr: part(() => ({ api: 'xr' in navigator, emulated: !!app.xrDevice, presenting: !!r.xr.isPresenting })),
+    libraries: part(() => I.libraries.map((l) => `${l.id} (${l.kind}, ${(I.booksByLib[l.id] || []).length})`)),
+    // With the viewpoint, __vrlbry.reproduce(report) shows another page the same view.
+    view: part(() => ({
+      state: I.state, place: s.place, room: s.rooms?.[s.place] ?? null, sort: s.sort,
+      bookcases: app.world.shelves.cases.length, viewpoint: app.controls?.viewpoint?.() ?? null,
+    })),
+    book: part(() => {
+      if (!I.book) return null;
+      const ref = I.reader && I._currentRef();
+      return { library: I.book.libId, id: I.book.id, title: I.book.title, at: ref ? I.reader.labelOf(ref) : null };
+    }),
+    settings: part(() => ({
+      fontScale: s.fontScale, theme: s.theme, readScale: s.readScale, readDistance: s.readDistance,
+      smoothMove: s.smoothMove, sound: s.sound,
+    })),
+    errors: recentErrors(),
+  };
+}
+
+/** Copies text to the clipboard. False when the browser does not allow it (copy it by hand then). */
+export async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    // no clipboard API (not a secure context, e.g. http://<LAN address>) or not allowed
+  }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.cssText = 'position:fixed;opacity:0;pointer-events:none';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    ta.remove();
+    return ok;
+  } catch {
+    return false;
+  }
+}

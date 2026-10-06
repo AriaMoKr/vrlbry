@@ -617,6 +617,7 @@ public/
     rooms.js             which books are shelved: the current place (one library, or one room of a huge one).
     audio.js             tiny WebAudio synth: page turn, book slide/thud, UI click.
     perf.js              ?perf recorder (frame timing, events, segments), a no-op unless started (§5.7).
+    debug-info.js        "Copy debug info": the page's last 20 errors (startErrorLog) and a report (debugReport).
     perf-scenarios.js    built-in performance scenarios, loaded only by perf.run().
     main.js              bootstrap: renderer, scene, camera rig, XR session, loop, IWER dev flag.
 ```
@@ -967,6 +968,15 @@ States: `browse` → `inspect` → `read` (and back).
   on the shelves first switch to the book's place and room (`placeFor` / `roomFor`: its genre,
   narrowed to its title letter when the genre is over the cap); every loaded book carries its
   `libId` for this.
+- DOM overlay (non-VR): see `ui/overlay.js` — the help dialog and the loading error screen have
+  "Copy debug info" (`debug-info.js`): browser, GPU, the site's version, state, place, viewpoint
+  (`controls.viewpoint()`: x, z, eye height, yaw, pitch), open book and the page's last 20 errors
+  as JSON (`__vrlbry.reproduce(report)` restores its place, room, sort and viewpoint), copied (or selected for copying by hand) and shown, for
+  bug reports from other people's computers; no reading history.
+- Site updates: besides the catalogue, the client polls `GET api/version` every 10 s. When
+  `changed` differs from the page's own, its code is out of date: it stops applying catalogue
+  changes (new data may need the new code) and asks for a reload: a banner (`showUpdate`), the
+  kiosk's highlighted ↻ Reload page with a note at its foot (`setOutdated`), a notice in VR.
 - DOM overlay (non-VR): see `ui/overlay.js` — title with the same "Updated …" stamp, library
   cards (with indexing progress), a ⟳ rescan button, search box (filters by title / author across *all* books of all libraries;
   picking a result = switch room if needed, teleport to it and select it; for Wikipedia

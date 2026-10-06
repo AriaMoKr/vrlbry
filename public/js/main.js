@@ -7,13 +7,20 @@ import { Controls } from './xr/controls.js';
 import { Interaction, DEFAULT_SETTINGS } from './interaction.js';
 import { Overlay } from './ui/overlay.js';
 import { audio } from './audio.js';
-import { load } from './util/storage.js';
+import { load, save } from './util/storage.js';
 import { PLAYER, XR_FRAME_RATE } from './config.js';
 import { collectionsFor } from './rooms.js';
 import { perf } from './perf.js';
+import { copyText, debugReport, startErrorLog } from './debug-info.js';
 
+startErrorLog(); // first: the debug report lists the page's last errors
 const params = new URLSearchParams(location.search);
 const overlay = new Overlay({ root: document.getElementById('overlay') });
+// Registered before anything can fail: the error screen offers the report too.
+overlay.onDebugInfo(async () => {
+  const text = JSON.stringify(debugReport(window.__vrlbry), null, 2);
+  overlay.showDebugInfo(text, await copyText(text));
+});
 
 // Dev: emulate a Quest 3 with IWER (must happen before anything queries navigator.xr).
 let xrDevice = null;
@@ -198,9 +205,25 @@ async function start() {
   }
   overlay.onRescan(rescanNow);
   interaction.onRescan = rescanNow;
+  // A new version of the site (a deploy, or edited client files) means this page runs old code, and
+  // new data may need the new code: a page left open across a deploy once took a new ZIM into the
+  // catalogue but not into the Demo set, whose list was in the old rooms.js. So once the version
+  // changes, catalogue changes are no longer applied, and the page asks to be reloaded.
+  let outdated = false;
+  async function isOutdated() {
+    if (outdated || !loadedVersion) return outdated;
+    const { changed } = await getVersion();
+    if (changed && changed !== loadedVersion) {
+      outdated = true;
+      overlay.showUpdate(() => location.reload());
+      interaction.setOutdated(true);
+    }
+    return outdated;
+  }
   setInterval(async () => {
     if (refreshing || (document.visibilityState !== 'visible' && !renderer.xr.isPresenting)) return;
     try {
+      if (await isOutdated()) return;
       const c = await getCatalog();
       if (c.generation !== generation) await applyCatalog(c);
       else if (JSON.stringify(c.libraries) !== JSON.stringify(libraries)) {
@@ -249,6 +272,27 @@ async function start() {
     tick(dt = 1 / 60, n = 1) {
       for (let i = 0; i < n; i++) step(dt);
       renderer.render(scene, camera);
+    },
+    /**
+     * Dev: shows this page what a "Copy debug info" report's sender saw: its place, room and sort
+     * (saved, like choosing them on the kiosk), then its viewpoint. A place this site does not
+     * have falls back to another library, as on load. Paste the report as the argument.
+     * @param {object} report the report (or its `view`)
+     * @returns {Promise<{ place: string|null, viewpoint: object|null }>} where this page ended up
+     */
+    async reproduce(report) {
+      const view = report?.view ?? report;
+      if (!view || typeof view !== 'object' || !('place' in view)) throw new Error('not a vrlbry debug report');
+      if (interaction.state === 'read' || interaction.state === 'inspect') await interaction.closeBook();
+      settings.rooms ||= {};
+      if (view.sort) settings.sort = view.sort;
+      settings.place = view.place;
+      if (view.room) settings.rooms[view.place] = view.room;
+      else delete settings.rooms[view.place];
+      save('settings', settings);
+      await interaction._rebuildWorld();
+      if (view.viewpoint) controls.setViewpoint(view.viewpoint);
+      return { place: settings.place, viewpoint: controls.viewpoint() };
     },
   };
   // ?perf: record frame timing and events for tools/quest-perf.mjs (window.__vrlbry.perf).
