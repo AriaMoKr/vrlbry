@@ -28,6 +28,7 @@ const easeInOut = (t) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2)
 
 export const DEFAULT_SETTINGS = {
   sort: 'title', fontScale: 1, theme: 'paper', smoothMove: true, sound: true, readScale: 1, readDistance: READ.distance,
+  updateNotices: true, // tell when the site has been updated (main.js; "Don't show again" turns it off)
 };
 
 export class Interaction {
@@ -67,6 +68,9 @@ export class Interaction {
     this.onReload = null;
     this._version = ''; // "Updated …": when the website last changed (setVersion)
     this._outdated = false; // the site changed since this page loaded (setOutdated)
+    this._savedScene = null; // "Saved …" of the browser's saved scene (setSavedScene), or null
+    this.onSaveScene = null;
+    this.onRestoreScene = null;
     this._exitHold = null; // { name, t } while B/Y is held to leave VR
 
     this.tooltip = new Label({ width: 0.56, height: 0.13 });
@@ -127,6 +131,7 @@ export class Interaction {
     const p = this.kiosk;
     const W = p.w;
     const pad = 36;
+    const placesScroll = p.get('places')?.scroll; // kept across refills (indexing progress, rescans)
     p.clear();
     p.add({ type: 'text', x: pad, y: 26, w: W - 2 * pad, h: 54, text: 'Catalogue', size: 46, weight: '600', serif: true, color: UI.accent });
     let right = W - pad;
@@ -156,7 +161,7 @@ export class Interaction {
       });
     });
     y += 74;
-    if (this._kioskTab === 'rooms') this._fillRoomsTab(p, y, pad, place);
+    if (this._kioskTab === 'rooms') this._fillRoomsTab(p, y, pad, place, placesScroll);
     else if (this._kioskTab === 'search') this._fillSearchTab(p, y, pad);
     else this._fillShelvesTab(p, y, pad, place);
     if (this._version || this._outdated) {
@@ -177,11 +182,61 @@ export class Interaction {
     this._fillKiosk();
   }
 
-  /** The site changed since this page loaded: the kiosk asks for a reload (and says so in VR). */
-  setOutdated(on) {
+  /**
+   * The 3D panels (debug report): the kiosk's tab, search and scrolled lists, which of the inspect
+   * panel, reader toolbar and contents are shown (and how far the contents are scrolled), and the
+   * book under the pointer. restoreUi() puts the kiosk and contents back (__vrlbry.reproduce).
+   */
+  uiState() {
+    const scrolled = (panel) => Object.fromEntries(panel.elements
+      .filter((e) => e.type === 'list' && e.id && e.scroll).map((e) => [e.id, e.scroll]));
+    const hover = this._hoveredBook;
+    return {
+      kiosk: { tab: this._kioskTab, search: this._search.q || null, scroll: scrolled(this.kiosk) },
+      inspect: !!this.inspectPanel.visible,
+      toolbar: !!this.toolbar.visible,
+      contents: this.tocPanel.visible ? { scroll: this.tocPanel.get('list')?.scroll ?? 0 } : null,
+      hover: hover ? { library: hover.libId, id: hover.id, title: hover.title } : null,
+    };
+  }
+
+  /** Puts back a uiState(): the kiosk's tab, search (run again) and scrolling; the contents of an open book. */
+  async restoreUi(ui) {
+    const k = ui?.kiosk;
+    if (k) {
+      if (k.tab) this._kioskTab = k.tab;
+      const st = this._search;
+      clearTimeout(st.timer);
+      st.q = k.search || '';
+      st.pending = !!st.q.trim();
+      st.results = [];
+      if (st.pending) await this._runSearch(++st.token);
+      this._fillKiosk();
+      for (const [id, rows] of Object.entries(k.scroll || {})) {
+        const el = this.kiosk.get(id);
+        if (el) el.scroll = rows;
+      }
+      this.kiosk.markDirty();
+    }
+    if (ui?.contents && this.state === 'read') {
+      this.toggleToc(true);
+      const list = this.tocPanel.get('list');
+      if (list) list.scroll = ui.contents.scroll;
+      this.tocPanel.markDirty();
+    }
+  }
+
+  /** The saved scene's description ("Saved …"), or null when there is none (Restore scene disabled). */
+  setSavedScene(text) {
+    this._savedScene = text ?? null;
+    this._fillKiosk();
+  }
+
+  /** The site changed since this page loaded: the kiosk asks for a reload (and says so in VR, unless notices are off). */
+  setOutdated(on, { notice = true } = {}) {
     this._outdated = !!on;
     this._fillKiosk();
-    if (on && this.controls.presenting) this.notice('This site has been updated', 'Reload the page (on the catalogue stand) to see the changes', 6);
+    if (on && notice && this.controls.presenting) this.notice('This site has been updated', 'Reload the page (on the catalogue stand) to see the changes', 6);
   }
 
   _fillShelvesTab(p, y0, pad, place) {
@@ -243,8 +298,19 @@ export class Interaction {
       id: 'smooth', type: 'button', x: pad + 560, y, w: W - 2 * pad - 560, h: 60, label: this.settings.smoothMove ? 'Stick walking' : 'Teleport only', size: 26,
       active: this.settings.smoothMove, onClick: () => this.toggleSmooth(),
     });
-    const recent = this._recentBooks().slice(0, 3);
+    // Save / restore the scene (scene.js; the same as in the help dialog, for the headset).
     y += 80;
+    p.add({ id: 'scene-save', type: 'button', x: pad, y, w: 250, h: 56, label: 'Save scene', size: 26, onClick: () => this.onSaveScene?.() });
+    p.add({
+      id: 'scene-restore', type: 'button', x: pad + 266, y, w: 250, h: 56, label: 'Restore scene', size: 26,
+      disabled: !this._savedScene, onClick: () => this.onRestoreScene?.(),
+    });
+    p.add({
+      id: 'scene-note', type: 'text', x: pad + 532, y: y + 4, w: W - 2 * pad - 532, h: 50, text: this._savedScene ?? 'No saved scene',
+      size: 20, color: UI.muted, maxLines: 2,
+    });
+    const recent = this._recentBooks().slice(0, 3);
+    y += 76;
     p.add({ type: 'text', x: pad, y, w: W - 2 * pad, h: 34, text: recent.length ? 'Recently read' : 'Pick any book from the shelves to start reading.', size: 26, color: UI.muted });
     if (recent.length) {
       p.add({
@@ -322,33 +388,46 @@ export class Interaction {
     if (this._kioskTab === 'search') this._fillKiosk();
   }
 
-  _fillRoomsTab(p, y0, pad, place) {
+  _fillRoomsTab(p, y0, pad, place, placesScroll) {
     const W = p.w;
     let y = y0;
-    // One room per library…
+    // One room per library, after the places that shelve several together (the demo set, when its
+    // ZIMs are here, and with several libraries all of them). A scrolling list: a folder can hold
+    // dozens of libraries, and buttons in a grid ran off the panel (28 libraries hid the demo set,
+    // all libraries and the room filters below the kiosk's edge).
     p.add({ type: 'text', x: pad, y, w: W - 2 * pad, h: 32, text: 'Libraries', size: 24, color: UI.muted });
     y += 38;
-    // Places that shelve several libraries together: the demo set (when its ZIMs are here) and,
-    // with several libraries, all of them.
     const groups = groupPlaces(this.libraries);
-    const places = [...this.libraries, ...groups];
-    const libCols = Math.min(2, Math.max(1, places.length));
-    const lw = (W - 2 * pad - (libCols - 1) * 10) / libCols;
-    places.forEach((lib, i) => {
-      const n = placeBookCount(lib, this.libraries, this.booksByLib);
-      const busy = lib.indexing && lib.indexing.stage !== 'failed';
-      const count = busy ? `indexing ${Math.round((lib.indexing.progress || 0) * 100)}%`
-        : `${n.toLocaleString()} ${n === 1 ? unitOf(lib).slice(0, -1) : unitOf(lib)}`;
-      p.add({
-        id: groups.includes(lib) ? `place-${lib.kind}` : `place-${i}`, type: 'button', x: pad + (i % libCols) * (lw + 10), y: y + Math.floor(i / libCols) * 62,
-        w: lw, h: 54, label: `${lib.title} · ${count}`, size: 23, active: place?.id === lib.id, disabled: !n,
-        onClick: () => this.setPlace(lib.id),
-      });
+    const places = [...groups, ...this.libraries];
+    const books = place ? this.booksByLib[place.id] || [] : [];
+    const faceted = !!place && isFaceted(place, books);
+    // Rows: a large library's filters need the space below; otherwise the list takes it, leaving
+    // two lines for the note and the foot of the kiosk.
+    const rowH = 58;
+    const space = faceted ? 4 * rowH : p.h - y - 160;
+    const rows = Math.max(3, Math.min(places.length, Math.floor(space / rowH)));
+    // Scrolled to the place shown, unless the list was scrolled while showing the same place.
+    const current = places.findIndex((l) => l.id === place?.id);
+    const keep = placesScroll != null && this._placesListFor === place?.id;
+    this._placesListFor = place?.id;
+    p.add({
+      id: 'places', type: 'list', x: pad, y, w: W - 2 * pad, h: rows * rowH, rowH, size: 24,
+      scroll: keep ? placesScroll : Math.max(0, current - 1),
+      items: places.map((lib) => {
+        const n = placeBookCount(lib, this.libraries, this.booksByLib);
+        const busy = lib.indexing && lib.indexing.stage !== 'failed';
+        return {
+          label: lib.title,
+          right: busy ? `indexing ${Math.round((lib.indexing.progress || 0) * 100)}%`
+            : `${n.toLocaleString()} ${n === 1 ? unitOf(lib).slice(0, -1) : unitOf(lib)}`,
+          active: place?.id === lib.id, disabled: !n,
+          onClick: () => this.setPlace(lib.id),
+        };
+      }),
     });
-    y += Math.ceil(places.length / libCols) * 62 + 12;
+    y += rows * rowH + 14;
     if (!place) return;
-    const books = this.booksByLib[place.id] || [];
-    if (!isFaceted(place, books)) {
+    if (!faceted) {
       const capped = this.world.sections.some((s) => s.shown < s.books);
       const text = capped
         ? `${place.title} share ${MAX_BOOKCASES} bookcases here: the small libraries whole, the first books of the large ones.`
@@ -680,7 +759,12 @@ export class Interaction {
       else this._adjustDistance(deltaY * 0.0006);
     } else if (this.state === 'browse') {
       const panelHover = [...this._hover.values()].find((h) => h.panel === this.kiosk);
-      if (panelHover) this.kiosk.scrollList('recent', Math.sign(deltaY));
+      if (!panelHover) return;
+      // The list under the pointer, else the tab's own list.
+      const el = this.kiosk.hover;
+      const id = el?.type === 'list' && el.id ? el.id
+        : { rooms: 'places', search: 'search-results', shelves: 'recent' }[this._kioskTab];
+      this.kiosk.scrollList(id, Math.sign(deltaY));
     }
   }
 
@@ -831,9 +915,12 @@ export class Interaction {
 
   /**
    * Opens the inspected book for reading: at the saved position, at the start (fromStart), or at
-   * a block anchor (at: { c, b }, e.g. a Wikipedia article found by search).
+   * a block anchor (at: { c, b }, e.g. a Wikipedia article found by search). `side` ('left' or
+   * 'right') puts that page on that side of the spread, as it was when a debug report was made:
+   * turning pairs pages one after another, while the page number decides otherwise, and page
+   * numbers are partly estimated, so the pairing depends on how the page was reached.
    */
-  async read({ fromStart = false, at = null } = {}) {
+  async read({ fromStart = false, at = null, side = null } = {}) {
     if (this.state !== 'inspect' || !this.book.readable) return;
     this.state = 'busy';
     this.inspectPanel.visible = false;
@@ -888,7 +975,9 @@ export class Interaction {
     b3.group.position.set(half, 0, 0);
     b3.group.quaternion.identity();
 
-    const spread = await this._spreadFor(startRef);
+    const spread = side === 'left' ? { left: startRef, right: await this.reader.next(startRef) }
+      : side === 'right' ? { left: (await this.reader.prev(startRef)) || 'ex', right: startRef }
+        : await this._spreadFor(startRef);
     const shown = await this._renderSpread(spread);
     this._cur = shown;
     b3.setPages(shown.left, shown.right);

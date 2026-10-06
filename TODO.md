@@ -49,7 +49,8 @@
 - **Server code review.** An earlier review recorded 5 minor findings that were never fixed, and
   3 of its reviewers never finished.
 - **Possible: more in "Copy debug info"** (`debug-info.js`; it has browser, GPU, version, state,
-  place, viewpoint and the last 20 errors, and `__vrlbry.reproduce(report)` restores the view).
+  place, viewpoint, the open book and page, the dialogs and the last 20 errors; pasting it into
+  the help dialog, or `__vrlbry.reproduce(report)`, restores that scene, see `scene.js`).
   Ideas, roughly by value:
   - *A screenshot* of the 3D view (copied as an image, or saved as a PNG beside the text): the
     report does not show what the person saw.
@@ -59,8 +60,8 @@
   - *Smoothness:* frame times of the last ~10 s, long tasks, WebGL context loss.
   - *Failed downloads:* chunk, image or catalogue requests that failed, with their status (some
     fail without a console error, especially on the static site).
-  - *Reading detail:* the block anchor of the shown page, text size, how much of the book is laid
-    out; `reproduce` could then reopen the book there.
+  - *Reading detail:* how much of the book is laid out (the shown page, its side and the text size
+    are in the scene already).
   - *From VR:* nothing can be pasted in a headset; with the Node server, a kiosk button could send
     the report (POST) to be saved as a file on the PC. The static site has nowhere to send it.
 - **Possible: run without a server (GitHub Pages).** Reviewed 2026-10-05, not decided.

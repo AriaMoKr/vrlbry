@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import zlib from 'node:zlib';
 import { blockChars } from '../server/content/html.js';
 import {
-  ArchiveLibrary, Library, LibraryError, gutenbergBase, libraryIdFor, parseIndexScript, splitTitle, zimUrl,
+  ArchiveLibrary, Library, LibraryError, gutenbergBase, libraryIdFor, libraryTitle, parseIndexScript, splitTitle, zimUrl,
 } from '../server/library.js';
 import { writeZim } from './helpers/zimwriter.js';
 
@@ -223,6 +223,20 @@ function collectLog() {
 // ---------------------------------------------------------------------------------------------
 
 describe('library helpers', () => {
+  it('names the Gutenberg ZIMs of one LCC class by their class', () => {
+    const lcc = { kind: 'gutenberg', title: 'Project Gutenberg Library', description: 'Slavic, Baltic and Albanian languages', name: 'gutenberg_en_lcc-pg' };
+    assert.equal(libraryTitle(lcc), 'Gutenberg · Slavic, Baltic and Albanian languages (PG)');
+    assert.equal(libraryTitle({ ...lcc, description: null }), 'Project Gutenberg Library', 'no class name: the ZIM’s title');
+    assert.equal(libraryTitle({ ...lcc, name: 'gutenberg_en_all' }), 'Project Gutenberg Library', 'not one class');
+    assert.equal(libraryTitle({ ...lcc, kind: 'generic' }), 'Project Gutenberg Library');
+    // Wikipedia editions of one topic share a title: the mini and nopic ones say what they are.
+    const wp = { kind: 'wikipedia', title: 'Climate change by Wikipedia', description: 'x', name: 'wikipedia_en_climate-change' };
+    assert.equal(libraryTitle({ ...wp, flavour: 'mini' }), 'Climate change by Wikipedia (introductions)');
+    assert.equal(libraryTitle({ ...wp, flavour: 'nopic' }), 'Climate change by Wikipedia (no pictures)');
+    assert.equal(libraryTitle({ ...wp, flavour: 'maxi' }), 'Climate change by Wikipedia');
+    assert.equal(libraryTitle({ ...wp, flavour: null }), 'Climate change by Wikipedia');
+  });
+
   it('libraryIdFor makes URL-safe ids and keeps case', () => {
     assert.equal(libraryIdFor('gutenberg_en_lcc-pe_2026-03.zim'), 'gutenberg_en_lcc-pe_2026-03');
     assert.equal(libraryIdFor('/some/dir/My Library (2024).ZIM'), 'My-Library--2024-');
@@ -293,6 +307,7 @@ describe('ArchiveLibrary: synthetic Gutenberg archive', () => {
       file: 'synthetic-gutenberg.zim',
       kind: 'gutenberg',
       title: 'Synthetic Gutenberg',
+      zimTitle: 'Synthetic Gutenberg',
       description: 'Test library',
       longDescription: null,
       language: 'eng',
@@ -300,6 +315,7 @@ describe('ArchiveLibrary: synthetic Gutenberg archive', () => {
       creator: 'gutenberg.org',
       publisher: 'openZIM',
       name: 'synthetic_gutenberg',
+      flavour: null,
       bookCount: 8,
       illustration: '/zim/synthetic-gutenberg/M/Illustration_48x48%401',
       shelves: ['PE', 'PR'],
@@ -629,7 +645,8 @@ describe('ArchiveLibrary: real Gutenberg ZIM', { skip: !fs.existsSync(REAL_ZIM) 
       id: REAL_ID,
       file: `${REAL_ID}.zim`,
       kind: 'gutenberg',
-      title: 'Project Gutenberg Library',
+      title: 'Gutenberg · English language (PE)', // every LCC ZIM's own title is "Project Gutenberg Library"
+      zimTitle: 'Project Gutenberg Library',
       description: 'English language',
       longDescription: 'English language studies, grammar, etymology, dialects, linguistics, philology, and the history of the English language.',
       language: 'eng',
@@ -637,6 +654,7 @@ describe('ArchiveLibrary: real Gutenberg ZIM', { skip: !fs.existsSync(REAL_ZIM) 
       creator: 'gutenberg.org',
       publisher: 'openZIM',
       name: 'gutenberg_en_lcc-pe',
+      flavour: null,
       bookCount: 258,
       illustration: `/zim/${REAL_ID}/M/Illustration_48x48%401`,
       shelves: ['PE'],

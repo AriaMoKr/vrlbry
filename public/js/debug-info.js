@@ -1,7 +1,10 @@
 // "Copy debug info" (the help dialog, and the error screen when loading fails): a short report for
 // a bug seen on someone else's computer, without opening the browser's console. Browser, graphics,
 // the site's version, where in the app they are, and the page's last errors. No reading history
-// or other personal data.
+// or other personal data. The scene part (view, book, reading settings, dialogs) is scene.js's,
+// so a report can be restored like a saved scene.
+
+import { part, sceneOf } from './scene.js';
 
 const MAX_ERRORS = 20;
 const MAX_TEXT = 300;
@@ -62,19 +65,14 @@ export const recentErrors = () => errors.slice();
  * The report. Every part is collected on its own, so a broken one (or a page that failed before
  * the app existed) still leaves the rest.
  * @param {object} [app] window.__vrlbry (absent while loading or when loading failed)
+ * @param {{ overlay?: object }} [o] the page's overlay, which exists before the app does
  * @returns {object}
  */
-export function debugReport(app) {
-  const part = (fn) => {
-    try {
-      return fn();
-    } catch (err) {
-      return `unavailable (${err.message})`;
-    }
-  };
+export function debugReport(app, { overlay = app?.overlay } = {}) {
   const I = app?.interaction;
   const r = app?.renderer;
   const s = app?.settings;
+  const scene = sceneOf(app, { overlay });
   return {
     app: 'vrlbry',
     at: new Date().toISOString(),
@@ -100,19 +98,12 @@ export function debugReport(app) {
     }),
     xr: part(() => ({ api: 'xr' in navigator, emulated: !!app.xrDevice, presenting: !!r.xr.isPresenting })),
     libraries: part(() => I.libraries.map((l) => `${l.id} (${l.kind}, ${(I.booksByLib[l.id] || []).length})`)),
-    // With the viewpoint, __vrlbry.reproduce(report) shows another page the same view.
-    view: part(() => ({
-      state: I.state, place: s.place, room: s.rooms?.[s.place] ?? null, sort: s.sort,
-      bookcases: app.world.shelves.cases.length, viewpoint: app.controls?.viewpoint?.() ?? null,
-    })),
-    book: part(() => {
-      if (!I.book) return null;
-      const ref = I.reader && I._currentRef();
-      return { library: I.book.libId, id: I.book.id, title: I.book.title, at: ref ? I.reader.labelOf(ref) : null };
-    }),
+    // The scene: restoring the report (pasted into the help dialog, or __vrlbry.reproduce) shows it.
+    view: scene.view,
+    book: scene.book,
+    ui: scene.ui,
     settings: part(() => ({
-      fontScale: s.fontScale, theme: s.theme, readScale: s.readScale, readDistance: s.readDistance,
-      smoothMove: s.smoothMove, sound: s.sound,
+      ...scene.settings, smoothMove: s.smoothMove, sound: s.sound, updateNotices: s.updateNotices,
     })),
     errors: recentErrors(),
   };

@@ -30,7 +30,12 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 #overlay.ov-hidden > :not(.ov-toasts) { display: none !important; }
 #overlay .ov-card, #overlay .ov-search, #overlay .ov-hint, #overlay .ov-bottom { transition: opacity .35s ease; }
 #overlay.ov-reading .ov-card, #overlay.ov-reading .ov-search, #overlay.ov-reading .ov-hint,
-#overlay.ov-reading .ov-bottom { opacity: 0; pointer-events: none !important; }
+#overlay.ov-reading .ov-vr { opacity: 0; pointer-events: none !important; }
+/* While reading, the help (and its "Copy debug info") stays, dimmed and in the corner, clear of the
+   book's toolbar: a problem seen while reading must be reportable without closing the book. */
+#overlay.ov-reading .ov-bottom { left: auto; right: max(16px, env(safe-area-inset-right)); transform: none; }
+#overlay.ov-reading .ov-help-btn { opacity: .55; }
+#overlay.ov-reading .ov-help-btn:hover { opacity: 1; }
 
 /* Loading */
 .ov-loading { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px;
@@ -98,13 +103,22 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .ov-help dd { margin: 0; color: var(--muted); }
 .ov-debug { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--line); }
 .ov-debug > div { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.ov-debug > div + div { margin-top: 8px; }
+.ov-scene-save, .ov-scene-restore, .ov-scene-paste, .ov-scene-restore-text { padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--accent); }
+.ov-scene-restore:disabled { opacity: .45; cursor: default; }
+.ov-scene-note { color: var(--muted); font-size: 13px; }
+.ov-scene-text { margin-top: 8px; }
 .ov-debug-btn, .ov-loading-debug { padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--accent); }
 .ov-debug-note { color: var(--muted); font-size: 13px; }
 .ov-debug-text { display: block; width: 100%; height: 12em; margin-top: 10px; resize: vertical; font: 12px/1.4 ui-monospace, Consolas, monospace; color: inherit; background: rgba(0,0,0,.25); border: 1px solid var(--line); border-radius: 8px; padding: 8px; box-sizing: border-box; }
 .ov-help-close { background: none; border: 0; font-size: 26px; line-height: 1; color: var(--muted); }
 
 /* Toasts */
-.ov-update { position: fixed; top: 64px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 12px; padding: 8px 10px 8px 16px; border-radius: 999px; border: 1px solid var(--accent); background: var(--panel-solid); box-shadow: 0 6px 20px rgba(0,0,0,.35); z-index: 4; white-space: nowrap; }
+.ov-update { position: fixed; top: 64px; left: 50%; transform: translateX(-50%); display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 6px 12px; max-width: calc(100vw - 24px); width: max-content; padding: 8px 10px 8px 16px; border-radius: 22px; border: 1px solid var(--accent); background: var(--panel-solid); box-shadow: 0 6px 20px rgba(0,0,0,.35); z-index: 4; }
+.ov-update-never, .ov-update-close { background: none; border: none; color: var(--muted); padding: 2px 4px; }
+.ov-update-never { text-decoration: underline; font-size: 13px; }
+.ov-update-close { font-size: 20px; line-height: 1; }
+.ov-update-pref { display: flex; align-items: center; gap: 8px; margin-top: 16px; color: var(--muted); font-size: 13px; }
 .ov-update-btn { padding: 4px 14px; border-radius: 999px; border: 1px solid var(--accent); background: var(--accent); color: #1a120a; font-weight: 600; }
 .ov-toasts { position: fixed; left: 50%; bottom: 84px; transform: translateX(-50%); display: grid; gap: 8px; justify-items: center; pointer-events: none !important; }
 .ov-toast { background: var(--panel-solid); border: 1px solid var(--line); padding: 8px 16px; border-radius: 999px; box-shadow: 0 8px 20px rgba(0,0,0,.4); transition: opacity .4s, transform .4s; max-width: 90vw; }

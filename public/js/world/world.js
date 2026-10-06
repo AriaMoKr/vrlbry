@@ -188,8 +188,12 @@ export class World {
     for (const sec of this.sections) {
       const cs = cases[sec.first];
       const lib = sec.library;
-      const canvas = makeSignCanvas(lib.title || lib.name || lib.id,
-        sec.subtitle ?? [lib.description, sec.shown < sec.books
+      // The description, unless the title already says it (Gutenberg classes: "Gutenberg · English
+      // language (PE)", §4).
+      const title = lib.title || lib.name || lib.id;
+      const description = lib.description && !String(title).includes(lib.description) ? lib.description : null;
+      const canvas = makeSignCanvas(title,
+        sec.subtitle ?? [description, sec.shown < sec.books
           ? `first ${sec.shown.toLocaleString()} of ${sec.books.toLocaleString()} books`
           : `${sec.books.toLocaleString()} book${sec.books === 1 ? '' : 's'}`].filter(Boolean).join(' · '));
       const w = Math.min(2.2, BOOKCASE.width * Math.min(2, sec.count) - 0.1);

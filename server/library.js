@@ -49,7 +49,7 @@ const INDEX_NAMESPACES = ['C', 'A', '-', 'J'];
 const INDEX_PREFIXES = ['', 'js/'];
 const METADATA_FIELDS = {
   title: 'Title', description: 'Description', longDescription: 'LongDescription', language: 'Language',
-  date: 'Date', creator: 'Creator', publisher: 'Publisher', name: 'Name',
+  date: 'Date', creator: 'Creator', publisher: 'Publisher', name: 'Name', flavour: 'Flavour',
 };
 
 /** An error that maps to an HTTP status (used for "book exists but cannot be read"). */
@@ -76,6 +76,25 @@ export function libraryIdFor(file) {
   // '' / '.' / '..' would be unusable (or dangerous) as a URL segment.
   if (/^\.*$/.test(id)) id = `lib${id.length ? '-' + id.length : ''}`;
   return id;
+}
+
+/**
+ * The title a library is shown by (§4), so that a folder of ZIMs can be told apart. The ZIM's own
+ * title, except:
+ * - Kiwix's Gutenberg ZIMs of one Library of Congress class (name `gutenberg_<lang>_lcc-<code>`)
+ *   all say "Project Gutenberg Library": they are named by their class (the ZIM's description) and
+ *   its code, e.g. "Gutenberg · English language (PE)";
+ * - a Wikipedia topic comes in editions with one title: the mini one (each article's introduction)
+ *   and the nopic one say so, e.g. "Physics by Wikipedia (introductions)"; the full one (maxi)
+ *   keeps the plain title.
+ * @param {{ kind: string, title: string, description: string|null, name: string|null, flavour?: string|null }} info
+ * @returns {string}
+ */
+export function libraryTitle({ kind, title, description, name, flavour = null }) {
+  const lcc = kind === 'gutenberg' && description && /^gutenberg_[a-z-]+_lcc-([a-z]+)$/i.exec(name ?? '');
+  if (lcc) return `Gutenberg · ${description} (${lcc[1].toUpperCase()})`;
+  const edition = kind === 'wikipedia' && { mini: 'introductions', nopic: 'no pictures' }[String(flavour ?? '').toLowerCase()];
+  return edition ? `${title} (${edition})` : title;
 }
 
 /**
@@ -329,12 +348,14 @@ export class ArchiveLibrary {
           return typeof v === 'string' && v.trim() ? v.trim() : null;
         };
         const illustration = await this._findIllustration();
+        // The client needs something to show; the metadata title is optional in ZIM files.
+        const zimTitle = field('title') ?? this.file.replace(/\.zim$/i, '');
         return {
           id: this.id,
           file: this.file,
           kind: this.kind,
-          // The client needs something to show; the metadata title is optional in ZIM files.
-          title: field('title') ?? this.file.replace(/\.zim$/i, ''),
+          title: libraryTitle({ kind: this.kind, title: zimTitle, description: field('description'), name: field('name'), flavour: field('flavour') }),
+          zimTitle,
           description: field('description'),
           longDescription: field('longDescription'),
           language: field('language'),
@@ -342,6 +363,7 @@ export class ArchiveLibrary {
           creator: field('creator'),
           publisher: field('publisher'),
           name: field('name'),
+          flavour: field('flavour'),
           bookCount: books.length,
           illustration: illustration ? zimUrl(this.id, illustration.path) : null,
           shelves: this._shelves.slice(),

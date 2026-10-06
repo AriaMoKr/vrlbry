@@ -505,13 +505,20 @@ with 400/404/500. Unknown `/api/*` → 404 JSON.
 ```json
 { "generation": 1, "libraries": [ {
   "id": "gutenberg_en_lcc-pe_2026-03", "file": "gutenberg_en_lcc-pe_2026-03.zim",
-  "kind": "gutenberg", "title": "Project Gutenberg Library", "description": "English language",
+  "kind": "gutenberg", "title": "Gutenberg · English language (PE)",
+  "zimTitle": "Project Gutenberg Library", "description": "English language",
   "longDescription": "English language studies, …", "language": "eng", "date": "2026-03-05",
-  "creator": "gutenberg.org", "publisher": "openZIM", "name": "gutenberg_en_lcc-pe",
+  "creator": "gutenberg.org", "publisher": "openZIM", "name": "gutenberg_en_lcc-pe", "flavour": null,
   "bookCount": 258, "illustration": "/zim/gutenberg_en_lcc-pe_2026-03/M/Illustration_48x48%401",
   "shelves": ["PE"] } ] }
 ```
-(`illustration` null when absent; missing metadata fields are `null`.) `generation` changes when
+(`illustration` null when absent; missing metadata fields are `null`.) `title` is what a library is
+shown by (`libraryTitle`), `zimTitle` the ZIM's own: they differ for Kiwix's Gutenberg ZIMs of one
+Library of Congress class (name `gutenberg_<lang>_lcc-<code>`, all titled "Project Gutenberg
+Library"), named "Gutenberg · <description> (<CODE>)", and for Wikipedia editions of one topic,
+told apart by `flavour` (the ZIM's Flavour): "<title> (introductions)" for mini, "(no pictures)" for
+nopic, the plain title for maxi. Signs and the library card leave out a description the title
+already contains. `generation` changes when
 libraries are added/removed/replaced or a catalogue finishes building: clients poll it and
 re-fetch. Wikisource libraries (`"kind": "wikisource"`) add `"genres": [{ "name": "Novels",
 "count": 1644 }, …]` (largest first; `shelves` = genre names) and `"indexing": null | { "stage",
@@ -618,6 +625,7 @@ public/
     audio.js             tiny WebAudio synth: page turn, book slide/thud, UI click.
     perf.js              ?perf recorder (frame timing, events, segments), a no-op unless started (§5.7).
     debug-info.js        "Copy debug info": the page's last 20 errors (startErrorLog) and a report (debugReport).
+    scene.js             scenes: sceneOf / restoreScene / saveScene / savedScene / parseScene (one saved in the browser).
     perf-scenarios.js    built-in performance scenarios, loaded only by perf.run().
     main.js              bootstrap: renderer, scene, camera rig, XR session, loop, IWER dev flag.
 ```
@@ -946,7 +954,11 @@ States: `browse` → `inspect` → `read` (and back).
   `wikipedia_en_mathematics_mini_`, `wikipedia_en_physics_mini_`, `wikipedia_en_chemistry_mini_`,
   `wikipedia_en_100_`, `wikipedia_en_medicine_mini_`) followed by a date (`YYYY-MM`), so a newer
   edition still counts but another flavour (`wikipedia_en_100_mini_…`) does not. Both are *group
-  places* (`groupPlaces`), listed after the libraries on the kiosk's Rooms tab.
+  places* (`groupPlaces`), listed first on the kiosk's Rooms tab. That tab lists all places in one
+  scrolling list (`places`; ▲/▼, the mouse wheel over it), scrolled to the place shown and kept
+  where it was scrolled while the place stays the same; a large library's filters follow it (the
+  list is 4 rows then), else it takes the panel. A grid of buttons ran off the kiosk with 28
+  libraries, hiding the demo set, all libraries and the filters.
   - No room has more than `MAX_BOOKCASES` = 200 bookcases (`world.js`); in practice only this
     hall reaches the limit.
   - Libraries share the limit fairly (`shareBookcases`, max-min fair): each gets an equal share,
@@ -969,14 +981,31 @@ States: `browse` → `inspect` → `read` (and back).
   narrowed to its title letter when the genre is over the cap); every loaded book carries its
   `libId` for this.
 - DOM overlay (non-VR): see `ui/overlay.js` — the help dialog and the loading error screen have
-  "Copy debug info" (`debug-info.js`): browser, GPU, the site's version, state, place, viewpoint
-  (`controls.viewpoint()`: x, z, eye height, yaw, pitch), open book and the page's last 20 errors
-  as JSON (`__vrlbry.reproduce(report)` restores its place, room, sort and viewpoint), copied (or selected for copying by hand) and shown, for
-  bug reports from other people's computers; no reading history.
+  "Copy debug info" (`debug-info.js`): browser, GPU, the site's version and the page's last 20
+  errors, plus the *scene* (`scene.js` `sceneOf`), as JSON, copied (or selected for copying by
+  hand) and shown, for bug reports from other people's computers; no reading history. The help
+  stays available (dimmed, in the corner) while a book is open.
+- Scenes (`scene.js`): `view` (state, place, room, sort, bookcases, and the viewpoint from
+  `controls.viewpoint()`: x, z, eye height, yaw, pitch), `book` (library, id, title, page label,
+  block anchor `{ c, b }` and the side of the spread it is on), `settings` (fontScale, theme,
+  readScale, readDistance) and `ui`: `page` (the overlay's `reportUi()`: library card, search box
+  and whether its results are open, update banner, loading/error screen, toasts; as they were
+  when the help was opened, since opening it closes the search results) and the 3D panels
+  (`interaction.uiState()`: the kiosk's tab, search and list scrolling; inspect panel, toolbar,
+  contents and its scrolling; the book under the pointer). `restoreScene` puts the book back,
+  applies place/room/sort/reading settings (saved), rebuilds, sets the viewpoint, takes the book
+  out and opens it at the anchor on the same side (`read({ at, side })`: page pairing depends on
+  how a page was reached), then restores the dialogs. One scene is kept in localStorage (`scene`,
+  with `at` and a `label`): Save / Restore scene in the help dialog and on the kiosk's Shelves &
+  settings tab. The help dialog also restores pasted text: a saved scene or a whole debug report
+  (`parseScene`). `__vrlbry.reproduce(report)` is `restoreScene` for the console.
 - Site updates: besides the catalogue, the client polls `GET api/version` every 10 s. When
   `changed` differs from the page's own, its code is out of date: it stops applying catalogue
   changes (new data may need the new code) and asks for a reload: a banner (`showUpdate`), the
   kiosk's highlighted ↻ Reload page with a note at its foot (`setOutdated`), a notice in VR.
+  The banner has no timeout; × hides it for the page, "Don't show again" sets
+  `settings.updateNotices = false` (no banner, no VR notice; the kiosk's note stays), and the help
+  dialog's "Tell me when this site has been updated" checkbox turns it back on.
 - DOM overlay (non-VR): see `ui/overlay.js` — title with the same "Updated …" stamp, library
   cards (with indexing progress), a ⟳ rescan button, search box (filters by title / author across *all* books of all libraries;
   picking a result = switch room if needed, teleport to it and select it; for Wikipedia

@@ -128,6 +128,11 @@ into your message: it says which browser, graphics and version of the site you h
 were, and the page's last errors. If the library fails to open, the error screen has the same
 button.
 
+**Save scene** (in the help, or on the catalogue stand in a headset) remembers where you are:
+the room, where you stand and look, the book you have open and its page, and the menus.
+**Restore scene** takes you back there. In the help you can also paste a scene, or a debug report
+someone sent you, and restore it: you see what they saw.
+
 ## Development
 
 ```bash

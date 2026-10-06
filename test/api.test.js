@@ -223,8 +223,8 @@ describe('HTTP API (synthetic library)', () => {
     assert.deepEqual(json(r), {
       generation: 1,
       libraries: [{
-        id: 'api-fixture', file: 'api fixture.zim', kind: 'gutenberg', title: 'API Fixture', description: null,
-        longDescription: null, language: null, date: null, creator: null, publisher: null, name: null,
+        id: 'api-fixture', file: 'api fixture.zim', kind: 'gutenberg', title: 'API Fixture', zimTitle: 'API Fixture', description: null,
+        longDescription: null, language: null, date: null, creator: null, publisher: null, name: null, flavour: null,
         bookCount: 5, illustration: '/zim/api-fixture/M/Illustration_48x48%401', shelves: ['PE'],
       }],
     });
@@ -603,7 +603,8 @@ describe('HTTP API (real Gutenberg ZIM)', { skip: !fs.existsSync(REAL_ZIM) && 'r
     const libs = JSON.parse((await get('/api/libraries')).body).libraries;
     const real = libs.find((l) => l.id === REAL_ID);
     assert.equal(real.bookCount, 258);
-    assert.equal(real.title, 'Project Gutenberg Library');
+    assert.equal(real.title, 'Gutenberg · English language (PE)');
+    assert.equal(real.zimTitle, 'Project Gutenberg Library');
     const ill = await get(real.illustration);
     assert.equal(ill.status, 200);
     assert.equal(ill.headers['content-type'], 'image/png');

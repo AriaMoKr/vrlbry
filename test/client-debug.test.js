@@ -46,6 +46,7 @@ describe('debug info', () => {
       getParameter: (p) => ({ 1: 'masked', 2: 8192, 3: 'Adreno (TM) 740' }[p]),
     };
     const book = { libId: 'wp', id: 'v3', title: 'Banana – Éclair' };
+    const shownLeft = { c: 2, p: 4 };
     const app = {
       version: '2026-10-05T12:00:00.000Z',
       renderer: { getContext: () => gl, info: { render: { calls: 87 } }, xr: { isPresenting: false } },
@@ -55,8 +56,11 @@ describe('debug info', () => {
       controls: { viewpoint: () => ({ x: 1.25, z: -3.5, eye: 1.6, yaw: 0.785, pitch: -0.1 }) },
       interaction: {
         state: 'read', book, libraries: [{ id: 'wp', kind: 'wikipedia' }], booksByLib: { wp: [book, {}] },
-        reader: { labelOf: (ref) => `page ${ref.p + 1}` }, _currentRef: () => ({ c: 2, p: 4 }),
+        reader: { labelOf: (ref) => `page ${ref.p + 1}`, anchorOf: (ref) => ({ c: ref.c, b: 17 }) }, _currentRef: () => shownLeft,
+        _cur: { spread: { left: shownLeft, right: { c: 2, p: 5 } } },
+        uiState: () => ({ kiosk: { tab: 'search', search: 'banana', scroll: { 'search-results': 2 } }, inspect: false, toolbar: true, contents: { scroll: 40 }, hover: null }),
       },
+      overlay: { reportUi: () => ({ card: 'collapsed', search: { q: 'ban', open: true }, update: false, loading: null, toasts: [] }) },
     };
     const r = debugReport(app);
     assert.equal(r.app, 'vrlbry');
@@ -67,14 +71,21 @@ describe('debug info', () => {
       state: 'read', place: 'demo', room: null, sort: 'title', bookcases: 6,
       viewpoint: { x: 1.25, z: -3.5, eye: 1.6, yaw: 0.785, pitch: -0.1 },
     });
-    assert.deepEqual(r.book, { library: 'wp', id: 'v3', title: 'Banana – Éclair', at: 'page 5' });
+    assert.deepEqual(r.book, { library: 'wp', id: 'v3', title: 'Banana – Éclair', at: 'page 5', anchor: { c: 2, b: 17 }, side: 'left' });
+    // The dialogs: the page's menus (as when the help was opened) and the 3D panels.
+    assert.deepEqual(r.ui, {
+      page: { card: 'collapsed', search: { q: 'ban', open: true }, update: false, loading: null, toasts: [] },
+      kiosk: { tab: 'search', search: 'banana', scroll: { 'search-results': 2 } },
+      inspect: false, toolbar: true, contents: { scroll: 40 }, hover: null,
+    });
     assert.equal(r.settings.theme, 'night');
     assert.equal(r.errors.length, 20);
     assert.equal(r.xr.emulated, false);
     assert.match(r.url, /^unavailable/, 'Node has no location: that part only');
     // Before the app exists (loading, or loading failed): still a report.
-    const early = debugReport(undefined);
+    const early = debugReport(undefined, { overlay: app.overlay });
     assert.equal(early.version, null);
+    assert.equal(early.ui.page.card, 'collapsed', 'the page’s menus exist before the app');
     assert.match(early.view, /^unavailable/);
     assert.equal(early.errors.length, 20);
     assert.doesNotThrow(() => JSON.stringify(early));

@@ -12,13 +12,14 @@ import { PLAYER, XR_FRAME_RATE } from './config.js';
 import { collectionsFor } from './rooms.js';
 import { perf } from './perf.js';
 import { copyText, debugReport, startErrorLog } from './debug-info.js';
+import { parseScene, restoreScene, saveScene, savedScene } from './scene.js';
 
 startErrorLog(); // first: the debug report lists the page's last errors
 const params = new URLSearchParams(location.search);
 const overlay = new Overlay({ root: document.getElementById('overlay') });
 // Registered before anything can fail: the error screen offers the report too.
 overlay.onDebugInfo(async () => {
-  const text = JSON.stringify(debugReport(window.__vrlbry), null, 2);
+  const text = JSON.stringify(debugReport(window.__vrlbry, { overlay }), null, 2);
   overlay.showDebugInfo(text, await copyText(text));
 });
 
@@ -146,6 +147,54 @@ async function start() {
   }
   interaction.onExitVR = () => renderer.xr.getSession()?.end();
   interaction.onReload = () => location.reload();
+  // Scenes (scene.js): one saved in the browser (Save / Restore scene in the help dialog and on the
+  // kiosk), or pasted into the help dialog (a saved scene or a debug report).
+  const tell = (msg, kind = 'info') => {
+    overlay.showToast(msg, kind, 4000);
+    if (renderer.xr.isPresenting) interaction.notice(msg, '', 3);
+  };
+  const showSaved = () => {
+    const scene = savedScene();
+    const text = scene?.at ? `Saved ${new Date(scene.at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}${scene.label ? ` · ${scene.label}` : ''}` : null;
+    overlay.setSavedScene(text);
+    interaction.setSavedScene(text);
+  };
+  async function showScene(scene) {
+    overlay.showHelp(false);
+    try {
+      await restoreScene(window.__vrlbry, scene);
+      tell('Scene restored');
+    } catch (err) {
+      tell(`Could not restore the scene: ${err.message}`, 'error');
+    }
+  }
+  const sceneActions = {
+    save() {
+      try {
+        saveScene(window.__vrlbry);
+        showSaved();
+        tell('Scene saved');
+      } catch (err) {
+        tell(`Could not save the scene: ${err.message}`, 'error');
+      }
+    },
+    restore() {
+      const scene = savedScene();
+      if (scene) showScene(scene);
+      else tell('No saved scene');
+    },
+    restoreText(text) {
+      try {
+        showScene(parseScene(text));
+      } catch (err) {
+        tell(`Could not restore: ${err.message}`, 'error');
+      }
+    },
+  };
+  overlay.onScene(sceneActions);
+  interaction.onSaveScene = sceneActions.save;
+  interaction.onRestoreScene = sceneActions.restore;
+  showSaved();
   controls.addEventListener('gamepad', (e) => overlay.setGamepad(e.detail.active));
   // When the website last changed, fetched once: it tells which version this page is running.
   let loadedVersion = null;
@@ -209,14 +258,32 @@ async function start() {
   // new data may need the new code: a page left open across a deploy once took a new ZIM into the
   // catalogue but not into the Demo set, whose list was in the old rooms.js. So once the version
   // changes, catalogue changes are no longer applied, and the page asks to be reloaded.
+  // The banner and the VR notice can be turned off ("Don't show again", or the help dialog's
+  // checkbox: settings.updateNotices); the kiosk's footer note and highlighted reload stay.
   let outdated = false;
+  const notices = () => settings.updateNotices !== false;
+  const showUpdate = () => overlay.showUpdate({
+    onReload: () => location.reload(),
+    onNever: () => {
+      setUpdateNotices(false);
+      overlay.showToast('Update notices are off. The help (?) can turn them back on.', 'info', 6000);
+    },
+  });
+  function setUpdateNotices(on) {
+    settings.updateNotices = on;
+    save('settings', settings);
+    overlay.setUpdateNotices(on);
+    if (!on) overlay.hideUpdate();
+    else if (outdated) showUpdate();
+  }
+  overlay.setUpdateNotices(notices(), setUpdateNotices);
   async function isOutdated() {
     if (outdated || !loadedVersion) return outdated;
     const { changed } = await getVersion();
     if (changed && changed !== loadedVersion) {
       outdated = true;
-      overlay.showUpdate(() => location.reload());
-      interaction.setOutdated(true);
+      if (notices()) showUpdate();
+      interaction.setOutdated(true, { notice: notices() });
     }
     return outdated;
   }
@@ -274,26 +341,11 @@ async function start() {
       renderer.render(scene, camera);
     },
     /**
-     * Dev: shows this page what a "Copy debug info" report's sender saw: its place, room and sort
-     * (saved, like choosing them on the kiosk), then its viewpoint. A place this site does not
-     * have falls back to another library, as on load. Paste the report as the argument.
-     * @param {object} report the report (or its `view`)
-     * @returns {Promise<{ place: string|null, viewpoint: object|null }>} where this page ended up
+     * Dev: shows this page what a "Copy debug info" report's sender saw (scene.js restoreScene:
+     * place, room, sort, reading settings, viewpoint, the book and page, the dialogs). Pasting the
+     * report into the help dialog does the same.
      */
-    async reproduce(report) {
-      const view = report?.view ?? report;
-      if (!view || typeof view !== 'object' || !('place' in view)) throw new Error('not a vrlbry debug report');
-      if (interaction.state === 'read' || interaction.state === 'inspect') await interaction.closeBook();
-      settings.rooms ||= {};
-      if (view.sort) settings.sort = view.sort;
-      settings.place = view.place;
-      if (view.room) settings.rooms[view.place] = view.room;
-      else delete settings.rooms[view.place];
-      save('settings', settings);
-      await interaction._rebuildWorld();
-      if (view.viewpoint) controls.setViewpoint(view.viewpoint);
-      return { place: settings.place, viewpoint: controls.viewpoint() };
-    },
+    reproduce: (report) => restoreScene(window.__vrlbry, report),
   };
   // ?perf: record frame timing and events for tools/quest-perf.mjs (window.__vrlbry.perf).
   if (params.has('perf')) {
