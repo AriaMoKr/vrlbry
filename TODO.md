@@ -55,6 +55,14 @@
   `api/version` then matches), whether a reload during the deploy (new `api/version`, old files
   still served or cached) leaves a page that keeps seeing itself as outdated, and whether it
   should hide by itself once the page is current.
+- **Low priority: PDF-only Gutenberg books.** Some books exist in a Gutenberg ZIM only as PDF
+  (91 of the 56,424 in `gutenberg_en_all_2023-08`, mostly LaTeX-typeset mathematics such as
+  *Calculus Made Easy*): they stand on the shelves but cannot be read ("This book has no readable
+  text in the archive"; the server logs "N book(s) have neither HTML nor EPUB"). Ideas:
+  - say so plainly: "N books are PDF only (not readable here)", in the log and on the book;
+  - leave them off the shelves, or mark their spines, so that nobody takes one out for nothing;
+  - show the PDF: pdf.js drawing each page onto the book's pages (a large library, and PDF pages
+    do not reflow to the book's page size).
 - **Possible: more in "Copy debug info"** (`debug-info.js`; it has browser, GPU, version, state,
   place, viewpoint, the open book and page, the dialogs and the last 20 errors; pasting it into
   the help dialog, or `__vrlbry.reproduce(report)`, restores that scene, see `scene.js`).
