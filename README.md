@@ -163,11 +163,11 @@ articles then happens in the browser, over a saved title list (by title only: re
 included). A first visit opens the *Demo set* place when the site has it.
 
 The workflow in `.github/workflows/pages.yml` runs the tests, downloads the demo set (the ZIMs
-listed in `tools/demo-set.txt`: Gutenberg LCC-P, the Wikipedia Mathematics, Physics and
-Chemistry minis, and Wikipedia 100, cached between runs), builds with `--zims` and publishes it on
-every push to `main`; enable it once in the repository's Settings → Pages → Source: *GitHub
-Actions*. The demo set makes a site of about 270 MB in 85,000 files (Pages allows 1 GB). Reading any ZIM file without the server is planned (see the
-[TODO list](TODO.md)).
+listed in `tools/demo-set.txt`: Gutenberg LCC-P, the Wikipedia Mathematics, Physics, Chemistry
+and Medicine minis, and Wikipedia 100, cached between runs), builds with `--zims` and publishes
+it on every push to `main`; enable it once in the repository's Settings → Pages → Source:
+*GitHub Actions*. The demo set makes a site of about 390 MB in 157,000 files (Pages allows 1 GB).
+Reading any ZIM file without the server is planned (see the [TODO list](TODO.md)).
 
 ## Measuring performance on a Quest
 

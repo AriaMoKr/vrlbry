@@ -157,6 +157,7 @@ describe('rooms', () => {
     assert.equal(isDemoLibrary({ id: 'wikipedia_en_100_2026-08' }), true);
     assert.equal(isDemoLibrary({ id: 'wikipedia_en_100_2027-01' }), true, 'a newer edition');
     assert.equal(isDemoLibrary({ id: 'wikipedia_en_100_mini_2026-08' }), false, 'another flavour');
+    assert.equal(isDemoLibrary({ id: 'wikipedia_en_medicine_mini_2026-04' }), true);
     const vols = [1, 2].map((v) => ({ id: 'v' + v, title: 'Range ' + (3 - v), volume: v }));
     const books = { [demoPg.id]: pgBooks, [demoWp.id]: vols, [other.id]: pgBooks };
     const libs = [other, demoPg, demoWp];

@@ -74,10 +74,10 @@
     pushes to `main`, at https://ariamokr.github.io/vrlbry/ once Pages' source is set to GitHub
     Actions.
   - *Step 1 (done):* the demo set is pre-rendered into the site (`build:pages -- --zims`):
-    every book list, chunk and image as a static file (~270 MB, 85,000 files, ~3 min to build,
-    with Physics, Chemistry and Wikipedia 100), with Wikipedia title search in the browser. No redirect aliases (the server searches
-    those in the ZIM's URL index), and nothing beyond the files the build saved: reading ZIMs in
-    the browser is the next step.
+    every book list, chunk and image as a static file (~390 MB, 157,000 files, ~5 min to build
+    here, with Physics, Chemistry, Wikipedia 100 and Medicine), with Wikipedia title search in the
+    browser. No redirect aliases (the server searches those in the ZIM's URL index), and nothing
+    beyond the files the build saved: reading ZIMs in the browser is the next step.
   - *Demo set* (chosen 2026-10-05, 93 MB together, both under the 100 MB file limit):
     - Gutenberg LCC-P, *Language and literature* (19 books, 37 MB):
       https://mirror.download.kiwix.org/zim/gutenberg/gutenberg_en_lcc-p_2026-03.zim
@@ -95,5 +95,12 @@
       Also Wikipedia 100 (101 full articles with pictures, one volume; 318 MB, but only 49 MB on
       the site: the articles use 3,600 of its images):
       https://mirror.download.kiwix.org/zim/wikipedia/wikipedia_en_100_2026-08.zim
-      The five make five bookcases. Converted sizes so far: Gutenberg ~0.6× the ZIM (its EPUB
-      copies are not used), Wikipedia minis 0.8–2.1× (Mathematics has 18,000 formula images).
+      And Medicine, mini (72 volumes, 71,519 articles, 155 MB; 121 MB on the site; 2 min to
+      pre-render since articles are converted in storage order, 30 min before):
+      https://mirror.download.kiwix.org/zim/wikipedia/wikipedia_en_medicine_mini_2026-04.zim
+      The six make six bookcases. Converted sizes so far: Gutenberg ~0.6× the ZIM (its EPUB
+      copies are not used), Wikipedia minis 0.8–2.1× (Mathematics has 18,000 formula images),
+      Wikipedia maxis 0.15× (Wikipedia 100) to 1.6× (Golf).
+    - Measured but not added (MB on the site): Gutenberg PA 279, PG 168, PL 69, PK 62, PB 29,
+      PH 28, PM 22, PF 11, PD 5; Wikipedia maxis Climate change 228, Golf 216, Nollywood 26,
+      Knots 24, Ray Charles 3; Climate change mini 6.

@@ -943,9 +943,9 @@ States: `browse` → `inspect` → `read` (and back).
   'demo'`, "Demo set") shelves the demo set's libraries together whenever at least one is present:
   those whose id is an entry of `DEMO_LIBRARIES` (`gutenberg_en_lcc-p_`,
   `wikipedia_en_mathematics_mini_`, `wikipedia_en_physics_mini_`, `wikipedia_en_chemistry_mini_`,
-  `wikipedia_en_100_`) followed by a date (`YYYY-MM`), so a newer edition still counts but another
-  flavour (`wikipedia_en_100_mini_…`) does not. Both are *group places*
-  (`groupPlaces`), listed after the libraries on the kiosk's Rooms tab.
+  `wikipedia_en_100_`, `wikipedia_en_medicine_mini_`) followed by a date (`YYYY-MM`), so a newer
+  edition still counts but another flavour (`wikipedia_en_100_mini_…`) does not. Both are *group
+  places* (`groupPlaces`), listed after the libraries on the kiosk's Rooms tab.
   - No room has more than `MAX_BOOKCASES` = 200 bookcases (`world.js`); in practice only this
     hall reaches the limit.
   - Libraries share the limit fairly (`shareBookcases`, max-min fair): each gets an equal share,

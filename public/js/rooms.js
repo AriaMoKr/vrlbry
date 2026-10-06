@@ -24,7 +24,7 @@ export const ALL_PLACE = { id: '*', title: 'All libraries', kind: 'all' };
 export const DEMO_PLACE = { id: 'demo', title: 'Demo set', kind: 'demo' };
 export const DEMO_LIBRARIES = [
   'gutenberg_en_lcc-p_', 'wikipedia_en_mathematics_mini_', 'wikipedia_en_physics_mini_', 'wikipedia_en_chemistry_mini_',
-  'wikipedia_en_100_',
+  'wikipedia_en_100_', 'wikipedia_en_medicine_mini_',
 ];
 export const isDemoLibrary = (library) => DEMO_LIBRARIES.some((name) => library.id.startsWith(name)
   && /^\d{4}-\d{2}$/.test(library.id.slice(name.length)));
