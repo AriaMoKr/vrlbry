@@ -2,6 +2,7 @@
 // Hidden while an immersive session is running.
 
 import { bookIndex, matchBooks, findArticles } from '../search.js';
+import { load, save } from '../util/storage.js';
 
 const ARTICLE_RESULTS = 8; // per Wikipedia library
 
@@ -100,11 +101,9 @@ export class Overlay {
       </div>
       <div class="ov-toasts" aria-live="polite"></div>`;
     this.$ = (sel) => root.querySelector(sel);
-    this.$('.ov-collapse').onclick = () => {
-      const card = this.$('.ov-card');
-      card.classList.toggle('collapsed');
-      this.$('.ov-collapse').textContent = card.classList.contains('collapsed') ? '+' : '–';
-    };
+    this.$('.ov-collapse').onclick = () => this.setCardCollapsed(!this.$('.ov-card').classList.contains('collapsed'));
+    // A minimized library card stays minimized when the page is reloaded.
+    if (load('card', 'open') === 'collapsed') this.setCardCollapsed(true);
     this.$('.ov-rescan').onclick = () => this._rescan?.();
     // The debug report describes the page as it was when the help was opened: a click there (or
     // anywhere outside the search box) closes the search results, so the state is taken on
@@ -319,14 +318,20 @@ export class Overlay {
   /** uiState() for the debug report: as it was when the help was opened, which the report comes from. */
   reportUi() { return this._uiAtHelp ?? this.uiState(); }
 
+  /** Minimizes (or opens) the library card, remembered for the next page load. */
+  setCardCollapsed(collapsed) {
+    this.$('.ov-card').classList.toggle('collapsed', collapsed);
+    const btn = this.$('.ov-collapse');
+    btn.textContent = collapsed ? '+' : '–';
+    btn.title = collapsed ? 'Expand' : 'Collapse';
+    btn.setAttribute('aria-label', btn.title);
+    save('card', collapsed ? 'collapsed' : 'open');
+  }
+
   /** Puts back the library card and the search box of a uiState() (__vrlbry.reproduce). */
   restoreUi(ui) {
     if (!ui) return;
-    if (ui.card) {
-      const collapsed = ui.card === 'collapsed';
-      this.$('.ov-card').classList.toggle('collapsed', collapsed);
-      this.$('.ov-collapse').textContent = collapsed ? '+' : '–';
-    }
+    if (ui.card) this.setCardCollapsed(ui.card === 'collapsed');
     if (ui.search) {
       const input = this.$('.ov-search input');
       input.value = ui.search.q || '';
