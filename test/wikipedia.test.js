@@ -11,7 +11,7 @@ import { after, before, describe, it } from 'node:test';
 import { ArchiveLibrary, Library } from '../server/library.js';
 import { createApp } from '../server/http.js';
 import { ZimArchive } from '../server/zim/reader.js';
-import { isWikipedia, buildIndex, volumeTitle } from '../server/wikipedia.js';
+import { isWikipedia, buildIndex, volumeTitle, removeCheckpoint } from '../server/wikipedia.js';
 import { writeZim } from './helpers/zimwriter.js';
 
 let tmp;
@@ -106,6 +106,124 @@ describe('wikipedia', () => {
     } finally {
       await z.close();
     }
+  });
+
+  it('reads blob sizes and their first bytes a cluster at a time (compressed or not)', async () => {
+    const file = path.join(tmp, 'blobs.zim');
+    writeZim(file, {
+      scheme: 'new',
+      entries: [
+        { ns: 'C', url: 'a', mime: 'text/html', content: 'x'.repeat(10) },
+        { ns: 'C', url: 'b', mime: 'text/html', content: 'y'.repeat(3000) },
+        { ns: 'C', url: 'c', mime: 'image/png', content: Buffer.alloc(700, 1), compression: 'none' },
+        { ns: 'C', url: 'd', mime: 'image/png', content: Buffer.alloc(5000, 2), compression: 'none' },
+      ],
+    });
+    const z = await ZimArchive.open(file);
+    try {
+      for (const url of ['a', 'b', 'c', 'd']) {
+        const e = await z.findPath(`C/${url}`);
+        const [got] = await z.clusterBlobs(e.cluster, [e.blob], { head: 1024, cache: false });
+        assert.equal(got.size, await z.getBlobSize(e), url);
+        const content = (await z.getContent(e)).data;
+        assert.deepEqual(Buffer.from(got.data), content.subarray(0, 1024), `${url}: the first 1024 bytes, or all`);
+        const [bare] = await z.clusterBlobs(e.cluster, [e.blob], { cache: false });
+        assert.deepEqual(bare, { size: got.size, data: null }, `${url}: sizes only`);
+      }
+    } finally {
+      await z.close();
+    }
+  });
+
+  it('leaves out what is not an article: other namespaces, mwoffliner pages, placeholders', async () => {
+    // Newer mwoffliner (the full English Wikipedia of 2026-08) adds Category and Portal pages and
+    // marks every page's namespace in its settings.
+    const page = (title, ns) => `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${title}</title>
+<script>RLCONF = {"wgBreakFrames":false,"wgNamespaceNumber":${ns},"wgPageName":"${title}"};</script></head>
+<body class="mediawiki ns-${ns} ns-subject"><p>${title} text.</p></body></html>`.padEnd(3000, ' ');
+    const P = (url, title, ns) => ({ ns: 'C', url, title, mime: 'text/html', content: page(title, ns) });
+    const file = path.join(tmp, 'kinds.zim');
+    writeZim(file, {
+      scheme: 'new',
+      mainPage: 'C/Main_Page',
+      entries: [
+        P('Main_Page', 'Main Page', 0),
+        P('Ant', 'Ant', 0),
+        P('Category:Insects', 'Category:Insects', 14),
+        P('Portal:Insects/Selected_article/1', 'Portal:Insects/Selected article/1', 100),
+        P('Survivor:_Borneo', 'Survivor: Borneo', 0), // an article with a colon
+        { ns: 'C', url: 'Old_style', title: 'Old style', mime: 'text/html', content: article('Old style', 'No mark.') },
+        { ns: 'C', url: '_categories_partials_Category:Insects_pages_2', mime: 'text/html',
+          content: '<div id="mw-pages"><h2>Pages in category "Insects"</h2><a href="./Ant">Ant</a></div>' },
+        { ns: 'C', url: 'Lost_page', title: 'Lost page', mime: 'text/html',
+          content: '<!doctype html><html><head><link type="text/css" href="./download_error_placeholder.css" rel="stylesheet" /></head><body><h1>Oops. Page not found.</h1></body></html>' },
+        { ns: 'C', url: 'Ants', title: 'Ants', mime: 'text/html', content: redirectPage('Ants', 'Ant#Kinds') },
+        { ns: 'M', url: 'Source', mime: 'text/plain', content: 'en.wikipedia.org' },
+      ],
+    });
+    const z = await ZimArchive.open(file);
+    try {
+      const logs = [];
+      const idx = await buildIndex(z, { log: (m) => logs.push(m) });
+      const titles = [];
+      for (const i of idx.order) titles.push((await z.getEntryByIndex(i)).title);
+      assert.deepEqual(titles, ['Ant', 'Old style', 'Survivor: Borneo']);
+      assert.match(logs.join('\n'), /3 articles \(skipped: 1 redirect pages, 3 pages of other namespaces or not downloaded, 1 of mwoffliner's own\)/);
+    } finally {
+      await z.close();
+    }
+  });
+
+  it('resumes an interrupted index build from its checkpoint, and ignores one of another scan', async () => {
+    const file = path.join(tmp, 'wp-resume.zim');
+    writeWikipediaZim(file);
+    const base = path.join(tmp, 'resume-cache', 'wp.part');
+    const plain = (idx) => ({ ...idx, order: [...idx.order], sizes: [...idx.sizes] });
+    let z = await ZimArchive.open(file);
+    const clean = plain(await buildIndex(z, { volumeSize: 3 }));
+    await z.close();
+
+    // Interrupted after two clusters (as when the server stops): their pages are in the checkpoint.
+    z = await ZimArchive.open(file);
+    const read = z.clusterBlobs.bind(z);
+    let calls = 0;
+    z.clusterBlobs = async (...args) => {
+      if (++calls > 2) throw new Error('interrupted');
+      return read(...args);
+    };
+    await assert.rejects(buildIndex(z, { volumeSize: 3, checkpoint: base, checkpointEvery: 1, lanes: 1 }), /interrupted/);
+    await z.close();
+    const kept = fs.statSync(`${base}.bin`).size / 4;
+    assert.ok(kept >= 2, `sizes were checkpointed (${kept})`);
+
+    // The next build resumes: it reads only the clusters still to do, and the index is the same.
+    z = await ZimArchive.open(file);
+    const read2 = z.clusterBlobs.bind(z);
+    const clusters = [];
+    z.clusterBlobs = async (c, ...args) => {
+      clusters.push(c);
+      return read2(c, ...args);
+    };
+    const logs = [];
+    const resumed = plain(await buildIndex(z, { volumeSize: 3, checkpoint: base, checkpointEvery: 1, lanes: 2, log: (m) => logs.push(m) }));
+    await z.close();
+    assert.match(logs.join('\n'), new RegExp(`resuming: ${kept} of \\d+ page sizes`));
+    assert.equal(calls, 3, 'the interrupted build read two clusters, the third failed');
+    assert.ok(clusters.length < calls + clusters.length && clusters.length > 0);
+    assert.deepEqual(resumed, clean);
+
+    // A checkpoint made for a different scan starts afresh, with the same result.
+    const meta = JSON.parse(fs.readFileSync(`${base}.json`, 'utf8'));
+    fs.writeFileSync(`${base}.json`, JSON.stringify({ ...meta, fingerprint: 'other' }));
+    z = await ZimArchive.open(file);
+    const logs2 = [];
+    const fresh = plain(await buildIndex(z, { volumeSize: 3, checkpoint: base, log: (m) => logs2.push(m) }));
+    await z.close();
+    assert.ok(!logs2.some((m) => m.includes('resuming')), 'not resumed');
+    assert.deepEqual(fresh, clean);
+    assert.equal(JSON.parse(fs.readFileSync(`${base}.json`, 'utf8')).fingerprint, meta.fingerprint, 'rewritten for this scan');
+    await removeCheckpoint(base);
+    assert.ok(!fs.existsSync(`${base}.json`) && !fs.existsSync(`${base}.bin`));
   });
 
   it('shelves volumes, builds the index in the background once, and converts articles on demand', async () => {

@@ -614,7 +614,7 @@ export class ArchiveLibrary {
    * catalogue and announces it (onChange). Meanwhile books() is empty and info().indexing
    * reports progress, weighted per stage.
    */
-  _startIndexing({ file, what, unit, build, save, weights }) {
+  _startIndexing({ file, what, unit, build, save, weights, saved = null }) {
     if (this._indexTask) return;
     this._indexing = { stage: 'scan', progress: 0 };
     this._log(`${this.file}: indexing ${what} in the background (first open only)…`);
@@ -627,7 +627,11 @@ export class ArchiveLibrary {
       log: (m) => this._log(`${this.file}:${m}`),
     }).then(async (idx) => {
       if (this._closed) return;
-      await save(file, idx).catch((err) => this._warn(`${this.file}: cannot cache the ${what} index (${err.message})`));
+      const ok = await save(file, idx).then(() => true, (err) => {
+        this._warn(`${this.file}: cannot cache the ${what} index (${err.message})`);
+        return false;
+      });
+      if (ok) await saved?.().catch(() => {});
       this._indexing = null;
       this._books = null;
       this._info = null;
@@ -655,11 +659,16 @@ export class ArchiveLibrary {
       this._indexing = null;
       return this._volumesFromIndex(idx);
     }
+    // The sizes pass keeps its progress in a checkpoint, so a restart resumes it (after a new scan);
+    // it is deleted once the index is saved.
+    const checkpoint = wikipedia.checkpointPath(this._cacheDir, this.archive);
     this._startIndexing({
       file, what: 'Wikipedia articles', unit: 'volumes',
-      build: (opts) => wikipedia.buildIndex(this.archive, { ...opts, volumeSize: this._volumeSize ?? wikipedia.VOLUME_SIZE }),
+      build: (opts) => wikipedia.buildIndex(this.archive, { ...opts, volumeSize: this._volumeSize ?? wikipedia.VOLUME_SIZE, checkpoint }),
       save: wikipedia.saveIndex,
-      weights: { scan: [0, 0.2], sizes: [0.2, 0.7], sort: [0.9, 0.1], done: [1, 0] },
+      saved: () => wikipedia.removeCheckpoint(checkpoint),
+      // Full English Wikipedia (2026-10-06): scan 11½ min, sizes 16 min, sort 17 s.
+      weights: { scan: [0, 0.4], sizes: [0.4, 0.58], sort: [0.98, 0.02], done: [1, 0] },
     });
     return [];
   }

@@ -135,17 +135,32 @@ References: `wikipedia_en_100_2026-08.zim` ("Wikipedia 100", mwoffliner 1.17) an
 is the maxi flavour (with images). A Wikipedia is its own room of encyclopedia volumes:
 
 - **Articles** are the non-redirect HTML entries of the article namespace (`C`, or `A` in the
-  old scheme), except the main page. Disambiguation and "List of …" pages are articles too.
+  old scheme), except the main page and the pages below. Disambiguation and "List of …" pages
+  are articles too.
 - mwoffliner stores redirects to a *section* as tiny HTML pages (`<meta http-equiv="refresh">`,
   ~220 bytes), because ZIM redirects carry no fragment. They are redirects, not articles:
   Simple English has 285,214 articles plus 4,819 such pages, Wikipedia 100 has 101 plus 1,221.
+- Newer mwoffliner (the full English Wikipedia of 2026-08) also stores pages of other Wikipedia
+  namespaces: Category pages (~2.2 M of its 10.9 M HTML pages) and Portal pages (~90,000). Each
+  of its pages names its namespace in the settings near its start (`"wgNamespaceNumber":14`; 0 =
+  an article), which works in any language, unlike a title prefix ("Category:", "Kategorie:"):
+  pages whose number is not 0 are left out. So are its own pages, whose URLs start with `_` (a
+  category's list in parts, `_categories_partials_…`; no Wikipedia title starts with `_`), and
+  its placeholders for pages it could not download ("Oops. Page not found", using
+  `download_error_placeholder.css`). Older ZIMs have no namespace mark and no such pages.
 - **Volumes** are runs of 1,000 consecutive articles (`VOLUME_SIZE`) in the app's title order
   (`titleKey` + a default `Intl.Collator`, as `util/books.js` sorts book titles), numbered
   1–N. Each article starts on a fresh page, as its own chunk.
-- The index (`server/wikipedia.js`) reads no article text. It scans the directory, then reads each
-  candidate's HTML size, decompressing every cluster once in cluster order: that recognises the
-  redirect pages, and the sizes estimate article lengths. Then it sorts the titles and cuts the
-  volumes. It is built in the background on first open and cached as
+- The index (`server/wikipedia.js`) reads no article text. It scans the directory (the candidates
+  in typed arrays), then reads each candidate's HTML size, decompressing every cluster once in
+  cluster order, from the cluster and blob the scan found (`archive.clusterBlobs`, no directory
+  entry re-read), several clusters at once: each page's first 4 KB give away the redirect pages
+  and the pages of other namespaces, and the sizes estimate article lengths. Then it sorts the
+  titles and cuts the volumes. The size pass keeps its
+  progress in a checkpoint (`.cache/wikipedia-<uuid>.v<N>.part.json` / `.part.bin`: the sizes in
+  cluster order, appended as they finish), so a stopped build resumes it after a new scan; the
+  checkpoint fits only the same scan (count and a fingerprint) and is deleted once the index is
+  saved. It is built in the background on first open and cached as
   `.cache/wikipedia-<uuid>.v<INDEX_VERSION>.json`: the entry indices in title order and their
   HTML sizes (both base64 `Uint32Array`s), and each volume's first and last title. Wikipedia
   100 takes under a second, Simple English 56 s.

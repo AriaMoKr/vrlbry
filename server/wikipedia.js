@@ -7,7 +7,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { titleKey } from '../public/js/util/books.js';
 
-export const INDEX_VERSION = 3; // bump when the index format or what counts as an article changes
+export const INDEX_VERSION = 4; // bump when the index format or what counts as an article changes
 /** Articles per volume. */
 export const VOLUME_SIZE = 1000;
 /**
@@ -34,67 +34,255 @@ export function isWikipedia(meta) {
 const collator = new Intl.Collator();
 
 /**
- * Builds the article index: every non-redirect HTML entry of the article namespace except the
- * main page, in title order, and the volumes cut from it.
+ * Builds the article index: the HTML entries of the article namespace but redirects, the main
+ * page, mwoffliner's own pages and the pages that sizePages finds are not articles, in title
+ * order, and the volumes cut from it.
  * @param {import('./zim/reader.js').ZimArchive} archive
- * @param {{ volumeSize?: number, onProgress?: (stage: string, fraction: number) => void, log?: (msg: string) => void }} [opts]
+ * Stages: 'scan' (the directory), 'sizes' (sizePages: resumable with `checkpoint`), 'sort'.
+ * @param {{ volumeSize?: number, onProgress?: (stage: string, fraction: number) => void, log?: (msg: string) => void,
+ *   checkpoint?: string|null, checkpointEvery?: number, lanes?: number }} [opts] checkpoint: base path
+ *   (checkpointPath) where the sizes pass keeps its progress; lanes: clusters decompressed at once
  * @returns {Promise<{ version, uuid, ns, volumeSize, count, order: Uint32Array, sizes: Uint32Array, volumes: Array<[string, string]> }>}
  *   order: entry indices in title order; sizes: their HTML bytes; volumes: [first title, last title]
  */
-export async function buildIndex(archive, { volumeSize = VOLUME_SIZE, onProgress = () => {}, log = () => {} } = {}) {
+export async function buildIndex(archive, {
+  volumeSize = VOLUME_SIZE, onProgress = () => {}, log = () => {},
+  checkpoint = null, checkpointEvery = CHECKPOINT_EVERY, lanes = SIZE_LANES,
+} = {}) {
   const ns = archive.newNamespaceScheme ? 'C' : 'A';
   const start = await archive.lowerBound(ns, '');
   const end = await archive.lowerBound(String.fromCharCode(ns.charCodeAt(0) + 1), '');
   const main = await archive.getMainEntry().catch(() => null);
-  const candidates = [];
+  // 1. Scan: the candidates (non-redirect HTML entries but the main page), in typed arrays: the
+  // full English Wikipedia has over 10 million, and an object each cost about a gigabyte more.
+  let index = new Uint32Array(1 << 16);
+  let cluster = new Uint32Array(1 << 16);
+  let blob = new Uint32Array(1 << 16);
+  const titles = [];
+  let n = 0;
+  let own = 0;
   const total = Math.max(1, end - start);
   let seen = 0;
   for await (const e of archive.entries(start, end)) {
     if (++seen % 20000 === 0) onProgress('scan', seen / total);
     if (e.isRedirect || !e.mime || !HTML_MIME.test(e.mime)) continue;
     if (main && e.index === main.index) continue;
-    candidates.push({ index: e.index, title: e.title || e.url, cluster: e.cluster, blob: e.blob });
-  }
-  onProgress('scan', 1);
-  // mwoffliner stores redirects to a section as tiny HTML pages (<meta http-equiv="refresh">)
-  // rather than ZIM redirects; they are redirects too. Their size gives them away, which needs
-  // each page's cluster decompressed: in cluster order, every cluster is decompressed once.
-  candidates.sort((a, b) => a.cluster - b.cluster || a.blob - b.blob);
-  const entries = [];
-  const titles = [];
-  const bytes = [];
-  let redirectPages = 0;
-  for (let i = 0; i < candidates.length; i++) {
-    if (i % 2000 === 0) onProgress('sizes', i / candidates.length);
-    const c = candidates[i];
-    const size = await htmlSize(archive, c.index);
-    if (size === REDIRECT) {
-      redirectPages++;
+    if (e.url.startsWith('_')) { // mwoffliner's own pages (a category's list in parts); no title starts with "_"
+      own++;
       continue;
     }
-    entries.push(c.index);
-    titles.push(c.title);
-    bytes.push(size);
+    if (n === index.length) {
+      index = grown(index);
+      cluster = grown(cluster);
+      blob = grown(blob);
+    }
+    index[n] = e.index;
+    cluster[n] = e.cluster ?? NO_CLUSTER;
+    blob[n] = e.blob ?? 0;
+    titles.push(e.title || e.url);
+    n++;
   }
-  onProgress('sizes', 1);
-  log(` ${entries.length} articles (${redirectPages} redirect pages skipped); sorting titles…`);
-  const keys = titles.map(titleKey);
-  const perm = new Uint32Array(entries.length);
-  for (let i = 0; i < perm.length; i++) perm[i] = i;
-  perm.sort((a, b) => collator.compare(keys[a], keys[b]) || collator.compare(titles[a], titles[b]) || entries[a] - entries[b]);
+  onProgress('scan', 1);
+  // 2. Sizes (sizePages): they estimate article lengths, and each page's first bytes give away
+  // mwoffliner's redirect pages and the pages that are not articles.
+  const sizes = await sizePages(archive, { n, index, cluster, blob, onProgress, log, checkpoint, checkpointEvery, lanes });
+  // 3. The articles in title order (ties: the entry index, so the order is always the same).
+  let articles = 0;
+  let redirects = 0;
+  for (let i = 0; i < n; i++) {
+    if (sizes[i] === REDIRECT_PAGE) redirects++;
+    else if (sizes[i] !== OTHER_PAGE) articles++;
+  }
+  const pick = new Uint32Array(articles);
+  for (let i = 0, k = 0; i < n; i++) if (sizes[i] < OTHER_PAGE) pick[k++] = i;
+  log(` ${articles} articles (skipped: ${redirects} redirect pages, ${n - articles - redirects} pages of other namespaces`
+    + ` or not downloaded, ${own} of mwoffliner's own); sorting titles…`);
+  const keys = new Array(articles);
+  for (let j = 0; j < articles; j++) keys[j] = titleKey(titles[pick[j]]);
+  const perm = new Uint32Array(articles);
+  for (let j = 0; j < articles; j++) perm[j] = j;
+  perm.sort((a, b) => collator.compare(keys[a], keys[b]) || collator.compare(titles[pick[a]], titles[pick[b]])
+    || index[pick[a]] - index[pick[b]]);
   onProgress('sort', 1);
-  const order = new Uint32Array(perm.length);
-  const sizes = new Uint32Array(perm.length);
-  for (let i = 0; i < perm.length; i++) {
-    order[i] = entries[perm[i]];
-    sizes[i] = Math.min(0xffffffff, bytes[perm[i]] || 0);
+  const order = new Uint32Array(articles);
+  const articleSizes = new Uint32Array(articles);
+  for (let j = 0; j < articles; j++) {
+    order[j] = index[pick[perm[j]]];
+    articleSizes[j] = sizes[pick[perm[j]]];
   }
   const volumes = [];
-  for (let from = 0; from < perm.length; from += volumeSize) {
-    const to = Math.min(perm.length, from + volumeSize);
-    volumes.push([titles[perm[from]], titles[perm[to - 1]]]);
+  for (let from = 0; from < articles; from += volumeSize) {
+    const to = Math.min(articles, from + volumeSize);
+    volumes.push([titles[pick[perm[from]]], titles[pick[perm[to - 1]]]]);
   }
-  return { version: INDEX_VERSION, uuid: archive.header.uuid, ns, volumeSize, count: order.length, order, sizes, volumes };
+  return { version: INDEX_VERSION, uuid: archive.header.uuid, ns, volumeSize, count: articles, order, sizes: articleSizes, volumes };
+}
+
+/** Clusters decompressed at once while sizing pages (zstd runs on the libuv thread pool). */
+const SIZE_LANES = 6;
+/** Finished page sizes are appended to the checkpoint whenever this many more are done. */
+const CHECKPOINT_EVERY = 100000;
+const CHECKPOINT_VERSION = 1;
+/** A page's size slot when it is a mwoffliner redirect page (in sizePages and its checkpoint). */
+const REDIRECT_PAGE = 0xffffffff;
+/** … when it is not an article (pageKind). Real sizes stay below both. */
+const OTHER_PAGE = 0xfffffffe;
+/** The cluster of an entry without content: sized 0. */
+const NO_CLUSTER = 0xffffffff;
+
+const grown = (a) => {
+  const b = new Uint32Array(a.length * 2);
+  b.set(a);
+  return b;
+};
+
+/**
+ * The HTML size of every candidate (by scan position), or what its first bytes say it is instead
+ * (pageKind). In cluster order, so that each cluster is decompressed once, using the scan's
+ * cluster and blob (re-reading each entry made the full English Wikipedia take ~7 hours), and
+ * `lanes` clusters at once. With `checkpoint` (a base path) the sizes done are appended to
+ * <checkpoint>.bin as they finish, so an interrupted build resumes here after a new scan.
+ */
+async function sizePages(archive, { n, index, cluster, blob, onProgress, log, checkpoint, checkpointEvery, lanes }) {
+  const byCluster = new Uint32Array(n);
+  for (let i = 0; i < n; i++) byCluster[i] = i;
+  byCluster.sort((a, b) => cluster[a] - cluster[b] || blob[a] - blob[b]);
+  const sizes = new Uint32Array(n);
+  const ck = checkpoint ? await openCheckpoint(checkpoint, { n, fingerprint: scanFingerprint(n, byCluster, index) }) : null;
+  const done = ck?.done ?? 0;
+  for (let p = 0; p < done; p++) sizes[byCluster[p]] = ck.prior[p];
+  if (done) log(` resuming: ${done} of ${n} page sizes from the checkpoint`);
+  const finished = new Uint8Array(n);
+  finished.fill(1, 0, done);
+  let next = done; // next position (in cluster order) to hand out
+  let completed = done;
+  let reported = done;
+  let flushed = done; // positions before this are in the checkpoint
+  let writing = Promise.resolve();
+  const flush = (all) => {
+    let to = flushed;
+    while (to < n && finished[to]) to++;
+    if (to === flushed || (!all && to - flushed < checkpointEvery)) return;
+    const part = new Uint32Array(to - flushed);
+    for (let p = flushed; p < to; p++) part[p - flushed] = sizes[byCluster[p]];
+    flushed = to;
+    writing = writing.then(() => ck.append(part));
+  };
+  let failure = null; // the first lane's error stops the others
+  const lane = async () => {
+    while (!failure && next < n) {
+      // A run of pages in one cluster (claimed before any await, so lanes never share one).
+      const from = next;
+      const c = cluster[byCluster[from]];
+      let to = from + 1;
+      while (to < n && cluster[byCluster[to]] === c) to++;
+      next = to;
+      if (c !== NO_CLUSTER) {
+        const blobs = [];
+        for (let p = from; p < to; p++) blobs.push(blob[byCluster[p]]);
+        const out = await archive.clusterBlobs(c, blobs, { head: PAGE_HEAD, cache: false });
+        for (let k = 0; k < out.length; k++) sizes[byCluster[from + k]] = pageKind(out[k].size, out[k].data);
+      }
+      finished.fill(1, from, to);
+      completed += to - from;
+      if (completed - reported >= 2000) {
+        reported = completed;
+        onProgress('sizes', completed / n);
+      }
+      if (ck) flush(false);
+    }
+  };
+  // Every lane settles before this returns (no work left running after a failure), and what is
+  // finished is kept for the next build either way.
+  await Promise.all(Array.from({ length: lanes }, () => lane().catch((err) => {
+    failure ??= err;
+  })));
+  if (ck) {
+    flush(true);
+    await writing;
+  }
+  if (failure) throw failure;
+  onProgress('sizes', 1);
+  return sizes;
+}
+
+/** A page whose content says it is a mwoffliner redirect page. */
+const REFRESH = /<meta[^>]+http-equiv=["']?refresh/i;
+/** Pages at most this big are checked for being a redirect page (real articles are far bigger). */
+const REDIRECT_PAGE_MAX = 1024;
+/** Bytes read from the start of each page for pageKind (mwoffliner's marks are within ~1.3 KB). */
+const PAGE_HEAD = 4096;
+const NAMESPACE = Buffer.from('"wgNamespaceNumber":');
+const PLACEHOLDER = Buffer.from('download_error_placeholder');
+
+/**
+ * A page's size, or REDIRECT_PAGE for a mwoffliner redirect page (a redirect to a section stored
+ * as a tiny page with a meta refresh), or OTHER_PAGE for a page of another Wikipedia namespace
+ * (categories, portals: newer mwoffliner includes them, and writes every page's namespace number
+ * into its settings, `"wgNamespaceNumber":14`) or a placeholder for a page it could not download
+ * ("Oops. Page not found"). Only the content gives these away. A page without the namespace mark
+ * (older ZIMs, which have no such pages) counts as an article.
+ * @param {number} size
+ * @param {Buffer|null} head the page's first PAGE_HEAD bytes
+ */
+function pageKind(size, head) {
+  if (!head) return Math.min(size, OTHER_PAGE - 1);
+  if (size <= REDIRECT_PAGE_MAX && REFRESH.test(head.toString('utf8'))) return REDIRECT_PAGE;
+  const at = head.indexOf(NAMESPACE);
+  if (at >= 0) {
+    const ns = /^\s*(-?\d+)/.exec(head.toString('latin1', at + NAMESPACE.length, at + NAMESPACE.length + 12));
+    if (ns && ns[1] !== '0') return OTHER_PAGE;
+  }
+  if (head.indexOf(PLACEHOLDER) >= 0) return OTHER_PAGE;
+  return Math.min(size, OTHER_PAGE - 1);
+}
+
+/** Identifies a scan's candidates in cluster order (a checkpoint only fits the same scan). */
+function scanFingerprint(n, byCluster, index) {
+  let h = 2166136261;
+  for (let p = 0; p < n; p++) {
+    h ^= index[byCluster[p]];
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return h.toString(16);
+}
+
+/** Where a Wikipedia index being built keeps its progress: <base>.json (what for) and <base>.bin (the sizes). */
+export function checkpointPath(cacheDir, archive) {
+  return path.join(cacheDir, `wikipedia-${archive.header.uuid}.v${INDEX_VERSION}.part`);
+}
+
+/**
+ * Opens a checkpoint: the sizes it holds when it was made for this scan (count and fingerprint),
+ * else a fresh one. A partly written last size is cut off.
+ */
+async function openCheckpoint(base, { n, fingerprint }) {
+  const meta = `${base}.json`;
+  const bin = `${base}.bin`;
+  let done = 0;
+  let prior = null;
+  try {
+    const m = JSON.parse(await fs.readFile(meta, 'utf8'));
+    if (m.version === CHECKPOINT_VERSION && m.count === n && m.fingerprint === fingerprint) {
+      const buf = await fs.readFile(bin);
+      done = Math.min(n, Math.floor(buf.length / 4));
+      prior = new Uint32Array(new Uint8Array(buf.subarray(0, done * 4)).buffer); // copied: aligned
+      if (buf.length !== done * 4) await fs.truncate(bin, done * 4);
+    }
+  } catch {
+    done = 0; // none yet, or unreadable: start afresh
+  }
+  if (!done) {
+    await fs.mkdir(path.dirname(base), { recursive: true });
+    await fs.writeFile(meta, JSON.stringify({ version: CHECKPOINT_VERSION, count: n, fingerprint }));
+    await fs.writeFile(bin, Buffer.alloc(0));
+  }
+  return { done, prior, append: (u32) => fs.appendFile(bin, Buffer.from(u32.buffer, u32.byteOffset, u32.byteLength)) };
+}
+
+/** Deletes a checkpoint (once the index it was for is saved). */
+export async function removeCheckpoint(base) {
+  await Promise.all([fs.rm(`${base}.json`, { force: true }), fs.rm(`${base}.bin`, { force: true })]);
 }
 
 /** Most results a search returns. */
@@ -192,25 +380,6 @@ export async function searchRedirects(archive, idx, query, limit = 12) {
     }
   }
   return out;
-}
-
-/** Pages at most this big are checked for being a redirect page (real articles are far bigger). */
-const REDIRECT_PAGE_MAX = 1024;
-
-const REDIRECT = -1;
-
-/** An HTML entry's size in bytes, or REDIRECT for a mwoffliner redirect page (a tiny page with a meta refresh). */
-async function htmlSize(archive, index) {
-  const entry = await archive.getEntryByIndex(index);
-  const size = await archive.getBlobSize(entry);
-  if (size === null || size > REDIRECT_PAGE_MAX) return size ?? 0;
-  const content = await archive.getContent(entry);
-  return content && /<meta[^>]+http-equiv=["']?refresh/i.test(content.data.toString('utf8')) ? REDIRECT : size;
-}
-
-/** True when an HTML entry is a mwoffliner redirect page. */
-export async function isRedirectPage(archive, index) {
-  return (await htmlSize(archive, index)) === REDIRECT;
 }
 
 export function indexPath(cacheDir, archive) {

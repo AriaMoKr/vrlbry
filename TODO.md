@@ -20,6 +20,7 @@
   - **Articles = every non-redirect HTML entry** in the main namespace, except the ZIM's main
     page. That includes disambiguation pages (~4 %) and "List of …" pages. Skip images, CSS and
     scripts. Redirects stay out of the volumes, but article search could use them as aliases.
+    Newer ZIMs also hold Category and Portal pages, which are left out (2026-10-06, SPEC §2.5).
   - **The look:**
     - One uniform binding for the whole set (e.g. deep blue cloth with gilt bands).
     - Uniform size: ~30 cm tall, 5 cm thick (~105 volumes per bookcase; English ≈ 65
@@ -30,9 +31,16 @@
       number and range, with the ZIM's globe illustration as an emblem.
     - Volumes are numbered 1–N in title order. Bookcase plates show their first and last
       article ("Aa – Ac"), and the section sign reads "Wikipedia (English) · 6,800 volumes".
-- **Wikipedia: the full English maxi** (~6.8 M articles, ~119 GB). At the top-1M rate its index
-  would take roughly 1¾ hours: consider speeding up the size pass (e.g. decompressing clusters in
-  worker threads), and check the memory of the 6.8 M-title sort.
+- **Wikipedia: the full English maxi** (`wikipedia_en_all_maxi_2026-08`, 119 GB, 30 M entries in
+  293,473 clusters, 10.9 M HTML pages). Its first index build ran at ~400 pages/s in the size pass
+  (~7 hours): each page re-read its directory entry (~1 ms) while a cluster's decompression
+  (~6 ms) serves ~36 pages. Now the pass uses the scan's cluster/blob, decompresses several
+  clusters at once, and resumes from a checkpoint (2026-10-06): ~28 min on this PC (scan 11½ min,
+  sizes 16 min at ~10,000 pages/s, sort 17 s), at most ~1.8 GB in all (heap ~1.1 GB in the sort);
+  a run stopped 4 % into the sizes resumed there. The cached index is ~100 MB. Its first count,
+  9.67 M articles, included ~2.2 M Category and ~90,000 Portal pages, which are now left out
+  (~7.3 M articles expected, ~7,300 volumes, ~70 bookcases). Next: open it in the app, and try
+  its room on the Quest.
 - **Wikipedia: follow links** (later). Tapping a link in an article goes to that article, taking
   its volume off the shelf if needed. The reader cannot follow links today.
 - **Garbage collection pauses** are now the main source of dropped frames on a Quest 3. The

@@ -552,6 +552,38 @@ export class ZimArchive {
   }
 
   /**
+   * The sizes of some blobs of one cluster, and the first `head` bytes of each (all of a smaller
+   * one), from one decompression and without directory entries: for passes over a whole archive
+   * in cluster order (the Wikipedia index), where re-reading each entry cost more than the
+   * decompression. `cache: false` leaves the cluster cache alone (each cluster is used once).
+   * Content of a compressed cluster is a view into its data: use it before the next call.
+   * @param {number} clusterIndex
+   * @param {number[]} blobs
+   * @param {{ head?: number, cache?: boolean }} [opts] head 0: sizes only (data null)
+   * @returns {Promise<Array<{ size: number, data: Buffer|null }>>}
+   */
+  async clusterBlobs(clusterIndex, blobs, { head = 0, cache = true } = {}) {
+    const info = await this._getClusterInfo(clusterIndex);
+    if (!info.compressed) {
+      return Promise.all(blobs.map(async (blob) => {
+        const [start, end] = await this._uncompressedBlobRange(info, blob);
+        const n = Math.min(end - start, head);
+        return { size: end - start, data: !head ? null : n > 0 ? await this._read(start, n) : Buffer.alloc(0) };
+      }));
+    }
+    let cluster = this._clusters.get(clusterIndex);
+    if (!cluster && cache) cluster = await this._loadCluster(clusterIndex, info);
+    if (!cluster) {
+      const data = await this._decompressCluster(info);
+      cluster = { data, extended: info.extended, blobCount: this._validateOffsets(data, info.extended, clusterIndex) };
+    }
+    return blobs.map((blob) => {
+      const [start, end] = this._blobRange(cluster, clusterIndex, blob);
+      return { size: end - start, data: head ? cluster.data.subarray(start, Math.min(end, start + head)) : null };
+    });
+  }
+
+  /**
    * All metadata ('M' namespace) entries with a text/* MIME type, decoded as UTF-8.
    * @returns {Promise<Record<string, string>>} a fresh object on every call
    */
