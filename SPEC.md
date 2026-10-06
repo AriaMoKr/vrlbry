@@ -960,7 +960,8 @@ States: `browse` → `inspect` → `read` (and back).
   'demo'`, "Demo set") shelves the demo set's libraries together whenever at least one is present:
   those whose id is an entry of `DEMO_LIBRARIES` (`gutenberg_en_lcc-p_`,
   `wikipedia_en_mathematics_mini_`, `wikipedia_en_physics_mini_`, `wikipedia_en_chemistry_mini_`,
-  `wikipedia_en_100_`, `wikipedia_en_medicine_mini_`) followed by a date (`YYYY-MM`), so a newer
+  `wikipedia_en_100_`, `wikipedia_en_medicine_mini_`, `wikipedia_en_golf_maxi_`) followed by a
+  date (`YYYY-MM`), so a newer
   edition still counts but another flavour (`wikipedia_en_100_mini_…`) does not. Both are *group
   places* (`groupPlaces`), listed first on the kiosk's Rooms tab. That tab lists all places in one
   scrolling list (`places`; ▲/▼, the mouse wheel over it), scrolled to the place shown and kept

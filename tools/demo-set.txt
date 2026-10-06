@@ -4,3 +4,4 @@ https://download.kiwix.org/zim/wikipedia/wikipedia_en_physics_mini_2026-07.zim
 https://download.kiwix.org/zim/wikipedia/wikipedia_en_chemistry_mini_2026-07.zim
 https://download.kiwix.org/zim/wikipedia/wikipedia_en_100_2026-08.zim
 https://download.kiwix.org/zim/wikipedia/wikipedia_en_medicine_mini_2026-04.zim
+https://download.kiwix.org/zim/wikipedia/wikipedia_en_golf_maxi_2026-07.zim
