@@ -64,60 +64,51 @@
     are in the scene already).
   - *From VR:* nothing can be pasted in a headset; with the Node server, a kiosk button could send
     the report (POST) to be saved as a file on the PC. The static site has nowhere to send it.
-- **Possible: run without a server (GitHub Pages).** Reviewed 2026-10-05, not decided.
-  - *Limits:* a Pages site is at most 1 GB (the source repo should be too), files at most 100 MB
-    (git), 100 GB/month bandwidth (soft). Pages serves range requests (206, CORS `*`) and HTTPS,
+- **GitHub Pages: the online version** (https://ariamokr.github.io/vrlbry/). Steps 0 and 1 are
+  done; step 2, reading ZIMs in the browser, is possible but not decided.
+  - *Limits:* the published site is at most 1 GB (plan with 1,000 MB: GitHub does not say which).
+    The workflow downloads the ZIMs and never commits them, so git's 100 MB file limit does not
+    apply. 100 GB/month bandwidth (soft). Pages serves range requests (206, CORS `*`) and HTTPS,
     so WebXR works on the Quest without a self-signed certificate.
-  - *Hostable ZIMs* (under 100 MB): Gutenberg LCC P, PB, PD, PF, PH, PK, PM (13–80 MB) and small
-    Wikipedia subsets (Ray Charles, knots, chemistry/maths/physics minis), ~450 MB together.
-    Larger ones would need splitting into parts under 100 MB.
-  - *Or read Kiwix's copies directly:* `mirror.download.kiwix.org` allows cross-origin range
-    reads (CORS `*`, Range in the preflight), so the client can open any catalogue ZIM, reading
-    only what it needs. Not `download.kiwix.org`: it redirects to mirrors without CORS.
-  - *Local ZIMs:* a file picker (and drag and drop on desktop); `File.slice` reads parts of even
-    100 GB files. On the Quest, pick before entering VR; access probably lasts the session.
-  - *How:* the library layer (ZIM reader, decompression, HTML conversion, chunking) in a Web
-    Worker in the page, over a byte source (local File, HTTP range, or today's server), behind the
-    same API the client uses now. Port: fs → byte source, Buffer → Uint8Array, zstd → a small JS
-    decoder (e.g. fzstd), EPUB/zlib → DecompressionStream, htmlparser2 from a CDN (no build
-    step). Images through a service worker or blob URLs. The Wikipedia/Wikisource indexes need a
-    full pass: publish the prebuilt ones (`.cache/*.json`, 10.7 MB for the 1M Wikipedia) or index
-    local files in the browser and cache the result.
-  - *Phases:* local ZIMs (Gutenberg, generic) → remote ZIMs from a curated list → Wikipedia and
-    Wikisource with prebuilt indexes. The Node server keeps working throughout.
-  - *Step 0 (prepared 2026-10-05):* the client builds as a static site without books
-    (`npm run build:pages` → `dist/`, 3 MB) and `.github/workflows/pages.yml` publishes it on
-    pushes to `main`, at https://ariamokr.github.io/vrlbry/ once Pages' source is set to GitHub
-    Actions.
-  - *Step 1 (done):* the demo set is pre-rendered into the site (`build:pages -- --zims`):
-    every book list, chunk and image as a static file (~605 MB, 176,000 files, ~6 min to build
-    here, with Physics, Chemistry, Wikipedia 100, Medicine and Golf), with Wikipedia title search in the
-    browser. No redirect aliases (the server searches those in the ZIM's URL index), and nothing
-    beyond the files the build saved: reading ZIMs in the browser is the next step.
-  - *Demo set* (chosen 2026-10-05, 93 MB together, both under the 100 MB file limit):
-    - Gutenberg LCC-P, *Language and literature* (19 books, 37 MB):
-      https://mirror.download.kiwix.org/zim/gutenberg/gutenberg_en_lcc-p_2026-03.zim
-    - Wikipedia Mathematics, mini (~41,000 article introductions, 56 MB):
-      https://mirror.download.kiwix.org/zim/wikipedia/wikipedia_en_mathematics_mini_2026-06.zim
-    Both read fine from that mirror over range requests (metadata and the Gutenberg book index:
-    ~20–30 requests, under 2 MB each). Use `download.kiwix.org/...` for plain downloads. With
-    both in the folder, the kiosk's Rooms tab has a *Demo set* place shelving just them (19 books
-    and 24 volumes of 23,326 articles: two bookcases).
-    - Added 2026-10-05, since the ZIMs are downloaded by the workflow, not kept in git (the
-      limit is the site's 1 GB): Wikipedia Physics, mini (22 volumes, 21,811 articles, 54 MB;
-      59 MB on the site) and Chemistry, mini (10 volumes, 9,255 articles, 24 MB; 19 MB):
-      https://mirror.download.kiwix.org/zim/wikipedia/wikipedia_en_physics_mini_2026-07.zim
-      https://mirror.download.kiwix.org/zim/wikipedia/wikipedia_en_chemistry_mini_2026-07.zim
-      Also Wikipedia 100 (101 full articles with pictures, one volume; 318 MB, but only 49 MB on
-      the site: the articles use 3,600 of its images):
-      https://mirror.download.kiwix.org/zim/wikipedia/wikipedia_en_100_2026-08.zim
-      And Medicine, mini (72 volumes, 71,519 articles, 155 MB; 121 MB on the site; 2 min to
-      pre-render since articles are converted in storage order, 30 min before):
-      https://mirror.download.kiwix.org/zim/wikipedia/wikipedia_en_medicine_mini_2026-04.zim
-      And Golf, with pictures (13 volumes, 12,160 articles, 138 MB; 216 MB on the site):
-      https://mirror.download.kiwix.org/zim/wikipedia/wikipedia_en_golf_maxi_2026-07.zim Converted sizes so far: Gutenberg ~0.6× the ZIM (its EPUB
-      copies are not used), Wikipedia minis 0.8–2.1× (Mathematics has 18,000 formula images),
-      Wikipedia maxis 0.15× (Wikipedia 100) to 1.6× (Golf).
-    - Measured but not added (MB on the site): Gutenberg PA 279, PG 168, PL 69, PK 62, PB 29,
-      PH 28, PM 22, PF 11, PD 5; Wikipedia maxis Climate change 228, Nollywood 26, Knots 24,
-      Ray Charles 3; Climate change mini 6. About 350 MB is left with Golf in.
+  - *Step 0 (done 2026-10-05):* the client builds as a static site (`npm run build:pages` →
+    `dist/`) and `.github/workflows/pages.yml` publishes it on pushes to `main`.
+  - *Step 1 (done 2026-10-05):* the demo set is pre-rendered into the site (`build:pages --
+    --zims`): every book list, chunk and image as a static file, ~605 MB in 176,000 files (~6
+    min to build here, ~5 min a deploy), with Wikipedia title search in the browser. No redirect
+    aliases (the server searches those in the ZIM's URL index), and only the demo set's ZIMs.
+  - *The demo set:* the ZIMs in `tools/demo-set.txt` (what the workflow downloads), which the Demo
+    set place (`DEMO_LIBRARIES` in `rooms.js`) shelves together; a test checks that the two name
+    the same ZIMs. ZIM size, then size on the site:
+    - Gutenberg LCC-P, Language and literature (19 books): 37 MB, 22 MB.
+    - Wikipedia Mathematics, introductions (24 volumes, 23,326 articles): 56 MB, 117 MB (18,000
+      formula images).
+    - Wikipedia Physics, introductions (22 volumes, 21,811 articles): 54 MB, 59 MB.
+    - Wikipedia Chemistry, introductions (10 volumes, 9,255 articles): 24 MB, 19 MB.
+    - WikiMed Medicine, introductions (72 volumes, 71,519 articles): 155 MB, 121 MB (2 min to
+      pre-render since articles are converted in storage order, 30 min before).
+    - Wikipedia 100 (one volume of 101 full articles with pictures): 318 MB, 49 MB (the articles
+      use 3,600 of its images).
+    - Wikipedia Golf, with pictures (13 volumes, 12,160 articles): 138 MB, 216 MB.
+    Converted sizes: Gutenberg ~0.6× the ZIM (its EPUB copies are not used), Wikipedia
+    introductions 0.8–2.1×, Wikipedia with pictures 0.15× (Wikipedia 100) to 1.6× (Golf).
+  - *Measured, not added* (MB on the site; about 350 MB is left): Gutenberg PA 279, PG 168,
+    PL 69, PK 62, PB 29, PH 28, PM 22, PF 11, PD 5; Wikipedia with pictures: Climate change 228,
+    Nollywood 26, Knots 24, Ray Charles 3; Climate change, introductions 6.
+  - *Step 2 (possible): read ZIMs in the browser*, so the online version needs no pre-rendering
+    and no longer has the 1 GB limit:
+    - *Kiwix's copies:* `mirror.download.kiwix.org` allows cross-origin range reads (CORS `*`,
+      Range in the preflight), so the client can open any catalogue ZIM, reading only what it
+      needs (LCC-P and Mathematics read fine: ~20–30 requests, under 2 MB each, for the metadata
+      and the Gutenberg book index). Not `download.kiwix.org`: it redirects to mirrors without
+      CORS (use it for plain downloads).
+    - *Local ZIMs:* a file picker (and drag and drop on desktop); `File.slice` reads parts of
+      even 100 GB files. On the Quest, pick before entering VR; access probably lasts the session.
+    - *How:* the library layer (ZIM reader, decompression, HTML conversion, chunking) in a Web
+      Worker in the page, over a byte source (local File, HTTP range, or today's server), behind
+      the same API the client uses now. Port: fs → byte source, Buffer → Uint8Array, zstd → a
+      small JS decoder (e.g. fzstd), EPUB/zlib → DecompressionStream, htmlparser2 from a CDN (no
+      build step). Images through a service worker or blob URLs. The Wikipedia/Wikisource indexes
+      need a full pass: publish the prebuilt ones (`.cache/*.json`, 10.7 MB for the 1M Wikipedia)
+      or index local files in the browser and cache the result.
+    - *Phases:* local ZIMs (Gutenberg, generic) → remote ZIMs from a curated list → Wikipedia and
+      Wikisource with prebuilt indexes. The Node server keeps working throughout.

@@ -32,7 +32,9 @@ export const isDemoLibrary = (library) => DEMO_LIBRARIES.some((name) => library.
 /** Places that shelve several libraries together: which libraries each takes, and when it exists. */
 const GROUPS = [
   { place: DEMO_PLACE, includes: isDemoLibrary, exists: (libraries) => libraries.some(isDemoLibrary) },
-  { place: ALL_PLACE, includes: () => true, exists: (libraries) => libraries.length > 1 },
+  // All libraries: not when they are all the demo set's (as on the GitHub Pages site), where it
+  // would be the Demo set again.
+  { place: ALL_PLACE, includes: () => true, exists: (libraries) => libraries.length > 1 && !libraries.every(isDemoLibrary) },
 ];
 const groupOf = (place) => GROUPS.find((g) => g.place === place);
 
@@ -134,6 +136,8 @@ export function sameRoom(a, b) {
  * @returns {object|null} library descriptor
  */
 export function currentPlace(libraries, booksByLib, settings) {
+  // All libraries, where it would be the demo set again (see GROUPS), is the demo set.
+  if (settings.place === ALL_PLACE.id && libraries.length > 1 && libraries.every(isDemoLibrary)) settings.place = DEMO_PLACE.id;
   const group = GROUPS.find((g) => g.place.id === settings.place);
   if (group?.exists(libraries)) return group.place;
   let lib = libraries.find((l) => l.id === settings.place);

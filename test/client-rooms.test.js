@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { describe, it } from 'node:test';
 import {
-  ROOM_CAP, ALL_PLACE, DEMO_PLACE, groupPlaces, isDemoLibrary, placeBookCount, isFaceted, facetsOf, inRoom, defaultRoom, roomFor, roomLabel, sameRoom, normRoom, shelfCollections, collectionsFor,
+  ROOM_CAP, ALL_PLACE, DEMO_PLACE, DEMO_LIBRARIES, groupPlaces, isDemoLibrary, placeBookCount, isFaceted, facetsOf, inRoom, defaultRoom, roomFor, roomLabel, sameRoom, normRoom, shelfCollections, collectionsFor,
   currentPlace, placeFor,
 } from '../public/js/rooms.js';
 
@@ -143,6 +144,30 @@ describe('rooms', () => {
     // With a single library there is no such place.
     assert.equal(currentPlace([pg], books, settings).id, 'pg');
     assert.equal(settings.place, 'pg');
+  });
+
+  it('agrees with the GitHub Pages build on what the demo set is', () => {
+    // tools/demo-set.txt is what the Pages workflow downloads; DEMO_LIBRARIES is what the Demo
+    // set place shelves together. Each must name the other's ZIMs.
+    const urls = fs.readFileSync(new URL('../tools/demo-set.txt', import.meta.url), 'utf8').split(/\r?\n/).filter((l) => l.trim());
+    const ids = urls.map((u) => u.trim().split('/').pop().replace(/\.zim$/, ''));
+    for (const id of ids) assert.equal(isDemoLibrary({ id }), true, `${id} is downloaded for the site but not in DEMO_LIBRARIES`);
+    for (const name of DEMO_LIBRARIES) {
+      assert.ok(ids.some((id) => isDemoLibrary({ id }) && id.startsWith(name)), `${name} is in DEMO_LIBRARIES but not in tools/demo-set.txt`);
+    }
+  });
+
+  it('has no all-libraries place where it would be the demo set again', () => {
+    const demo = [
+      { id: 'gutenberg_en_lcc-p_2026-03', kind: 'gutenberg', title: 'P' },
+      { id: 'wikipedia_en_100_2026-08', kind: 'wikipedia', title: '100' },
+    ];
+    assert.deepEqual(groupPlaces(demo), [DEMO_PLACE]);
+    const books = { [demo[0].id]: [{ id: 'b' }], [demo[1].id]: [{ id: 'v1' }] };
+    const settings = { place: ALL_PLACE.id };
+    assert.equal(currentPlace(demo, books, settings), DEMO_PLACE, 'a saved all-libraries place opens the demo set');
+    assert.equal(settings.place, DEMO_PLACE.id);
+    assert.deepEqual(groupPlaces([...demo, { id: 'mine', kind: 'generic', title: 'Mine' }]), [DEMO_PLACE, ALL_PLACE]);
   });
 
   it('shelves the demo set together when its libraries are here', () => {

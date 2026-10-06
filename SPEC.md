@@ -955,7 +955,9 @@ States: `browse` → `inspect` → `read` (and back).
   (`ordered`: never re-sorted, bookcase plates from the first and last article). It is never
   split by filters, and its sign reads "N volumes · M articles". With more than one library
   there is one more place, `ALL_PLACE`
-  (`settings.place = '*'`), that shelves every library in one hall, with no filters. Wikipedia
+  (`settings.place = '*'`), that shelves every library in one hall, with no filters (not when every
+  library is the demo set's, as on the GitHub Pages site, where it would be the Demo set again: a
+  saved `'*'` opens the Demo set). Wikipedia
   volumes keep their own order and sign there too. Likewise `DEMO_PLACE` (`settings.place =
   'demo'`, "Demo set") shelves the demo set's libraries together whenever at least one is present:
   those whose id is an entry of `DEMO_LIBRARIES` (`gutenberg_en_lcc-p_`,
