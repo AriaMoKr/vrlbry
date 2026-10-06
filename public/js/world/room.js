@@ -468,11 +468,12 @@ export function createHall({ minX, maxX, minZ, maxZ, kiosk }) {
   addWindows(group, windows);
   commonLights(group);
   const lights = [];
-  const n = Math.max(1, Math.min(3, Math.round(d / 8)));
-  // Exactly two point lights in every room shape (here: the first two chandeliers, or one plus a
-  // lamp-like fill): each light costs per-pixel shading on a Quest, and a different light count
-  // would make three.js recompile every shader when switching rooms.
-  for (let i = 0; i < n; i++) lights.push(makeChandelier(group, cx, WALL_H - 0.6, maxZ - (i + 0.5) * (d / n), 0.6, { light: i < 2 }));
+  // At most two chandeliers, each with its own light: exactly two point lights in every room shape
+  // (here: the two chandeliers, or one plus a lamp-like fill), since each light costs per-pixel
+  // shading on a Quest and a different light count would make three.js recompile every shader when
+  // switching rooms. A third chandelier, which a long hall had, had no light and looked unlit.
+  const n = Math.max(1, Math.min(2, Math.round(d / 8)));
+  for (let i = 0; i < n; i++) lights.push(makeChandelier(group, cx, WALL_H - 0.6, maxZ - (i + 0.5) * (d / n), 0.6));
   if (n === 1) {
     const fill = new THREE.PointLight(0xffb468, 2.2, 5, 1.6);
     fill.position.set(kiosk ? kiosk.position.x : cx, 1.6, kiosk ? kiosk.position.z : maxZ - 2);

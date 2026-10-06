@@ -100,11 +100,17 @@ export class Panel {
   clear() {
     this.elements = [];
     this.hover = null;
+    // A scroll bar being dragged carries on with the list of the same id that replaces it.
+    if (this._drag) this._drag.id = this._drag.el.id;
     this.markDirty();
   }
 
   /** Adds an element; returns it. Elements are drawn in insertion order. */
   add(el) {
+    if (this._drag?.id && this._drag.id === el.id) {
+      this._drag.el = el;
+      this._drag.id = null;
+    }
     this.elements.push(el);
     this.markDirty();
     return el;
@@ -298,13 +304,11 @@ export class Panel {
         g.textAlign = 'center';
         g.fillText(label, bx + barW / 2, by + barW / 2 + 1);
       }
-      const trackY = el.y + barW + 8;
-      const trackH = el.h - 2 * barW - 16;
-      const frac = visible / items.length;
-      const th = Math.max(30, trackH * frac);
-      const ty = trackY + (trackH - th) * (el.scroll / Math.max(1, items.length - visible));
-      roundRect(g, bx + barW / 2 - 6, ty, 12, th, 6);
-      g.fillStyle = 'rgba(217,178,106,0.6)';
+      const sb = this._scrollBar(el);
+      const hot = this._drag?.el === el || (this.hover === el && el.hoverRow === 'track');
+      const tw = hot ? 20 : 12;
+      roundRect(g, bx + barW / 2 - tw / 2, sb.thumbY, tw, sb.thumbH, tw / 2);
+      g.fillStyle = hot ? 'rgba(232,196,124,0.95)' : 'rgba(217,178,106,0.6)';
       g.fill();
     }
   }
@@ -337,10 +341,74 @@ export class Panel {
     if (barW && p.x >= el.x + el.w - barW) {
       if (p.y <= el.y + barW) return 'up';
       if (p.y >= el.y + el.h - barW) return 'down';
-      return null;
+      return 'track';
     }
     return Math.floor((p.y - el.y) / rowH);
   }
+
+  /**
+   * A list's scroll bar, between its ▲ and ▼ (null when everything fits): the track, the thumb
+   * (its height shows how much is visible) and the largest scroll.
+   */
+  _scrollBar(el) {
+    const rowH = el.rowH || 64;
+    const visible = Math.floor(el.h / rowH);
+    const items = el.items || [];
+    if (items.length <= visible) return null;
+    const barW = 56;
+    const trackY = el.y + barW + 8;
+    const trackH = el.h - 2 * barW - 16;
+    const max = items.length - visible;
+    const thumbH = Math.max(30, trackH * (visible / items.length));
+    return { x: el.x + el.w - barW, barW, trackY, trackH, thumbH, thumbY: trackY + (trackH - thumbH) * ((el.scroll || 0) / max), max, visible };
+  }
+
+  /**
+   * A press at uv: on a list's scroll bar it starts dragging the thumb (pressing the track beside
+   * the thumb first jumps a page towards the press). Returns true when it did; dragTo() and
+   * release() follow.
+   */
+  pressAt(uv) {
+    const p = this._toPx(uv);
+    const el = this._hit(p);
+    if (el?.type !== 'list' || el.disabled || this._listRow(el, p) !== 'track') return false;
+    let sb = this._scrollBar(el);
+    if (!sb) return false;
+    if (p.y < sb.thumbY || p.y > sb.thumbY + sb.thumbH) {
+      this.scrollList(el.id, (p.y < sb.thumbY ? -1 : 1) * Math.max(1, sb.visible - 1));
+      el.scroll = Math.max(0, Math.min(el.scroll, sb.max));
+      sb = this._scrollBar(el);
+    }
+    this._drag = { el, grab: Math.max(0, Math.min(sb.thumbH, p.y - sb.thumbY)) };
+    this.markDirty();
+    return true;
+  }
+
+  /** Moves a dragged scroll bar's thumb to follow uv (the pointer may leave the bar meanwhile). */
+  dragTo(uv) {
+    if (!this._drag) return;
+    const { el, grab } = this._drag;
+    const sb = this._scrollBar(el);
+    if (!sb) return;
+    const p = this._toPx(uv);
+    const t = (p.y - grab - sb.trackY) / Math.max(1, sb.trackH - sb.thumbH);
+    const scroll = Math.round(Math.max(0, Math.min(1, t)) * sb.max);
+    if (scroll !== el.scroll) {
+      el.scroll = scroll;
+      this.markDirty();
+    }
+  }
+
+  /** Ends a scroll bar drag. Returns true when one was going on. */
+  release() {
+    const was = !!this._drag;
+    this._drag = null;
+    if (was) this.markDirty();
+    return was;
+  }
+
+  /** True while a scroll bar is being dragged. */
+  get dragging() { return !!this._drag; }
 
   /** Hover feedback; returns true when over an interactive element. */
   pointerMove(uv) {

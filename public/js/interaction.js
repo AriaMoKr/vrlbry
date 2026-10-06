@@ -24,6 +24,21 @@ const TOC_THUMBS = 9; // its stops
 const SEARCH_KEYS = ['1234567890', 'qwertyuiop', "asdfghjkl'", 'zxcvbnm-.,'];
 const SEARCH_DELAY = 250; // ms after the last key before searching
 
+const _plane = new THREE.Plane();
+const _onPlane = new THREE.Vector3();
+const _normal = new THREE.Vector3();
+
+/** Where a ray meets a panel's plane, as panel uv (beyond 0..1 off the panel), or null. */
+function panelUv(panel, ray) {
+  const m = panel.mesh;
+  m.updateMatrixWorld();
+  _normal.set(0, 0, 1).transformDirection(m.matrixWorld);
+  _plane.setFromNormalAndCoplanarPoint(_normal, m.getWorldPosition(_onPlane));
+  if (!ray.intersectPlane(_plane, _onPlane)) return null;
+  m.worldToLocal(_onPlane);
+  return { x: _onPlane.x / panel.width + 0.5, y: _onPlane.y / panel.height + 0.5 };
+}
+
 const easeInOut = (t) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
 
 export const DEFAULT_SETTINGS = {
@@ -666,6 +681,9 @@ export class Interaction {
       audio.init();
       this._select(e.detail.pointer);
     });
+    // Press and release: dragging a list's scroll bar on a panel (mouse, finger, controller, hand).
+    c.addEventListener('selectstart', (e) => this._pressStart(e.detail.pointer));
+    c.addEventListener('selectend', (e) => this._pressEnd(e.detail.pointer));
     c.addEventListener('squeezestart', (e) => this._grabStart(e.detail.pointer));
     c.addEventListener('squeezeend', (e) => this._grabEnd(e.detail.pointer));
     c.addEventListener('flick', (e) => this._flick(e.detail));
@@ -721,7 +739,37 @@ export class Interaction {
     return best;
   }
 
+  /** A press on a panel's scroll bar starts dragging its thumb; looking around waits meanwhile. */
+  _pressStart(pointer) {
+    this._swallowSelect = null;
+    if (this.state === 'busy' || pointer.teleporting || this._panelDrag) return;
+    const hit = this._hitTest(pointer);
+    if (hit?.kind !== 'panel' || !hit.panel.pressAt(hit.uv)) return;
+    this._panelDrag = { pointer, panel: hit.panel, look: this.controls.lookEnabled };
+    this.controls.lookEnabled = false;
+  }
+
+  _pressEnd(pointer) {
+    if (this._panelDrag?.pointer !== pointer) return;
+    this._endPanelDrag();
+    // The release's click belongs to the drag, not to whatever is under the pointer now.
+    this._swallowSelect = pointer;
+  }
+
+  _endPanelDrag() {
+    const d = this._panelDrag;
+    if (!d) return;
+    d.panel.release();
+    this.controls.lookEnabled = d.look;
+    this._panelDrag = null;
+  }
+
   _select(pointer) {
+    if (this._panelDrag?.pointer === pointer) return;
+    if (this._swallowSelect === pointer) {
+      this._swallowSelect = null;
+      return;
+    }
     if (this.state === 'busy' || pointer.teleporting) return;
     const hit = this._hitTest(pointer);
     if (!hit) return;
@@ -1651,6 +1699,15 @@ export class Interaction {
       }
       pointer.setHovering(interactive);
       this._hover.set(pointer.id, { panel: hit?.kind === 'panel' ? hit.panel : null });
+    }
+    // A scroll bar being dragged follows its pointer, also off the panel (onto its plane).
+    if (this._panelDrag) {
+      const { pointer, panel } = this._panelDrag;
+      if (!panel.visible || !this.controls.pointers.includes(pointer)) this._endPanelDrag();
+      else {
+        const uv = panelUv(panel, pointer.raycaster.ray);
+        if (uv) panel.dragTo(uv);
+      }
     }
     if (this.state === 'browse') {
       // A book highlighted by a jump/search stays highlighted for a few seconds even though the

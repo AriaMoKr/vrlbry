@@ -851,11 +851,15 @@ export class Controls extends EventTarget {
   and cursor are hidden and `pointer.teleporting` keeps it from hovering or selecting; right stick
   left/right → snap turn (`PLAYER.snapTurn`), left stick → smooth move (optional setting, default
   on) constrained by `world.constrain`. When locomotion is disabled, sticks only emit events.
-- **Desktop:** drag (any mouse button) to look; a press that does not move more than a few pixels
+- **Desktop:** drag (any mouse button) to look, turning the way the mouse goes (drag right: look
+  right; up: look up); a press that does not move more than a few pixels
   is a click = select at the mouse position. No pointer lock: it fights the DOM overlay and is
   refused in embedded browsers. WASD/arrows move (constrained), Q/E or ←/→ turn, Shift runs.
-  **Touch:** drag to look, tap = select at touch point, two-finger drag = move, pinch = `wheel`,
-  horizontal swipe = `swipe` `{ dir }`. Pointers also have `setHovering(bool)`; extra events
+  **Touch:** drag to look (grabbing the scene: the opposite of the mouse), tap = select at touch
+  point, two-finger drag = move, pinch = `wheel`,
+  horizontal swipe = `swipe` `{ dir }`. One finger is also a pointer with `selectstart` /
+  `selectend` (and the active pointer while it touches), like the mouse's left button and XR
+  select. Pointers also have `setHovering(bool)`; extra events
   `teleport` and `turn` report locomotion.
   **Gamepad** (`xr/gamepad.js`, W3C standard mapping, desktop and phone only; not polled in XR):
   the first connected pad becomes active when used and inactive when the mouse moves, and emits
@@ -883,6 +887,10 @@ export class Panel {
   //             onClick(uvPx, element), disabled, active, font, color, align }
   redraw()                  // repaint (only when dirty — call markDirty())
   pointerMove(uv) / pointerLeave(); click(uv): boolean   // uv from raycast intersection (0..1)
+  pressAt(uv): boolean; dragTo(uv); release(); dragging   // a list's scroll bar: press the thumb
+  //   (or the track beside it: a page towards the press) and drag; interaction.js calls them on
+  //   selectstart / every frame (the ray on the panel's plane, so off the panel too) / selectend,
+  //   holds looking around meanwhile, and swallows the release's click
   visible
 }
 ```
@@ -1021,8 +1029,9 @@ States: `browse` → `inspect` → `read` (and back).
   supersampling on the Quest), `xr.setFoveation(0.5)`, reference space `local-floor`. On session
   start, `session.updateTargetFrameRate()` asks for `XR_FRAME_RATE` = 72 Hz (or `?hz=`), the
   nearest supported rate: Quest Browser starts at 90 Hz, where the Quest 3 dropped 3–8 % of
-  frames even in ordinary rooms. Only one
-  chandelier per room casts light (point lights cost per-pixel shading on the headset).
+  frames even in ordinary rooms. Point lights cost per-pixel shading on the headset: every room
+  has exactly two, and a hall at most two chandeliers, each with its own light (a third, without
+  one, looked unlit).
 - Camera rig: `rig = new Group()` (moved by locomotion) containing `camera`; desktop eye height
   `PLAYER.eyeHeight` applied as camera y when not presenting (XR provides real head height).
 - Session: `navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor',

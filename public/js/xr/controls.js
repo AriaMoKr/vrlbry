@@ -562,7 +562,10 @@ export class Controls extends EventTarget {
       this._setNdc(e.clientX, e.clientY);
       this._mouse.inside = true;
       this._mouse.down = { x: e.clientX, y: e.clientY, button: e.button, drag: false, yaw: this.yaw, pitch: this.pitch };
-      if (e.button === 0) this._emit('selectstart', { pointer: this._mouse.pointer });
+      if (e.button === 0) {
+        this._updateScreenRay(this._mouse.pointer); // aimed where pressed, not where the last frame was
+        this._emit('selectstart', { pointer: this._mouse.pointer });
+      }
     });
     el.addEventListener('pointermove', (e) => {
       if (this.presenting) return;
@@ -575,7 +578,9 @@ export class Controls extends EventTarget {
         const dx = e.clientX - d.x;
         const dy = e.clientY - d.y;
         if (!d.drag && Math.hypot(dx, dy) > DRAG_THRESHOLD) d.drag = true;
-        if (d.drag && this.lookEnabled !== false) this._look(d.yaw, d.pitch, dx, dy);
+        // The mouse turns the view the way it is dragged (drag right: look right; up: look up),
+        // as in desktop 3D apps; a finger drags the scene instead (_touchMove).
+        if (d.drag && this.lookEnabled !== false) this._look(d.yaw, d.pitch, -dx, -dy);
       }
     });
     const up = (e) => {
@@ -611,6 +616,7 @@ export class Controls extends EventTarget {
     window.addEventListener('blur', () => this._keys.clear());
   }
 
+  /** Turns the view by a drag of (dx, dy) pixels from where it started, grabbing the scene (touch). */
   _look(baseYaw, basePitch, dx, dy) {
     const k = 0.0042;
     this.yaw = baseYaw + dx * k;
@@ -619,8 +625,19 @@ export class Controls extends EventTarget {
 
   _touchDown(e) {
     this._touches.set(e.pointerId, { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, t: performance.now() });
-    if (this._touches.size === 1) this._touchLook = { yaw: this.yaw, pitch: this.pitch, x: e.clientX, y: e.clientY, moved: false };
-    else this._touchLook = null;
+    if (this._touches.size === 1) {
+      this._touchLook = { yaw: this.yaw, pitch: this.pitch, x: e.clientX, y: e.clientY, moved: false };
+      // One finger is a pointer too: pressed (e.g. on a scroll bar to drag it) and released, and
+      // the active pointer while it touches.
+      this._mouse.inside = true;
+      this._setNdc(e.clientX, e.clientY);
+      this._updateScreenRay(this._mouse.pointer);
+      this._emit('selectstart', { pointer: this._mouse.pointer });
+    } else {
+      // A second finger: walking or pinching, so the first finger's press ends.
+      if (this._touchLook) this._emit('selectend', { pointer: this._mouse.pointer });
+      this._touchLook = null;
+    }
     if (this._touches.size === 2) this._pinch = this._pinchDist();
   }
 
@@ -632,6 +649,7 @@ export class Controls extends EventTarget {
     t.x = e.clientX;
     t.y = e.clientY;
     if (this._touches.size === 1 && this._touchLook) {
+      this._setNdc(e.clientX, e.clientY); // the pointer follows the finger
       const L = this._touchLook;
       const dx = e.clientX - L.x;
       const dy = e.clientY - L.y;
@@ -654,6 +672,8 @@ export class Controls extends EventTarget {
     this._touches.delete(e.pointerId);
     if (!t) return;
     const L = this._touchLook;
+    if (this._touches.size === 0 && L) this._emit('selectend', { pointer: this._mouse.pointer });
+    if (this._touches.size === 0) this._mouse.inside = false; // no hover left behind where it lifted
     if (this._touches.size === 0 && L && !L.moved && performance.now() - t.t < 600) {
       this._setNdc(t.x, t.y);
       this._updateScreenRay(this._mouse.pointer);
