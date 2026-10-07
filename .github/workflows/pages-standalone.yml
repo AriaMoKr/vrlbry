@@ -1,13 +1,13 @@
-# Publishes the vrlbry-standalone branch (AriaMoKr/vrlbry-standalone) to GitHub Pages: the static
-# site (tools/build-pages.mjs) where visitors open their own ZIM files in the browser (the local
-# library, SPEC §2.6). On every push to the branch, the app alone (~4 MB, a minute or two). Run it
-# by hand (Actions → Pages (standalone) → Run workflow) with "demo set" ticked to also pre-render
-# the ZIMs of tools/demo-set.txt, like the public site (~605 MB, ~10 min).
+# Publishes the vrlbry-standalone branch (AriaMoKr/vrlbry-standalone) to GitHub Pages,
+# https://ariamokr.github.io/vrlbry-standalone/: the static site (tools/build-pages.mjs) where
+# visitors open their own ZIM files in the browser (the local library, SPEC §2.6). On every push to
+# the branch, the app alone (~4 MB, a minute or two). Run it by hand (Actions → Pages (standalone)
+# → Run workflow) with "demo set" ticked to also pre-render the ZIMs of tools/demo-set.txt, like
+# the main site (~605 MB, ~10 min).
 #
 # One-time setup in the repository: Settings → Pages → Build and deployment → Source: GitHub
-# Actions. Pages for a private repository needs a paid plan, and the site itself is public.
-# (The public site deploys from main of AriaMoKr/vrlbry with .github/workflows/pages.yml, which
-# this branch does not have.)
+# Actions. (The main site, https://ariamokr.github.io/vrlbry/, deploys from main of
+# AriaMoKr/vrlbry with .github/workflows/pages.yml, which this branch does not have.)
 name: Pages (standalone)
 
 on:
