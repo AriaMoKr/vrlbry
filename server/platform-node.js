@@ -42,7 +42,8 @@ async function openFile(filePath) {
   }
 }
 
-provide({
+/** The platform on Node (provided when this module is imported). */
+export const nodePlatform = Object.freeze({
   alloc: (n) => Buffer.allocUnsafe(n),
   copy: (bytes) => Buffer.from(bytes),
   utf8: (bytes, start = 0, end = bytes.length) => asBuffer(bytes).toString('utf8', start, end),
@@ -62,3 +63,5 @@ provide({
   etag: (bytes) => `"${crypto.createHash('sha1').update(bytes).digest('base64url')}"`,
   openFile,
 });
+
+provide(nodePlatform);

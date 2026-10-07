@@ -1,12 +1,30 @@
 // DOM overlay for non-VR use (SPEC §5.6): library card, search, Enter VR, help, loading, toasts.
 // Hidden while an immersive session is running.
 
+import { imageSource } from '../api.js';
+import { isLocalUrl } from '../local/local.js';
 import { bookIndex, matchBooks, findArticles } from '../search.js';
 import { load, save } from '../util/storage.js';
 
 const ARTICLE_RESULTS = 8; // per Wikipedia library
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+/** An <img>'s source attribute; a local library's image is loaded after rendering (fillLocalImages). */
+const imgSrc = (url) => (isLocalUrl(url) ? `data-local-src="${esc(url)}"` : `src="${esc(url)}"`);
+
+/** Loads the local library images rendered under `root` (blob URLs, released once loaded). */
+function fillLocalImages(root) {
+  for (const img of root.querySelectorAll('img[data-local-src]')) {
+    const url = img.dataset.localSrc;
+    img.removeAttribute('data-local-src');
+    imageSource(url).then((source) => {
+      if (!source.url) return;
+      img.onload = img.onerror = () => source.release();
+      img.src = source.url;
+    }).catch(() => {});
+  }
+}
 
 const HELP = {
   desktop: [
@@ -71,7 +89,12 @@ export class Overlay {
       <section class="ov-card" aria-label="Library">
         <header><span class="ov-brand">vrlbry</span><span class="ov-version"></span><span class="ov-tools"><button class="ov-rescan" aria-label="Rescan the ZIM folder" title="Rescan the ZIM folder">⟳</button><button class="ov-collapse" aria-label="Collapse" title="Collapse">–</button></span></header>
         <div class="ov-libs"></div>
+        <div class="ov-open">
+          <button class="ov-open-btn" title="Read ZIM files from this device, in the browser">Open ZIM files…</button>
+          <input class="ov-open-input" type="file" accept=".zim" multiple hidden>
+        </div>
       </section>
+      <div class="ov-drop" hidden>Drop ZIM files to open them</div>
       <div class="ov-search" role="search">
         <input type="search" placeholder="Find a book, author or article…" aria-label="Find a book or article" autocomplete="off" spellcheck="false">
         <ul class="ov-results" role="listbox" hidden></ul>
@@ -106,6 +129,40 @@ export class Overlay {
     // A minimized library card stays minimized when the page is reloaded.
     if (load('card', 'open') === 'collapsed') this.setCardCollapsed(true);
     this.$('.ov-rescan').onclick = () => this._rescan?.();
+    // ZIM files from this device (the local library, step 2): a picker, or dropped on the page.
+    const picker = this.$('.ov-open-input');
+    this.$('.ov-open-btn').onclick = () => picker.click();
+    picker.onchange = () => {
+      const files = [...picker.files];
+      picker.value = ''; // the same file can be picked again
+      if (files.length) this._openFiles?.(files);
+    };
+    const hasFiles = (e) => [...(e.dataTransfer?.types ?? [])].includes('Files');
+    let dragDepth = 0;
+    document.addEventListener('dragenter', (e) => {
+      if (!hasFiles(e)) return;
+      dragDepth++;
+      this.$('.ov-drop').hidden = false;
+    });
+    document.addEventListener('dragleave', (e) => {
+      if (hasFiles(e) && --dragDepth <= 0) {
+        dragDepth = 0;
+        this.$('.ov-drop').hidden = true;
+      }
+    });
+    document.addEventListener('dragover', (e) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+    });
+    document.addEventListener('drop', (e) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      dragDepth = 0;
+      this.$('.ov-drop').hidden = true;
+      const files = [...e.dataTransfer.files];
+      if (files.length) this._openFiles?.(files);
+    });
     // The debug report describes the page as it was when the help was opened: a click there (or
     // anywhere outside the search box) closes the search results, so the state is taken on
     // pointerdown, before that happens (capture phase).
@@ -208,14 +265,15 @@ export class Overlay {
     this.$('.ov-libs').innerHTML = libraries.length
       ? libraries.map((l) => `
         <div class="ov-lib">
-          ${l.illustration ? `<img src="${esc(l.illustration)}" alt="" width="40" height="40">` : ''}
+          ${l.illustration ? `<img ${imgSrc(l.illustration)} alt="" width="40" height="40">` : ''}
           <div><div class="ov-lib-title">${esc(l.title)}</div>
           <div class="ov-lib-desc">${esc(l.longDescription || (l.description && !String(l.title).includes(l.description) ? l.description : ''))}</div>
           <div class="ov-lib-meta">${l.indexing && l.indexing.stage !== 'failed'
             ? (l.indexing.stage === 'queued' ? 'waiting to index…' : `indexing… ${Math.round((l.indexing.progress || 0) * 100)}%`)
             : `${(booksByLib[l.id]?.length || 0).toLocaleString()} ${l.kind === 'wikisource' ? 'works' : l.kind === 'wikipedia' ? `volumes (${(l.articles ?? 0).toLocaleString()} articles)` : 'books'}`} · ${esc(l.file)}</div></div>
         </div>`).join('') + (libraries.length > 1 ? `<div class="ov-lib-meta">${total.toLocaleString()} books in ${libraries.length} libraries</div>` : '')
-      : `<div class="ov-lib-desc">${this._static ? 'This online version has no books yet. Run vrlbry yourself (see the README) to read your own ZIM files.' : 'No .zim files were found in the server folder. Add some and reload.'}</div>`;
+      : `<div class="ov-lib-desc">${this._static ? 'This online version has no books yet. Open a ZIM file from this device below, or run vrlbry yourself (see the README).' : 'No .zim files were found in the server folder. Add some and reload, or open one from this device below.'}</div>`;
+    fillLocalImages(this.$('.ov-libs'));
     this._index = bookIndex(libraries, booksByLib);
     this._libraries = libraries;
   }
@@ -252,6 +310,9 @@ export class Overlay {
   /** cb(libId, { title, book, n }) for a Wikipedia article chosen in the search results. */
   onArticlePick(cb) { this._pickArticle = cb; }
   onRescan(cb) { this._rescan = cb; }
+
+  /** cb(files): ZIM files picked or dropped, to open in the browser (main.js openLocalFiles). */
+  onOpenFiles(cb) { this._openFiles = cb; }
   /** A build without a server (GitHub Pages): no rescan button. */
   setStatic(on) {
     this._static = !!on;
@@ -387,14 +448,15 @@ export class Overlay {
     list.innerHTML = this._results.length
       ? this._results.map((e, i) => (e.article ? `
         <li role="option" data-i="${i}" class="${i === this._sel ? 'sel' : ''}">
-          ${e.lib.illustration ? `<img class="ov-r-icon" src="${esc(e.lib.illustration)}" alt="" width="34" height="34">` : '<span class="ov-nocover"></span>'}
+          ${e.lib.illustration ? `<img class="ov-r-icon" ${imgSrc(e.lib.illustration)} alt="" width="34" height="34">` : '<span class="ov-nocover"></span>'}
           <div><div class="ov-r-title">${e.article.from ? `${esc(e.article.from)} → ` : ''}${esc(e.article.title)}</div><div class="ov-r-sub">${esc(e.lib.title)} · Volume ${esc(e.article.book.slice(1))}</div></div>
         </li>` : `
         <li role="option" data-i="${i}" class="${i === this._sel ? 'sel' : ''}">
-          ${e.book.cover ? `<img src="${esc(e.book.cover)}" alt="" loading="lazy" width="34" height="48">` : '<span class="ov-nocover"></span>'}
+          ${e.book.cover ? `<img ${imgSrc(e.book.cover)} alt="" loading="lazy" width="34" height="48">` : '<span class="ov-nocover"></span>'}
           <div><div class="ov-r-title">${esc(e.book.title)}</div><div class="ov-r-sub">${esc(e.book.author || '')}${this._multi() ? ' · ' + esc(e.lib.title) : ''}</div></div>
         </li>`)).join('')
       : '<li class="ov-empty">No matching books</li>';
+    fillLocalImages(list);
     list.hidden = false;
     list.querySelectorAll('li[data-i]').forEach((li) => {
       li.onclick = () => this._choose(+li.dataset.i);

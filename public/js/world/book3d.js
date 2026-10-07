@@ -9,6 +9,7 @@ import * as THREE from 'three';
 import { canvasTexture } from './canvas-texture.js';
 import { makeCoverCanvas, makePageEdgeCanvas, bookColors } from './textures.js';
 import { READ } from '../config.js';
+import { imageSource } from '../api.js';
 
 const OPEN_TIME = 0.65;
 const TURN_TIME = 0.55;
@@ -26,24 +27,29 @@ function getEdgeTexture() {
 
 const coverCache = new Map(); // url -> Promise<THREE.Texture|null>
 /** An image element for a URL, or null when it fails to load. */
-function loadImage(url) {
+async function loadImage(url) {
+  const source = await imageSource(url).catch(() => ({ url: null, release() {} }));
+  if (!source.url) return null;
   return new Promise((resolve) => {
     const img = new Image();
-    img.onload = () => img.decode().catch(() => {}).then(() => resolve(img)); // decoded off the main thread
-    img.onerror = () => resolve(null);
-    img.src = url;
+    // decoded off the main thread
+    img.onload = () => img.decode().catch(() => {}).then(() => { source.release(); resolve(img); });
+    img.onerror = () => { source.release(); resolve(null); };
+    img.src = source.url;
   });
 }
 
 function loadCoverTexture(url) {
   if (!coverCache.has(url)) {
-    coverCache.set(url, new Promise((resolve) => {
-      new THREE.TextureLoader().load(url, (t) => {
+    coverCache.set(url, imageSource(url).catch(() => ({ url: null, release() {} })).then((source) => new Promise((resolve) => {
+      if (!source.url) return resolve(null);
+      new THREE.TextureLoader().load(source.url, (t) => {
+        source.release();
         t.colorSpace = THREE.SRGBColorSpace;
         t.anisotropy = 4;
         resolve(t);
-      }, undefined, () => resolve(null));
-    }));
+      }, undefined, () => { source.release(); resolve(null); });
+    })));
   }
   return coverCache.get(url);
 }

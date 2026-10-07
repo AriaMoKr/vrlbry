@@ -75,6 +75,9 @@ export const platform = {
   openFile: missing('openFile'),
 };
 
+/** The platform as it starts, before provide(): what a browser uses for all but the codecs. */
+export const defaults = Object.freeze({ ...platform });
+
 /** Fills in what this environment provides (see `platform`). */
 export function provide(impl) {
   Object.assign(platform, impl);

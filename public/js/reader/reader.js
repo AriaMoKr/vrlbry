@@ -4,7 +4,7 @@
 // Pages are addressed as PageRef { c: chunk, p: page within chunk } because page counts are only
 // known for chunks laid out so far. Durable positions use block anchors { c, b }.
 
-import { getBookMeta, getChunk, forgetBook } from '../api.js';
+import { getBookMeta, getChunk, forgetBook, imageSource } from '../api.js';
 import { PAGE_PX } from '../config.js';
 import { perf } from '../perf.js';
 import { makeMetrics, ChunkLayout, getMeasurer, FONTS, blockChars } from './layout.js';
@@ -92,15 +92,21 @@ const imageCache = new Map(); // src -> Promise<HTMLImageElement|null>
 function loadImage(src) {
   let p = imageCache.get(src);
   if (!p) {
-    p = new Promise((resolve) => {
+    p = imageSource(src).catch(() => ({ url: null, release() {} })).then((source) => new Promise((resolve) => {
+      if (!source.url) return resolve(null);
       const img = new Image();
       img.decoding = 'async';
-      const timer = setTimeout(() => resolve(null), IMAGE_TIMEOUT);
+      const done = (value) => {
+        clearTimeout(timer);
+        source.release();
+        resolve(value);
+      };
+      const timer = setTimeout(() => done(null), IMAGE_TIMEOUT);
       // Decoded before use, off the main thread: otherwise the page's drawImage decodes it there.
-      img.onload = () => img.decode().catch(() => {}).then(() => { clearTimeout(timer); resolve(img); });
-      img.onerror = () => { clearTimeout(timer); resolve(null); };
-      img.src = src;
-    });
+      img.onload = () => img.decode().catch(() => {}).then(() => done(img));
+      img.onerror = () => done(null);
+      img.src = source.url;
+    }));
     imageCache.set(src, p);
     p.then((img) => { if (!img) imageCache.delete(src); }); // allow a retry later
     if (imageCache.size > 400) imageCache.delete(imageCache.keys().next().value);

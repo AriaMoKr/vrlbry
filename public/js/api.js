@@ -1,5 +1,8 @@
 // Thin client for the vrlbry HTTP API (see SPEC.md §4). All functions throw on HTTP errors.
+// Libraries opened in this browser (ids starting with '~', step 2) are answered by the local
+// library instead (local/local.js), and their images come from there (imageSource).
 
+import * as local from './local/local.js';
 import { perf } from './perf.js';
 import { titleKey } from './util/books.js';
 import { fileName } from './util/file-names.js';
@@ -54,12 +57,24 @@ export async function getLibraries() {
   return (await getJSON(api('api/libraries'), FRESH)).libraries;
 }
 
-/** @returns {Promise<{ generation: number, libraries: object[] }>} libraries + change counter */
+/**
+ * The server's (or static site's) libraries, then the local ones.
+ * @param {{ generation?: number, libraries: object[] }} r the server's answer
+ * @returns {Promise<{ generation: number|string, libraries: object[] }>} generation: a value that
+ *   changes when either changes (the server's alone while nothing is open locally)
+ */
+async function withLocal(r) {
+  const own = await local.catalog();
+  if (!own.libraries.length) return { generation: r.generation ?? 0, libraries: r.libraries };
+  return { generation: `${r.generation ?? 0}+${own.generation}`, libraries: [...r.libraries, ...own.libraries] };
+}
+
+/** @returns {Promise<{ generation: number|string, libraries: object[] }>} libraries + change counter */
 export async function getCatalog() {
   const r = await getJSON(api('api/libraries'), FRESH);
   // static: a build without a server (GitHub Pages): no rescans, answers are files.
   staticSite = !!r.static;
-  return { generation: r.generation ?? 0, libraries: r.libraries, static: staticSite };
+  return { ...(await withLocal(r)), static: staticSite };
 }
 
 /** @returns {Promise<{ changed: string|null, file: string|null }>} when the website's files last changed */
@@ -71,16 +86,19 @@ export async function getVersion() {
 export async function rescan() {
   const res = await fetch(api('api/rescan'), { method: 'POST' });
   if (!res.ok) throw new Error(`rescan: ${res.status} ${res.statusText}`);
-  return res.json(); // { generation, added, removed, reopened, failed, libraries }
+  const r = await res.json(); // { generation, added, removed, reopened, failed, libraries }
+  return { ...r, ...(await withLocal(r)) };
 }
 
 /** @returns {Promise<Array<object>>} book descriptors for one library */
 export async function getBooks(libId) {
+  if (local.isLocal(libId)) return local.books(libId);
   return (await getJSON(api(paths.books(libId)))).books;
 }
 
 /** Wikipedia articles whose titles start with `q` (SPEC §2.5): [{ title, book, n, from? }]. */
 export async function searchArticles(libId, q, limit = 8) {
+  if (local.isLocal(libId)) return []; // a local Wikipedia is not supported yet
   if (staticSite) return searchTitles(libId, q, limit);
   return (await getJSON(api(`api/libraries/${enc(libId)}/articles?q=${enc(q)}&limit=${limit}`))).articles;
 }
@@ -122,7 +140,7 @@ async function searchTitles(libId, q, limit) {
 export function getBookMeta(libId, bookId) {
   const key = `${libId}\n${bookId}`;
   if (!metaCache.has(key)) {
-    const p = getJSON(api(paths.meta(libId, bookId)));
+    const p = local.isLocal(libId) ? local.meta(libId, bookId) : getJSON(api(paths.meta(libId, bookId)));
     p.catch(() => metaCache.delete(key));
     metaCache.set(key, p);
   }
@@ -133,11 +151,37 @@ export function getBookMeta(libId, bookId) {
 export function getChunk(libId, bookId, n) {
   const key = `${libId}\n${bookId}\n${n}`;
   if (!chunkCache.has(key)) {
-    const p = getJSON(api(paths.chunk(libId, bookId, n))).then((r) => r.blocks);
+    const p = (local.isLocal(libId) ? local.chunk(libId, bookId, n).then(parseLocal) : getJSON(api(paths.chunk(libId, bookId, n))))
+      .then((r) => r.blocks);
     p.catch(() => chunkCache.delete(key));
     chunkCache.set(key, p);
   }
   return chunkCache.get(key);
+}
+
+const utf8 = new TextDecoder();
+
+/** A local chunk's JSON bytes, parsed (timed like a fetched one under ?perf). */
+function parseLocal(bytes) {
+  const t0 = performance.now();
+  const value = JSON.parse(utf8.decode(bytes));
+  if (perf.enabled) perf.event('json', { t: t0, ms: performance.now() - t0, kb: Math.round(bytes.length / 1024), url: 'local' });
+  return value;
+}
+
+/**
+ * Where to load an image from: a local library's image becomes a blob URL (call release() once it
+ * has loaded: the decoded image stays), any other URL is used as it is. url is null when a local
+ * image is not there.
+ * @param {string} url
+ * @returns {Promise<{ url: string|null, release: () => void }>}
+ */
+export async function imageSource(url) {
+  if (!local.isLocalUrl(url)) return { url, release() {} };
+  const found = await local.image(url).catch(() => null);
+  if (!found) return { url: null, release() {} };
+  const blobUrl = URL.createObjectURL(new Blob([found.bytes], { type: found.mime }));
+  return { url: blobUrl, release: () => URL.revokeObjectURL(blobUrl) };
 }
 
 /** Drop cached chunks for a book (e.g. after closing it, to free memory). */

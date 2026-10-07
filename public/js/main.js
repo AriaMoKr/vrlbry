@@ -2,6 +2,7 @@
 
 import * as THREE from 'three';
 import { getCatalog, getBooks, getVersion, rescan as requestRescan } from './api.js';
+import * as localLibrary from './local/local.js';
 import { World } from './world/world.js';
 import { Controls } from './xr/controls.js';
 import { Interaction, DEFAULT_SETTINGS } from './interaction.js';
@@ -254,6 +255,32 @@ async function start() {
   }
   overlay.onRescan(rescanNow);
   interaction.onRescan = rescanNow;
+
+  // ZIM files opened in this browser (step 2: the local library, local/local.js), from the file
+  // picker, a drop or __vrlbry.openZim: shelved like the server's as soon as they are open.
+  async function openLocalFiles(files) {
+    const zims = files.filter((f) => /\.zim$/i.test(f.name ?? '') || !f.name);
+    if (!zims.length) {
+      overlay.showToast('Only .zim files can be opened.', 'error');
+      return [];
+    }
+    overlay.showToast(`Opening ${zims.length === 1 ? zims[0].name || 'the ZIM file' : `${zims.length} ZIM files`}…`, 'info', 3000);
+    const results = await localLibrary.openFiles(zims);
+    for (const r of results) {
+      if (r.error) overlay.showToast(r.error, 'error', 9000);
+    }
+    const added = results.filter((r) => r.id);
+    if (added.length) {
+      // Shelve the (first) new library: the catalogue's rebuild goes to its room.
+      if (interaction.state === 'browse') {
+        settings.place = added[0].id;
+        save('settings', settings);
+      }
+      await applyCatalog(await getCatalog());
+    }
+    return results;
+  }
+  overlay.onOpenFiles(openLocalFiles);
   // A new version of the site (a deploy, or edited client files) means this page runs old code, and
   // new data may need the new code: a page left open across a deploy once took a new ZIM into the
   // catalogue but not into the Demo set, whose list was in the old rooms.js. So once the version
@@ -346,6 +373,8 @@ async function start() {
      * report into the help dialog does the same.
      */
     reproduce: (report) => restoreScene(window.__vrlbry, report),
+    /** Opens ZIM files in the browser's local library (a File, Blob or a list): as the file picker does. */
+    openZim: (files) => openLocalFiles(files instanceof Blob ? [files] : [...files]),
   };
   // ?perf: record frame timing and events for tools/quest-perf.mjs (window.__vrlbry.perf).
   if (params.has('perf')) {
