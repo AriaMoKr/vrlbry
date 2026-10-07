@@ -117,8 +117,22 @@
   - *Measured, not added* (MB on the site; about 350 MB is left): Gutenberg PA 279, PG 168,
     PL 69, PK 62, PB 29, PH 28, PM 22, PF 11, PD 5; Wikipedia with pictures: Climate change 228,
     Nollywood 26, Knots 24, Ray Charles 3; Climate change, introductions 6.
-  - *Step 2 (possible): read ZIMs in the browser*, so the online version needs no pre-rendering
-    and no longer has the 1 GB limit:
+  - *Step 2: read ZIMs in the browser* (branch `vrlbry-standalone`), so the online version needs
+    no pre-rendering and no longer has the 1 GB limit. *Milestone 1 done (2026-10-06):* local
+    Gutenberg and generic ZIMs ("Open ZIM files…", or a drop), read by the shared core
+    (`public/js/core/`, also the server's) in a worker over `File.slice`, with fzstd and fflate;
+    images as blob URLs (SPEC §2.6). Next:
+    - *Milestone 2: Wikipedia and Wikisource in the browser.* A store in IndexedDB (the core
+      takes any store), so an index is built once per file; the index build in the worker (the
+      top 1M took ~5 min on Node: measure fzstd, and on a Quest); a file's identity across
+      reloads (its UUID). Or ship prebuilt indexes for the files of a curated list.
+    - *Milestone 3: remote ZIMs* from Kiwix's mirror over HTTP range reads (a byte source like
+      `BlobSource`), from a curated list.
+    - *Keep files across reloads:* the File System Access API (desktop Chrome/Edge) can store a
+      handle in IndexedDB and ask again for permission; elsewhere the file is picked again.
+    - *In VR:* the kiosk cannot open files (a picker cannot show in an immersive session); it
+      could list the files opened before entering VR.
+    The notes from before it began:
     - *Kiwix's copies:* `mirror.download.kiwix.org` allows cross-origin range reads (CORS `*`,
       Range in the preflight), so the client can open any catalogue ZIM, reading only what it
       needs (LCC-P and Mathematics read fine: ~20–30 requests, under 2 MB each, for the metadata

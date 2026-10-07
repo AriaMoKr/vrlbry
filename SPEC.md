@@ -151,38 +151,110 @@ is the maxi flavour (with images). A Wikipedia is its own room of encyclopedia v
 - **Volumes** are runs of 1,000 consecutive articles (`VOLUME_SIZE`) in the app's title order
   (`titleKey` + a default `Intl.Collator`, as `util/books.js` sorts book titles), numbered
   1–N. Each article starts on a fresh page, as its own chunk.
-- The index (`server/wikipedia.js`) reads no article text. It scans the directory (the candidates
+- The index (`core/wikipedia.js`) reads no article text. It scans the directory (the candidates
   in typed arrays), then reads each candidate's HTML size, decompressing every cluster once in
   cluster order, from the cluster and blob the scan found (`archive.clusterBlobs`, no directory
   entry re-read), several clusters at once: each page's first 4 KB give away the redirect pages
   and the pages of other namespaces, and the sizes estimate article lengths (its progress counts
   clusters, one decompression each, not pages: redirect pages are tiny and stored together at
-  the end). Then it sorts the titles and cuts the volumes. The size pass keeps its
-  progress in a checkpoint (`.cache/wikipedia-<uuid>.v<N>.part.json` / `.part.bin`: the sizes in
-  cluster order, appended as they finish), so a stopped build resumes it after a new scan; the
-  checkpoint fits only the same scan (count and a fingerprint) and is deleted once the index is
-  saved. It is built in the background on first open and cached as
-  `.cache/wikipedia-<uuid>.v<INDEX_VERSION>.json`: the entry indices in title order and their
+  the end). Then it sorts the titles and cuts the volumes. The size pass keeps its progress in a
+  checkpoint in the store (§3; on the server `.cache/wikipedia-<uuid>.v<N>.part.json` /
+  `.part.bin`: the sizes in cluster order, appended as they finish), so a stopped build resumes
+  it after a new scan; the checkpoint fits only the same scan (count and a fingerprint) and is
+  deleted once the index is saved. It is built in the background on first open and kept in the
+  store as `.cache/wikipedia-<uuid>.v<INDEX_VERSION>.json`: the entry indices in title order and their
   HTML sizes (both base64 `Uint32Array`s), and each volume's first and last title. Wikipedia
   100 takes under a second, Simple English 56 s.
 
-## 3. Server
+### 2.6 ZIM files opened in the browser (the local library)
+
+Step 2 of the online version (TODO): ZIMs someone opens on their own device, read in the browser
+by the same code as the server's (§3, `public/js/core/`), in a module worker
+(`public/js/local/worker.js`) over `File.slice`, so even a file of many gigabytes is never read
+whole. It works on GitHub Pages (no server) and beside a server's own libraries.
+
+- **Opening:** "Open ZIM files…" under the library list (a file input, several at once) or a drop
+  on the page (`ui/overlay.js` → `main.js` `openLocalFiles`); `__vrlbry.openZim(file)` does the
+  same for scripted tests. In a headset, files are picked before entering VR. Opened files last
+  until the page is reloaded (a browser cannot reopen a file by name); a saved place naming a
+  local library that is gone falls back as for a removed ZIM.
+- **What opens:** Gutenberg and generic ZIMs. Wikipedia and Wikisource ZIMs are refused for now
+  ("… ZIMs need the vrlbry server for now"): they need a full index pass (§2.4, §2.5), which a
+  later milestone runs in the browser (with an IndexedDB store) or ships prebuilt.
+- **Ids:** `~` + `libraryIdFor(file name)` (then `-2`, `-3` … for the same name twice):
+  `libraryIdFor` never makes a `~`, so they cannot clash with a server's; `~` is URL-safe.
+- **Requests:** `local/local.js` (page) ↔ `local/local-handler.js` (worker) by `postMessage`:
+  `open`, `catalog`, `books`, `meta`, `chunk` (the chunk's JSON bytes, transferred), `image`
+  (bytes and MIME type of a URL), `close`. `api.js` sends the requests of `~` libraries there;
+  `getCatalog()` (and a rescan's answer) lists the local libraries after the server's, with
+  generation `"<server>+<local>"` so the poll notices either changing. Local libraries have no
+  article search (no Wikipedia).
+- **Images:** their URLs are the core's (`/zim/~id/…`, `/api/libraries/~id/books/<id>/res/…`),
+  never fetched: `api.imageSource(url)` turns a local one into a blob URL, released once the
+  image has loaded (the decoded image stays). The reader's page images, covers and the volume
+  emblem load through it; the overlay renders a local `<img>` with `data-local-src` and fills it
+  in afterwards.
+- **The browser's platform** (`local/browser-platform.js`, made from the libraries the worker
+  loads from `/vendor/`): fzstd for zstd (the input cut at the end of its frame, since the last
+  cluster is read with whatever follows it), fflate for zlib and raw deflate, htmlparser2's
+  Parser; truncated input rejects with `code: 'Z_BUF_ERROR'`, as on Node, so the reader's
+  growing tail window works. No SHA-256 (xz SHA-256 checks are skipped).
+- **Memory:** converted books share a 64 MB cache, each archive keeps 32 MB of clusters (a
+  headset has far less memory than the PC).
+
+## 3. Server and shared core
+
+The code that reads ZIMs runs on the server and in a browser (§2.6): it lives in
+`public/js/core/`, which imports nothing from `node:` and no bare specifiers (a module worker has
+no import map). What differs goes through `core/platform.js`: `provide({...})` fills in the
+codecs (`zstd`, `inflate`, `inflateRaw`, `crc32`, `sha256`), htmlparser2's `Parser`, byte
+helpers (`alloc`, `copy`, `utf8`, `latin1`, `hex`, `encodeUtf8`, `fromBase64`, `toBase64`,
+`indexOf`), `gzip` / `etag` (chunk bodies, server only) and `openFile`. On Node,
+`server/platform-node.js` provides zlib, crypto, files and Buffers, so the server keeps Buffer's
+speed and every caller still gets Buffers; core code itself uses only `Uint8Array` features,
+`platform.*` and `core/util/bytes.js`. Node code using core modules directly (tests) imports
+`server/platform-node.js` first.
 
 ```
-server/
-  index.js            CLI entry (shebang). Parses args, scans dir, starts HTTP(S), prints URLs.
-  http.js             createServer(library, opts) → node:http(s) request handler + routes + static.
-  library.js          Library / ArchiveLibrary: catalog building, content conversion + caching,
-                      folder rescans.
-  wikisource.js       Wikisource works index (build/cache), genres, work assembly (§2.4, §3.8).
-  zim/reader.js       ZimArchive: low-level ZIM reading.
+public/js/core/       shared by the server and the browser's local library
+  platform.js         what differs between them (above)
+  zim/reader.js       ZimArchive: low-level ZIM reading from a byte source.
+  zim/blob-source.js  A Blob or File as a byte source (File.slice).
   zim/xz.js           Pure-JS .xz (LZMA2) decoder.
   content/html.js     HTML → blocks, chunking, TOC, image size sniffing.
   content/epub.js     ZIP + EPUB parsing (for EPUB-only books).
-  util/lru.js         Byte-budgeted LRU cache (shared helper; create if you need it).
+  library.js          ArchiveLibrary: catalog building, content conversion + caching.
+  wikisource.js       Wikisource works index (build, store), genres, work assembly (§2.4, §3.8).
+  wikipedia.js        Wikipedia article index (build, store, search) (§2.5).
+  util/lru.js         Byte-budgeted LRU cache.
+  util/index-queue.js Index builds one at a time, the smallest archive first (§4).
+  util/bytes.js       Little-endian integers and byte comparisons on Uint8Arrays.
+public/js/local/      the local library (§2.6): worker.js, local-handler.js, local.js,
+                      browser-platform.js
+server/
+  index.js            CLI entry (shebang). Parses args, scans dir, starts HTTP(S), prints URLs.
+  http.js             createApp(library, opts) → request handler + routes + static + /vendor/.
+  library.js          Library: a folder's archives (scan, rescans, watch, the index queue);
+                      ArchiveLibrary opened from files, its indexes kept in .cache/; re-exports
+                      the core's helpers.
+  platform-node.js    The core's platform on Node.
+  cache-store.js      Where derived indexes are kept: .cache/ (fileStore).
+  vendor.js           The /vendor/ packages; bare imports made relative for module workers.
 ```
 
-### 3.1 `server/zim/reader.js`
+Derived indexes (Wikisource works, Wikipedia articles and its checkpoint) go through a **store**
+(`readText`, `writeText` (atomic), `readBytes`, `writeBytes`, `appendBytes`, `truncate`,
+`remove`, by name; a missing name reads as `null`): the core's `ArchiveLibrary.open` takes
+`store`, the server's turns `cacheDir` into `fileStore(cacheDir)`, which keeps the file names
+the server has always used. With no store an index is built on every open and kept in memory
+(`_built`).
+
+### 3.1 `core/zim/reader.js`
+
+`ZimArchive.open(input)` takes a file path (opened by `platform.openFile`: Node only), a `Blob`
+or `File` (`BlobSource`), or any byte source `{ name, size, read(position, length), close() }`
+whose `read` resolves with `length` bytes, fewer only at the end. `filePath` is the path or
+the file's name, for messages.
 
 ```js
 export class ZimError extends Error {}
@@ -229,7 +301,7 @@ Requirements:
   ~log2(n) entries.
 - Bad magic / truncated file / out-of-range index → `ZimError` with a clear message.
 
-### 3.2 `server/zim/xz.js`
+### 3.2 `core/zim/xz.js`
 
 ```js
 export function xzDecompress(input: Uint8Array): Buffer   // throws Error on corrupt data
@@ -244,7 +316,7 @@ decoding, distances incl. align bits. Must be fast enough for multi-MB clusters 
 no per-byte allocations; pre-size output when the block header gives the uncompressed size,
 otherwise grow geometrically).
 
-### 3.3 `server/content/html.js`
+### 3.3 `core/content/html.js`
 
 ```js
 /** Converts one HTML (or XHTML) document into reader blocks (§3.5). */
@@ -319,7 +391,7 @@ Conversion rules:
   internal link targets; optional).
 - `title`: `<title>` text if present.
 
-### 3.4 `server/content/epub.js`
+### 3.4 `core/content/epub.js`
 
 ```js
 /** Minimal ZIP reader (central directory; methods 0 store and 8 deflate via zlib.inflateRawSync; ZIP64 not required). */
@@ -372,7 +444,13 @@ Chunking: walk blocks accumulating `blockChars`; close a chunk when it reaches `
 at `maxBlocks` blocks. Never split a block. `start` = cumulative chars before the chunk.
 An empty book yields one chunk with one paragraph block `"(This book has no readable text.)"`.
 
-### 3.6 `server/library.js`
+### 3.6 `core/library.js` (and `server/library.js`)
+
+`Library` is the server's (`server/library.js`); `ArchiveLibrary` is the core's, whose
+`open(input, { store, … })` takes a path or a `Blob`/`File` (§3.1) and a store (§3; none: the
+browser). The server's `ArchiveLibrary` subclass takes `cacheDir` instead (default
+`<project>/.cache`, as `fileStore`). Chunks keep their JSON as bytes (`Uint8Array`, a Buffer on
+Node), with `gzip()` and `etag` from the platform (the server's).
 
 ```js
 export class Library {
@@ -456,7 +534,7 @@ node server/index.js [--dir <path>] [--port 8080] [--host 0.0.0.0] [--https] [--
   (`http(s)://localhost:port` plus each LAN IPv4) with a hint about HTTPS for headsets. Graceful shutdown on SIGINT/SIGTERM.
 - Never crash on a bad request: catch everything, respond 500 JSON, log.
 
-### 3.8 `server/wikisource.js`
+### 3.8 `core/wikisource.js`
 
 ```js
 export function isWikisource(meta): boolean
@@ -464,9 +542,9 @@ export function genreOf(categories): string        // first matching GENRES rule
 export function yearOf(categories): number | null  // from "1926 works"
 export function cleanCategories(categories)        // drops maintenance/licensing categories
 export async function buildIndex(archive, { onProgress(stage, fraction), log }): Promise<Index>
-export function indexPath(cacheDir, archive)       // <cacheDir>/wikisource-<uuid>.v<N>.json
-export async function loadIndex(file, archive)     // null when absent / stale / other archive
-export async function saveIndex(file, index)       // atomic (temp file + rename)
+export function indexName(archive)                 // wikisource-<uuid>.v<N>.json, a name in a store (§3)
+export async function loadIndex(store, name, archive) // null when absent / stale / other archive
+export async function saveIndex(store, name, index)   // store.writeText: atomic on disk
 export async function collectWork(archive, rootUrl, { maxParts = 1200, maxBytes = 36e6, expectedParts })
     : Promise<{ parts: [{ url, path, html, depth }], truncated, total }>
 // Index = { version, uuid, works: [[url, title, entryIndex, parts, coverPath|null, year|null, categories[], author|null]] }
@@ -542,7 +620,7 @@ re-fetch. Wikisource libraries (`"kind": "wikisource"`) add `"genres": [{ "name"
 waits for its turn, see below).
 
 A folder's index builds (Wikisource, Wikipedia) go through one `IndexQueue`
-(`server/util/index-queue.js`): archives over 1 GB are indexed one at a time, the smallest
+(`core/util/index-queue.js`): archives over 1 GB are indexed one at a time, the smallest
 first, and smaller ones at once. Builds share the main thread and libuv's four threads, so
 together they only slow each other down: 8 Wikipedias re-indexed at once took 52 min, Simple
 English 20 min instead of about 1. A folder scan holds the queue until it has opened every new
@@ -1049,7 +1127,8 @@ States: `browse` → `inspect` → `read` (and back).
   `settings.updateNotices = false` (no banner, no VR notice; the kiosk's note stays), and the help
   dialog's "Tell me when this site has been updated" checkbox turns it back on.
 - DOM overlay (non-VR): see `ui/overlay.js` — title with the same "Updated …" stamp, library
-  cards (with indexing progress or "waiting to index"), a ⟳ rescan button, search box (filters by title / author across *all* books of all libraries;
+  cards (with indexing progress or "waiting to index"), a ⟳ rescan button, "Open ZIM files…"
+  under the cards and a drop target over the page (local library, §2.6), search box (filters by title / author across *all* books of all libraries;
   picking a result = switch room if needed, teleport to it and select it; for Wikipedia
   libraries it also asks the server for articles by title, 150 ms after typing stops, listed
   after up to 6 books; picking an article takes its volume off the shelf and opens it at that

@@ -179,7 +179,16 @@ and Medicine minis, Wikipedia 100, and Golf with pictures, cached between runs),
 `--zims` and publishes it on every push to `main`; enable it once in the repository's Settings →
 Pages → Source: *GitHub Actions*. The demo set makes a site of about 605 MB in 176,000 files
 (Pages allows 1 GB).
-Reading any ZIM file without the server is planned (see the [TODO list](TODO.md)).
+
+### Your own ZIM files, without the server
+
+"Open ZIM files…" under the library list (or dropping `.zim` files on the page) reads ZIMs from
+your own device in the browser, in the online version as well as beside a server's libraries:
+nothing is uploaded, and only the parts of the file a page needs are read, so even very large
+files open quickly. Gutenberg ZIMs and other non-Wikipedia ZIMs work this way; Wikipedia and
+Wikisource ZIMs still need the server (they are indexed first). The files stay open until the
+page is reloaded. On a Quest, open them before entering VR. Reading Kiwix's ZIMs straight from
+the internet is planned (see the [TODO list](TODO.md)).
 
 ## Measuring performance on a Quest
 
