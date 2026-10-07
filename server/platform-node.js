@@ -12,6 +12,7 @@ import { provide } from '../public/js/core/platform.js';
 
 const asBuffer = (bytes) => (Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength));
 
+const gzip = promisify(zlib.gzip);
 const zstd = typeof zlib.zstdDecompress === 'function' ? promisify(zlib.zstdDecompress)
   : () => Promise.reject(new Error('zstd needs Node.js >= 22.15 (zlib.zstdDecompress)'));
 
@@ -48,7 +49,8 @@ provide({
   latin1: (bytes, start = 0, end = bytes.length) => asBuffer(bytes).toString('latin1', start, end),
   hex: (bytes, start = 0, end = bytes.length) => asBuffer(bytes).toString('hex', start, end),
   encodeUtf8: (text) => Buffer.from(text, 'utf8'),
-  base64: (text) => Buffer.from(text, 'base64'),
+  fromBase64: (text) => Buffer.from(text, 'base64'),
+  toBase64: (bytes) => asBuffer(bytes).toString('base64'),
   indexOf: (hay, needle, from = 0) => asBuffer(hay).indexOf(needle, from),
   zstd,
   inflate: promisify(zlib.inflate),
@@ -56,5 +58,7 @@ provide({
   crc32: typeof zlib.crc32 === 'function' ? (bytes) => zlib.crc32(bytes) >>> 0 : null,
   sha256: (bytes) => crypto.createHash('sha256').update(bytes).digest(),
   Parser,
+  gzip: (bytes) => gzip(bytes, { level: 6 }),
+  etag: (bytes) => `"${crypto.createHash('sha1').update(bytes).digest('base64url')}"`,
   openFile,
 });

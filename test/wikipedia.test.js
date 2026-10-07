@@ -10,8 +10,9 @@ import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { ArchiveLibrary, Library } from '../server/library.js';
 import { createApp } from '../server/http.js';
+import { fileStore } from '../server/cache-store.js';
 import { ZimArchive } from '../public/js/core/zim/reader.js';
-import { isWikipedia, buildIndex, volumeTitle, removeCheckpoint } from '../server/wikipedia.js';
+import { isWikipedia, buildIndex, volumeTitle, removeCheckpoint } from '../public/js/core/wikipedia.js';
 import { writeZim } from './helpers/zimwriter.js';
 
 let tmp;
@@ -202,7 +203,9 @@ describe('wikipedia', () => {
   it('resumes an interrupted index build from its checkpoint, and ignores one of another scan', async () => {
     const file = path.join(tmp, 'wp-resume.zim');
     writeWikipediaZim(file);
-    const base = path.join(tmp, 'resume-cache', 'wp.part');
+    const store = fileStore(path.join(tmp, 'resume-cache'));
+    const name = 'wp.part';
+    const base = path.join(store.dir, name); // its files, for the checks
     const plain = (idx) => ({ ...idx, order: [...idx.order], sizes: [...idx.sizes] });
     let z = await ZimArchive.open(file);
     const clean = plain(await buildIndex(z, { volumeSize: 3 }));
@@ -216,7 +219,7 @@ describe('wikipedia', () => {
       if (++calls > 2) throw new Error('interrupted');
       return read(...args);
     };
-    await assert.rejects(buildIndex(z, { volumeSize: 3, checkpoint: base, checkpointEvery: 1, lanes: 1 }), /interrupted/);
+    await assert.rejects(buildIndex(z, { volumeSize: 3, store, checkpoint: name, checkpointEvery: 1, lanes: 1 }), /interrupted/);
     await z.close();
     const kept = fs.statSync(`${base}.bin`).size / 4;
     assert.ok(kept >= 2, `sizes were checkpointed (${kept})`);
@@ -230,7 +233,7 @@ describe('wikipedia', () => {
       return read2(c, ...args);
     };
     const logs = [];
-    const resumed = plain(await buildIndex(z, { volumeSize: 3, checkpoint: base, checkpointEvery: 1, lanes: 2, log: (m) => logs.push(m) }));
+    const resumed = plain(await buildIndex(z, { volumeSize: 3, store, checkpoint: name, checkpointEvery: 1, lanes: 2, log: (m) => logs.push(m) }));
     await z.close();
     assert.match(logs.join('\n'), new RegExp(`resuming: ${kept} of \\d+ page sizes`));
     assert.equal(calls, 3, 'the interrupted build read two clusters, the third failed');
@@ -242,12 +245,12 @@ describe('wikipedia', () => {
     fs.writeFileSync(`${base}.json`, JSON.stringify({ ...meta, fingerprint: 'other' }));
     z = await ZimArchive.open(file);
     const logs2 = [];
-    const fresh = plain(await buildIndex(z, { volumeSize: 3, checkpoint: base, log: (m) => logs2.push(m) }));
+    const fresh = plain(await buildIndex(z, { volumeSize: 3, store, checkpoint: name, log: (m) => logs2.push(m) }));
     await z.close();
     assert.ok(!logs2.some((m) => m.includes('resuming')), 'not resumed');
     assert.deepEqual(fresh, clean);
     assert.equal(JSON.parse(fs.readFileSync(`${base}.json`, 'utf8')).fingerprint, meta.fingerprint, 'rewritten for this scan');
-    await removeCheckpoint(base);
+    await removeCheckpoint(store, name);
     assert.ok(!fs.existsSync(`${base}.json`) && !fs.existsSync(`${base}.bin`));
   });
 

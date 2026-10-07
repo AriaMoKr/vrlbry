@@ -2,7 +2,7 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { IndexQueue } from '../server/util/index-queue.js';
+import { IndexQueue } from '../public/js/core/util/index-queue.js';
 
 /** A task that records its start and end, and finishes when `finish()` is called. */
 function gate(name, events) {

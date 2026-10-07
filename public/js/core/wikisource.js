@@ -4,12 +4,11 @@
 // subpages ("Teeftallow" + "Teeftallow/Chapter_1"…). The index is built once per archive — a
 // structure scan, then the works' own pages (categories → genre/year, first large image →
 // cover, title-page text) and the Author: pages (which link to their works → author) — and
-// cached on disk keyed by the archive UUID. Reading a work assembles its main page and subpages
-// in table-of-contents order.
+// kept in a store (the server's .cache/, server/cache-store.js) keyed by the archive UUID. Reading
+// a work assembles its main page and subpages in table-of-contents order.
 
-import fs from 'node:fs/promises';
-import path from 'node:path';
-import { resolveHref } from '../public/js/core/content/html.js';
+import { resolveHref } from './content/html.js';
+import { platform } from './platform.js';
 
 export const INDEX_VERSION = 1;
 
@@ -137,7 +136,7 @@ export function contentLinks(html, docPath) {
 }
 
 function decode(buf) {
-  return Buffer.isBuffer(buf) ? buf.toString('utf8') : String(buf);
+  return buf instanceof Uint8Array ? platform.utf8(buf) : String(buf);
 }
 
 /** Runs `fn` over items with bounded concurrency. */
@@ -153,7 +152,7 @@ async function eachLimit(items, limit, fn) {
 
 /**
  * Builds the works index of a Wikisource archive (takes a minute or few for a full ZIM).
- * @param {import('../public/js/core/zim/reader.js').ZimArchive} archive
+ * @param {import('./zim/reader.js').ZimArchive} archive
  * @param {{ onProgress?: (stage: string, fraction: number) => void, log?: (msg: string) => void }} [opts]
  * @returns {Promise<{ version: number, uuid: string, works: Array<object> }>}
  */
@@ -263,15 +262,15 @@ export async function buildIndex(archive, { onProgress = () => {}, log = () => {
   };
 }
 
-/** Index file path for an archive. */
-export function indexPath(cacheDir, archive) {
-  return path.join(cacheDir, `wikisource-${archive.header.uuid}.v${INDEX_VERSION}.json`);
+/** The name of an archive's index in a store. */
+export function indexName(archive) {
+  return `wikisource-${archive.header.uuid}.v${INDEX_VERSION}.json`;
 }
 
-/** Loads a cached index, or null when absent/stale/corrupt. */
-export async function loadIndex(file, archive) {
+/** Loads a stored index, or null when absent/stale/corrupt. */
+export async function loadIndex(store, name, archive) {
   try {
-    const idx = JSON.parse(await fs.readFile(file, 'utf8'));
+    const idx = JSON.parse((await store.readText(name)) ?? 'null');
     if (idx?.version !== INDEX_VERSION || idx.uuid !== archive.header.uuid || !Array.isArray(idx.works)) return null;
     return idx;
   } catch {
@@ -279,12 +278,9 @@ export async function loadIndex(file, archive) {
   }
 }
 
-/** Saves an index atomically (temp file + rename). */
-export async function saveIndex(file, idx) {
-  await fs.mkdir(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.tmp`;
-  await fs.writeFile(tmp, JSON.stringify(idx));
-  await fs.rename(tmp, file);
+/** Saves an index in a store. */
+export async function saveIndex(store, name, idx) {
+  await store.writeText(name, JSON.stringify(idx));
 }
 
 /** Natural sort key: numbers compare by value ("Chapter_2" < "Chapter_10"). */
@@ -297,7 +293,7 @@ function naturalCompare(a, b) {
  * their parent links to them (the main page may link any descendant, other pages only their own
  * descendants, so in-text links to sibling chapters cannot reorder the book). Subpages nobody
  * links to are appended in natural order when the links found cover less than half of them.
- * @param {import('../public/js/core/zim/reader.js').ZimArchive} archive
+ * @param {import('./zim/reader.js').ZimArchive} archive
  * @param {string} rootUrl URL of the work's main page in namespace C
  * @param {{ maxParts?: number, maxBytes?: number, expectedParts?: number }} [opts]
  * @returns {Promise<{ parts: Array<{ url: string, path: string, html: string, depth: number }>, truncated: boolean, total: number }>}

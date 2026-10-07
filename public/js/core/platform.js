@@ -32,8 +32,17 @@ export const platform = {
   },
   /** UTF-8 bytes of a string. */
   encodeUtf8: (text) => encoder.encode(text),
-  /** Bytes of a base64 string. */
-  base64: (text) => Uint8Array.from(atob(text), (c) => c.charCodeAt(0)),
+  /** Bytes of a base64 (or base64url) string; other characters are skipped, as Node does. */
+  fromBase64: (text) => {
+    const clean = String(text).replace(/[-_]/g, (c) => (c === '-' ? '+' : '/')).replace(/[^A-Za-z0-9+/]/g, '');
+    return Uint8Array.from(atob(clean + '='.repeat((4 - (clean.length % 4)) % 4)), (c) => c.charCodeAt(0));
+  },
+  /** Base64 of bytes. */
+  toBase64: (bytes) => {
+    let s = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    return btoa(s);
+  },
   /** Position of the byte sequence `needle` in `hay` from `from`, or -1. */
   indexOf: (hay, needle, from = 0) => {
     const n = needle.length;
@@ -58,6 +67,10 @@ export const platform = {
   sha256: null,
   /** htmlparser2's Parser class. */
   Parser: null,
+  /** gzip of bytes (a chunk's HTTP body; Node only). */
+  gzip: missing('gzip'),
+  /** A strong HTTP validator of bytes (Node only). */
+  etag: missing('etag'),
   /** A byte source for a file path (Node only; ZimArchive.open with a string). */
   openFile: missing('openFile'),
 };

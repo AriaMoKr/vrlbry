@@ -12,7 +12,7 @@ import { ZimArchive } from '../public/js/core/zim/reader.js';
 import {
   isWikisource, genreOf, yearOf, cleanCategories, pageCategories, coverOf, contentLinks, partTitle,
   buildIndex, collectWork, OTHER_GENRE,
-} from '../server/wikisource.js';
+} from '../public/js/core/wikisource.js';
 import { writeZim } from './helpers/zimwriter.js';
 
 let tmp;

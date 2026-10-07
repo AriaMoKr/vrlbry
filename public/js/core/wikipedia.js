@@ -1,11 +1,11 @@
 // Wikipedia ZIMs (mwoffliner) as a room of encyclopedia volumes (SPEC §2.5): the articles in the
 // app's title order, cut into volumes of VOLUME_SIZE consecutive articles. The index needs titles
 // only (no article is read), so building it is a scan of the directory plus one sort; it is built
-// in the background on first open and cached in .cache/ like the Wikisource index.
+// in the background on first open and kept in a store (the server's .cache/, server/cache-store.js)
+// like the Wikisource index.
 
-import fs from 'node:fs/promises';
-import path from 'node:path';
-import { titleKey } from '../public/js/util/books.js';
+import { titleKey } from '../util/books.js';
+import { platform } from './platform.js';
 
 export const INDEX_VERSION = 4; // bump when the index format or what counts as an article changes
 /** Articles per volume. */
@@ -37,17 +37,18 @@ const collator = new Intl.Collator();
  * Builds the article index: the HTML entries of the article namespace but redirects, the main
  * page, mwoffliner's own pages and the pages that sizePages finds are not articles, in title
  * order, and the volumes cut from it.
- * @param {import('../public/js/core/zim/reader.js').ZimArchive} archive
+ * @param {import('./zim/reader.js').ZimArchive} archive
  * Stages: 'scan' (the directory), 'sizes' (sizePages: resumable with `checkpoint`), 'sort'.
  * @param {{ volumeSize?: number, onProgress?: (stage: string, fraction: number) => void, log?: (msg: string) => void,
- *   checkpoint?: string|null, checkpointEvery?: number, lanes?: number }} [opts] checkpoint: base path
- *   (checkpointPath) where the sizes pass keeps its progress; lanes: clusters decompressed at once
+ *   store?: object|null, checkpoint?: string|null, checkpointEvery?: number, lanes?: number }} [opts] checkpoint:
+ *   base name in `store` (checkpointName) where the sizes pass keeps its progress; lanes: clusters
+ *   decompressed at once
  * @returns {Promise<{ version, uuid, ns, volumeSize, count, order: Uint32Array, sizes: Uint32Array, volumes: Array<[string, string]> }>}
  *   order: entry indices in title order; sizes: their HTML bytes; volumes: [first title, last title]
  */
 export async function buildIndex(archive, {
   volumeSize = VOLUME_SIZE, onProgress = () => {}, log = () => {},
-  checkpoint = null, checkpointEvery = CHECKPOINT_EVERY, lanes = SIZE_LANES,
+  store = null, checkpoint = null, checkpointEvery = CHECKPOINT_EVERY, lanes = SIZE_LANES,
 } = {}) {
   const ns = archive.newNamespaceScheme ? 'C' : 'A';
   const start = await archive.lowerBound(ns, '');
@@ -85,7 +86,9 @@ export async function buildIndex(archive, {
   onProgress('scan', 1);
   // 2. Sizes (sizePages): they estimate article lengths, and each page's first bytes give away
   // mwoffliner's redirect pages and the pages that are not articles.
-  const sizes = await sizePages(archive, { n, index, cluster, blob, onProgress, log, checkpoint, checkpointEvery, lanes });
+  const sizes = await sizePages(archive, {
+    n, index, cluster, blob, onProgress, log, checkpoint: store && checkpoint ? { store, base: checkpoint } : null, checkpointEvery, lanes,
+  });
   // 3. The articles in title order (ties: the entry index, so the order is always the same).
   let articles = 0;
   let redirects = 0;
@@ -140,15 +143,15 @@ const grown = (a) => {
  * The HTML size of every candidate (by scan position), or what its first bytes say it is instead
  * (pageKind). In cluster order, so that each cluster is decompressed once, using the scan's
  * cluster and blob (re-reading each entry made the full English Wikipedia take ~7 hours), and
- * `lanes` clusters at once. With `checkpoint` (a base path) the sizes done are appended to
- * <checkpoint>.bin as they finish, so an interrupted build resumes here after a new scan.
+ * `lanes` clusters at once. With `checkpoint` ({ store, base }) the sizes done are appended to
+ * <base>.bin in the store as they finish, so an interrupted build resumes here after a new scan.
  */
 async function sizePages(archive, { n, index, cluster, blob, onProgress, log, checkpoint, checkpointEvery, lanes }) {
   const byCluster = new Uint32Array(n);
   for (let i = 0; i < n; i++) byCluster[i] = i;
   byCluster.sort((a, b) => cluster[a] - cluster[b] || blob[a] - blob[b]);
   const sizes = new Uint32Array(n);
-  const ck = checkpoint ? await openCheckpoint(checkpoint, { n, fingerprint: scanFingerprint(n, byCluster, index) }) : null;
+  const ck = checkpoint ? await openCheckpoint(checkpoint.store, checkpoint.base, { n, fingerprint: scanFingerprint(n, byCluster, index) }) : null;
   const done = ck?.done ?? 0;
   for (let p = 0; p < done; p++) sizes[byCluster[p]] = ck.prior[p];
   if (done) log(` resuming: ${done} of ${n} page sizes from the checkpoint`);
@@ -215,8 +218,8 @@ const REFRESH = /<meta[^>]+http-equiv=["']?refresh/i;
 const REDIRECT_PAGE_MAX = 1024;
 /** Bytes read from the start of each page for pageKind (mwoffliner's marks are within ~1.3 KB). */
 const PAGE_HEAD = 4096;
-const NAMESPACE = Buffer.from('"wgNamespaceNumber":');
-const PLACEHOLDER = Buffer.from('download_error_placeholder');
+const NAMESPACE = new TextEncoder().encode('"wgNamespaceNumber":');
+const PLACEHOLDER = new TextEncoder().encode('download_error_placeholder');
 
 /**
  * A page's size, or REDIRECT_PAGE for a mwoffliner redirect page (a redirect to a section stored
@@ -226,17 +229,17 @@ const PLACEHOLDER = Buffer.from('download_error_placeholder');
  * ("Oops. Page not found"). Only the content gives these away. A page without the namespace mark
  * (older ZIMs, which have no such pages) counts as an article.
  * @param {number} size
- * @param {Buffer|null} head the page's first PAGE_HEAD bytes
+ * @param {Uint8Array|null} head the page's first PAGE_HEAD bytes
  */
 function pageKind(size, head) {
   if (!head) return Math.min(size, OTHER_PAGE - 1);
-  if (size <= REDIRECT_PAGE_MAX && REFRESH.test(head.toString('utf8'))) return REDIRECT_PAGE;
-  const at = head.indexOf(NAMESPACE);
+  if (size <= REDIRECT_PAGE_MAX && REFRESH.test(platform.utf8(head))) return REDIRECT_PAGE;
+  const at = platform.indexOf(head, NAMESPACE);
   if (at >= 0) {
-    const ns = /^\s*(-?\d+)/.exec(head.toString('latin1', at + NAMESPACE.length, at + NAMESPACE.length + 12));
+    const ns = /^\s*(-?\d+)/.exec(platform.latin1(head, at + NAMESPACE.length, Math.min(head.length, at + NAMESPACE.length + 12)));
     if (ns && ns[1] !== '0') return OTHER_PAGE;
   }
-  if (head.indexOf(PLACEHOLDER) >= 0) return OTHER_PAGE;
+  if (platform.indexOf(head, PLACEHOLDER) >= 0) return OTHER_PAGE;
   return Math.min(size, OTHER_PAGE - 1);
 }
 
@@ -250,42 +253,44 @@ function scanFingerprint(n, byCluster, index) {
   return h.toString(16);
 }
 
-/** Where a Wikipedia index being built keeps its progress: <base>.json (what for) and <base>.bin (the sizes). */
-export function checkpointPath(cacheDir, archive) {
-  return path.join(cacheDir, `wikipedia-${archive.header.uuid}.v${INDEX_VERSION}.part`);
+/**
+ * The base name under which a Wikipedia index being built keeps its progress in a store:
+ * <base>.json (what for) and <base>.bin (the sizes).
+ */
+export function checkpointName(archive) {
+  return `wikipedia-${archive.header.uuid}.v${INDEX_VERSION}.part`;
 }
 
 /**
  * Opens a checkpoint: the sizes it holds when it was made for this scan (count and fingerprint),
  * else a fresh one. A partly written last size is cut off.
  */
-async function openCheckpoint(base, { n, fingerprint }) {
+async function openCheckpoint(store, base, { n, fingerprint }) {
   const meta = `${base}.json`;
   const bin = `${base}.bin`;
   let done = 0;
   let prior = null;
   try {
-    const m = JSON.parse(await fs.readFile(meta, 'utf8'));
-    if (m.version === CHECKPOINT_VERSION && m.count === n && m.fingerprint === fingerprint) {
-      const buf = await fs.readFile(bin);
-      done = Math.min(n, Math.floor(buf.length / 4));
-      prior = new Uint32Array(new Uint8Array(buf.subarray(0, done * 4)).buffer); // copied: aligned
-      if (buf.length !== done * 4) await fs.truncate(bin, done * 4);
+    const m = JSON.parse((await store.readText(meta)) ?? 'null');
+    if (m?.version === CHECKPOINT_VERSION && m.count === n && m.fingerprint === fingerprint) {
+      const buf = await store.readBytes(bin);
+      done = buf ? Math.min(n, Math.floor(buf.length / 4)) : 0;
+      if (done) prior = new Uint32Array(new Uint8Array(buf.subarray(0, done * 4)).buffer); // copied: aligned
+      if (buf && buf.length !== done * 4) await store.truncate(bin, done * 4);
     }
   } catch {
-    done = 0; // none yet, or unreadable: start afresh
+    done = 0; // unreadable: start afresh
   }
   if (!done) {
-    await fs.mkdir(path.dirname(base), { recursive: true });
-    await fs.writeFile(meta, JSON.stringify({ version: CHECKPOINT_VERSION, count: n, fingerprint }));
-    await fs.writeFile(bin, Buffer.alloc(0));
+    await store.writeText(meta, JSON.stringify({ version: CHECKPOINT_VERSION, count: n, fingerprint }));
+    await store.writeBytes(bin, new Uint8Array(0));
   }
-  return { done, prior, append: (u32) => fs.appendFile(bin, Buffer.from(u32.buffer, u32.byteOffset, u32.byteLength)) };
+  return { done, prior, append: (u32) => store.appendBytes(bin, new Uint8Array(u32.buffer, u32.byteOffset, u32.byteLength)) };
 }
 
 /** Deletes a checkpoint (once the index it was for is saved). */
-export async function removeCheckpoint(base) {
-  await Promise.all([fs.rm(`${base}.json`, { force: true }), fs.rm(`${base}.bin`, { force: true })]);
+export async function removeCheckpoint(store, base) {
+  await Promise.all([store.remove(`${base}.json`), store.remove(`${base}.bin`)]);
 }
 
 /** Most results a search returns. */
@@ -295,7 +300,7 @@ export const SEARCH_LIMIT = 50;
  * Articles whose title starts with `query`, in title order. Matching uses the index's own key
  * (titleKey: case, accents, a leading "The" and punctuation are ignored), so a binary search over
  * the sorted index finds the first match after reading ~log2(count) directory entries.
- * @param {import('../public/js/core/zim/reader.js').ZimArchive} archive
+ * @param {import('./zim/reader.js').ZimArchive} archive
  * @param {{ order: Uint32Array, count: number }} idx
  * @param {string} query
  * @param {number} [limit]
@@ -385,17 +390,18 @@ export async function searchRedirects(archive, idx, query, limit = 12) {
   return out;
 }
 
-export function indexPath(cacheDir, archive) {
-  return path.join(cacheDir, `wikipedia-${archive.header.uuid}.v${INDEX_VERSION}.json`);
+/** The name of an archive's index in a store. */
+export function indexName(archive) {
+  return `wikipedia-${archive.header.uuid}.v${INDEX_VERSION}.json`;
 }
 
-/** Loads a cached index (order decoded to a Uint32Array), or null when absent/stale/corrupt. */
-export async function loadIndex(file, archive) {
+/** Loads a stored index (order decoded to a Uint32Array), or null when absent/stale/corrupt. */
+export async function loadIndex(store, name, archive) {
   try {
-    const raw = JSON.parse(await fs.readFile(file, 'utf8'));
+    const raw = JSON.parse((await store.readText(name)) ?? 'null');
     if (raw?.version !== INDEX_VERSION || raw.uuid !== archive.header.uuid || !Array.isArray(raw.volumes)) return null;
-    // Copied out of the Buffers: their offsets may be unaligned for a Uint32Array.
-    const u32 = (b64) => new Uint32Array(new Uint8Array(Buffer.from(b64, 'base64')).buffer);
+    // Copied out of the decoded bytes: their offsets may be unaligned for a Uint32Array.
+    const u32 = (b64) => new Uint32Array(new Uint8Array(platform.fromBase64(b64)).buffer);
     const order = u32(raw.order);
     const sizes = u32(raw.sizes);
     if (order.length !== raw.count || sizes.length !== raw.count) return null;
@@ -405,13 +411,10 @@ export async function loadIndex(file, archive) {
   }
 }
 
-/** Saves an index atomically (temp file + rename); `order` and `sizes` are stored as base64. */
-export async function saveIndex(file, idx) {
-  await fs.mkdir(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.tmp`;
-  const b64 = (a) => Buffer.from(a.buffer, a.byteOffset, a.byteLength).toString('base64');
-  await fs.writeFile(tmp, JSON.stringify({ ...idx, order: b64(idx.order), sizes: b64(idx.sizes) }));
-  await fs.rename(tmp, file);
+/** Saves an index in a store; `order` and `sizes` are stored as base64. */
+export async function saveIndex(store, name, idx) {
+  const b64 = (a) => platform.toBase64(new Uint8Array(a.buffer, a.byteOffset, a.byteLength));
+  await store.writeText(name, JSON.stringify({ ...idx, order: b64(idx.order), sizes: b64(idx.sizes) }));
 }
 
 /** The title of a volume: its range ("Aachen – Abbey"), or the one title of a one-article volume. */
