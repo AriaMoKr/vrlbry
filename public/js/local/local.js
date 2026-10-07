@@ -9,6 +9,17 @@ const pending = new Map(); // request id → { resolve, reject }
 const listeners = new Set();
 let opened = 0;
 
+/**
+ * A ZIM to try the local library with, from Kiwix (one of tools/demo-set.txt's, so the address is
+ * one the Pages workflow keeps using; a test checks), and where more like it are.
+ */
+export const EXAMPLE_ZIM = Object.freeze({
+  title: 'Gutenberg · Language and literature',
+  url: 'https://download.kiwix.org/zim/gutenberg/gutenberg_en_lcc-p_2026-03.zim',
+  size: '37 MB',
+});
+export const MORE_ZIMS_URL = 'https://download.kiwix.org/zim/gutenberg/';
+
 /** True for a local library's id. */
 export const isLocal = (libId) => String(libId ?? '').startsWith('~');
 

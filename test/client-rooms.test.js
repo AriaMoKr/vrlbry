@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { describe, it } from 'node:test';
+import { EXAMPLE_ZIM } from '../public/js/local/local.js';
 import {
   ROOM_CAP, ALL_PLACE, DEMO_PLACE, DEMO_LIBRARIES, groupPlaces, isDemoLibrary, placeBookCount, isFaceted, facetsOf, inRoom, defaultRoom, roomFor, roomLabel, sameRoom, normRoom, shelfCollections, collectionsFor,
   currentPlace, placeFor,
@@ -155,6 +156,10 @@ describe('rooms', () => {
     for (const name of DEMO_LIBRARIES) {
       assert.ok(ids.some((id) => isDemoLibrary({ id }) && id.startsWith(name)), `${name} is in DEMO_LIBRARIES but not in tools/demo-set.txt`);
     }
+    // The example offered for opening in the browser is a demo-set ZIM: an address the workflow
+    // keeps using (Kiwix replaces old dated files), and one the local library can open (Gutenberg).
+    assert.ok(urls.map((u) => u.trim()).includes(EXAMPLE_ZIM.url), `${EXAMPLE_ZIM.url} is not in tools/demo-set.txt`);
+    assert.match(EXAMPLE_ZIM.url, /\/gutenberg_[^/]+\.zim$/);
   });
 
   it('has no all-libraries place where it would be the demo set again', () => {

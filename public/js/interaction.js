@@ -184,6 +184,14 @@ export class Interaction {
     if (this._kioskTab === 'rooms') this._fillRoomsTab(p, y, pad, place, placesScroll);
     else if (this._kioskTab === 'search') this._fillSearchTab(p, y, pad);
     else this._fillShelvesTab(p, y, pad, place);
+    // In VR a file cannot be picked or downloaded: say where that is done (the page's library
+    // card has the button and a link to an example ZIM). Not over the newer-version notice.
+    if (this.controls.presenting && !this._outdated) {
+      p.add({
+        id: 'own-zims', type: 'text', x: pad, y: p.h - 40, w: W - 2 * pad - 270, h: 28, size: 20, color: UI.muted, maxLines: 1,
+        text: 'Your own ZIM files: exit VR, then “Open ZIM files…” on the page',
+      });
+    }
     if (this._version || this._outdated) {
       const text = this._outdated ? 'A newer version of this site is available: reload the page' : this._version;
       p.add({ id: 'version', type: 'text', x: pad, y: p.h - 40, w: W - 2 * pad, h: 28, text, size: 21, color: this._outdated ? UI.accent : UI.muted, align: 'right', maxLines: 1 });

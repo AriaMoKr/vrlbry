@@ -2,7 +2,7 @@
 // Hidden while an immersive session is running.
 
 import { imageSource } from '../api.js';
-import { isLocalUrl } from '../local/local.js';
+import { EXAMPLE_ZIM, MORE_ZIMS_URL, isLocalUrl } from '../local/local.js';
 import { bookIndex, matchBooks, findArticles } from '../search.js';
 import { load, save } from '../util/storage.js';
 
@@ -92,6 +92,10 @@ export class Overlay {
         <div class="ov-open">
           <button class="ov-open-btn" title="Read ZIM files from this device, in the browser">Open ZIM files…</button>
           <input class="ov-open-input" type="file" accept=".zim" multiple hidden>
+          <div class="ov-open-hint">No ZIM file yet? Download
+            <a href="${esc(EXAMPLE_ZIM.url)}" target="_blank" rel="noopener">${esc(EXAMPLE_ZIM.title)}</a>
+            (${esc(EXAMPLE_ZIM.size)}) from Kiwix, then open it here.
+            <a href="${esc(MORE_ZIMS_URL)}" target="_blank" rel="noopener">More Gutenberg ZIMs</a></div>
         </div>
       </section>
       <div class="ov-drop" hidden>Drop ZIM files to open them</div>
