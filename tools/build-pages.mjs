@@ -31,11 +31,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { fileName } from '../public/js/util/file-names.js';
+import { DEFAULT_VENDOR_DIRS, rewriteVendorImports, vendorFileOf, vendorUrlOf } from '../server/vendor.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PUBLIC = path.join(ROOT, 'public');
-const THREE = path.join(ROOT, 'node_modules', 'three');
-const IWER = path.join(ROOT, 'node_modules', 'iwer', 'build');
+const THREE = DEFAULT_VENDOR_DIRS.three;
+const IWER = DEFAULT_VENDOR_DIRS.iwer;
 /** Pages of public/ that need the Node server's API (book lists, chunks): left out. */
 const SERVER_ONLY = ['dev', 'reader-test.html'];
 
@@ -73,7 +74,7 @@ function resolve(spec, fromFile) {
 }
 
 /** Every file reachable through imports from `entries` (absolute paths). */
-function closure(entries) {
+function closure(entries, read = (file) => fs.readFileSync(file, 'utf8')) {
   const seen = new Set();
   const todo = [...entries];
   while (todo.length) {
@@ -81,13 +82,37 @@ function closure(entries) {
     if (seen.has(file)) continue;
     if (!fs.existsSync(file)) throw new Error(`missing module: ${path.relative(ROOT, file)}`);
     seen.add(file);
-    if (!file.endsWith('.js')) continue;
-    for (const spec of importsOf(fs.readFileSync(file, 'utf8'))) {
+    if (!/\.m?js$/.test(file)) continue;
+    for (const spec of importsOf(read(file))) {
       const dep = resolve(spec, file);
       if (dep) todo.push(dep);
     }
   }
   return [...seen];
+}
+
+/**
+ * Where a vendor package's file is in the site, under vendor/<name>/: [name, path inside] (its
+ * URL, which may differ from its file name: vendorUrlOf), or null when `file` is in no package of
+ * DEFAULT_VENDOR_DIRS but three's and IWER's (copied apart).
+ */
+function vendorPathOf(file) {
+  for (const [name, dir] of Object.entries(DEFAULT_VENDOR_DIRS)) {
+    if (name === 'three' || name === 'iwer') continue;
+    const rel = path.relative(dir, file);
+    if (!rel.startsWith('..') && !path.isAbsolute(rel)) {
+      const url = vendorUrlOf(`${name}/${rel.split(path.sep).join('/')}`);
+      return [name, url.slice(name.length + 1)];
+    }
+  }
+  return null;
+}
+
+/** A vendor file's source with its bare imports made relative (server/vendor.js). */
+function vendorSource(file) {
+  const source = fs.readFileSync(file, 'utf8');
+  const at = vendorPathOf(file);
+  return at ? rewriteVendorImports(`${at[0]}/${at[1]}`, source) : source;
 }
 
 /** Relative specifiers of imports, re-exports and dynamic imports: (head)(quote)(specifier). */
@@ -137,16 +162,18 @@ function hashFiles(files, base, extra = []) {
 function versionUrls(out) {
   const three = filesUnder(path.join(out, 'vendor', 'three'));
   const iwer = filesUnder(path.join(out, 'vendor', 'iwer'));
+  const lib = filesUnder(path.join(out, 'vendor')).filter((f) => !three.includes(f) && !iwer.includes(f));
   const app = [...filesUnder(path.join(out, 'js')), ...filesUnder(path.join(out, 'css'))];
-  const tags = { three: hashFiles(three, out), iwer: hashFiles(iwer, out) };
-  tags.app = hashFiles(app, out, [tags.three, tags.iwer]);
+  const tags = { three: hashFiles(three, out), iwer: hashFiles(iwer, out), lib: hashFiles(lib, out) };
+  tags.app = hashFiles(app, out, [tags.three, tags.iwer, tags.lib]);
   const tagFor = (file) => {
     const rel = path.relative(out, file).split(path.sep).join('/');
     if (rel.startsWith('vendor/three/')) return tags.three;
     if (rel.startsWith('vendor/iwer/')) return tags.iwer;
+    if (rel.startsWith('vendor/')) return tags.lib;
     return tags.app;
   };
-  for (const file of [...app, ...three, ...iwer].filter((f) => f.endsWith('.js'))) {
+  for (const file of [...app, ...three, ...iwer, ...lib].filter((f) => /\.m?js$/.test(f))) {
     const source = fs.readFileSync(file, 'utf8');
     const tagged = tagModuleUrls(source, (spec) => tagFor(path.resolve(path.dirname(file), spec)));
     if (tagged !== source) fs.writeFileSync(file, tagged);
@@ -383,11 +410,37 @@ async function main() {
       if (spec === 'three' || spec.startsWith('three/addons/')) entries.add(resolve(spec, file));
     }
   }
+  // The local library's worker has no import map: it names its vendor modules by relative URL
+  // (../../vendor/<name>/…), and their bare imports are rewritten as the server does.
+  const libEntries = new Set();
+  const vendorOut = path.join(OUT, 'vendor');
+  for (const file of clientModules) {
+    for (const spec of importsOf(fs.readFileSync(file, 'utf8'))) {
+      if (!spec.startsWith('.')) continue;
+      const rel = path.relative(vendorOut, path.resolve(path.dirname(file), spec));
+      if (rel.startsWith('..') || path.isAbsolute(rel)) continue;
+      const [name] = rel.split(path.sep);
+      if (name === 'three' || name === 'iwer' || !DEFAULT_VENDOR_DIRS[name]) {
+        throw new Error(`${path.relative(OUT, file)}: no vendor package for ${spec}`);
+      }
+      const inPackage = vendorFileOf(rel.split(path.sep).join('/')).split('/').slice(1);
+      libEntries.add(path.join(DEFAULT_VENDOR_DIRS[name], ...inPackage));
+    }
+  }
   const vendor = [
     ...closure([...entries]).map((file) => [file, path.join(OUT, 'vendor', 'three', path.relative(THREE, file))]),
     ...closure([path.join(IWER, 'iwer.module.js')]).map((file) => [file, path.join(OUT, 'vendor', 'iwer', path.relative(IWER, file))]),
   ];
   for (const [from, to] of vendor) copy(from, to);
+  const libs = closure([...libEntries], vendorSource);
+  for (const from of libs) {
+    const [name, rel] = vendorPathOf(from);
+    const to = path.join(vendorOut, name, ...rel.split('/'));
+    fs.mkdirSync(path.dirname(to), { recursive: true });
+    if (/\.m?js$/.test(from)) fs.writeFileSync(to, vendorSource(from));
+    else fs.copyFileSync(from, to);
+  }
+  vendor.push(...libs);
   const tags = versionUrls(OUT);
 
   // The API's static answers: the libraries of --zims (or none), and when the site last changed.
@@ -418,7 +471,7 @@ async function main() {
   };
   count(OUT);
   console.log(`Built ${path.relative(ROOT, OUT) || OUT}: ${files} files, ${(bytes / 1048576).toFixed(1)} MB `
-    + `(${vendor.length} vendor modules; versions: app ${tags.app}, three ${tags.three}, IWER ${tags.iwer}).`);
+    + `(${vendor.length} vendor modules; versions: app ${tags.app}, three ${tags.three}, IWER ${tags.iwer}, worker libraries ${tags.lib}).`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

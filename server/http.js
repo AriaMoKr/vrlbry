@@ -12,16 +12,15 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import zlib from 'node:zlib';
 import { LibraryError } from './library.js';
+import { DEFAULT_VENDOR_DIRS, rewriteVendorImports, vendorFileOf } from './vendor.js';
+
+export { DEFAULT_VENDOR_DIRS };
 
 const gzipAsync = promisify(zlib.gzip);
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-/** Default static roots: the client and the two vendored packages (§4). */
+/** Default static roots: the client and the vendored packages (server/vendor.js, §4). */
 export const DEFAULT_PUBLIC_DIR = path.join(ROOT, 'public');
-export const DEFAULT_VENDOR_DIRS = Object.freeze({
-  three: path.join(ROOT, 'node_modules', 'three'),
-  iwer: path.join(ROOT, 'node_modules', 'iwer', 'build'),
-});
 
 const JSON_TYPE = 'application/json; charset=utf-8';
 /** JSON bodies below this size are not worth compressing. */
@@ -122,8 +121,14 @@ export function createApp(library, { publicDir = DEFAULT_PUBLIC_DIR, vendorDirs 
     if (area === 'vendor') {
       const root = vendorRoots.get(segments[1]);
       if (!root || segments.length < 3) return sendText(req, res, 404, 'Not found');
-      return serveFile(req, res, root, segments.slice(2), {
+      // A vendor URL may name its file differently (vendor.js: fzstd's .mjs is served as .js).
+      const asked = segments.slice(1).join('/');
+      const aliased = vendorFileOf(asked);
+      const file = aliased === asked ? segments.slice(2) : aliased.split('/').slice(1);
+      return serveFile(req, res, root, file, {
         trailingSlash, cacheControl: VENDOR_CACHE, urlPrefix: `/vendor/${encodeURIComponent(segments[1])}`,
+        // The local library's worker has no import map: bare imports become relative URLs.
+        transform: (rel, text) => rewriteVendorImports(`${segments[1]}/${rel}`, text),
       });
     }
     return serveFile(req, res, publicRoot, segments, { trailingSlash, cacheControl: 'no-cache', isRoot: true, urlPrefix: '' });
@@ -227,7 +232,7 @@ export function createApp(library, { publicDir = DEFAULT_PUBLIC_DIR, vendorDirs 
   // ------------------------------------------------------------------------------------------
   // Static files
 
-  async function serveFile(req, res, root, segs, { trailingSlash, cacheControl, isRoot = false, urlPrefix }) {
+  async function serveFile(req, res, root, segs, { trailingSlash, cacheControl, isRoot = false, urlPrefix, transform = null }) {
     const parts = segs.filter((s) => s !== '');
     for (const seg of parts) {
       // Decoded segments must be plain names: no traversal, no separators (either OS), no drive
@@ -262,6 +267,21 @@ export function createApp(library, { publicDir = DEFAULT_PUBLIC_DIR, vendorDirs 
     const type = MIME_TYPES[path.extname(file).toLowerCase()] ?? 'application/octet-stream';
     const etag = `W/"${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}"`;
     if (notModified(req, etag)) return send304(res, etag, cacheControl);
+    if (transform && /\.m?js$/i.test(file)) {
+      // A module whose source changes on the way out (vendor imports): sent whole, no ranges.
+      const source = await fs.promises.readFile(file, 'utf8');
+      const out = transform(path.relative(root, file).split(path.sep).join('/'), source);
+      if (out !== source) {
+        const body = Buffer.from(out, 'utf8');
+        res.statusCode = 200;
+        res.setHeader('Content-Type', type);
+        res.setHeader('Content-Length', String(body.length));
+        res.setHeader('Cache-Control', cacheControl);
+        res.setHeader('ETag', etag);
+        res.setHeader('Last-Modified', stat.mtime.toUTCString());
+        return void res.end(req.method === 'HEAD' ? undefined : body);
+      }
+    }
 
     const range = parseRange(req, stat.size, etag);
     if (range === 'unsatisfiable') return send416(res, stat.size);
