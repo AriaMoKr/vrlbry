@@ -155,8 +155,9 @@ is the maxi flavour (with images). A Wikipedia is its own room of encyclopedia v
   in typed arrays), then reads each candidate's HTML size, decompressing every cluster once in
   cluster order, from the cluster and blob the scan found (`archive.clusterBlobs`, no directory
   entry re-read), several clusters at once: each page's first 4 KB give away the redirect pages
-  and the pages of other namespaces, and the sizes estimate article lengths. Then it sorts the
-  titles and cuts the volumes. The size pass keeps its
+  and the pages of other namespaces, and the sizes estimate article lengths (its progress counts
+  clusters, one decompression each, not pages: redirect pages are tiny and stored together at
+  the end). Then it sorts the titles and cuts the volumes. The size pass keeps its
   progress in a checkpoint (`.cache/wikipedia-<uuid>.v<N>.part.json` / `.part.bin`: the sizes in
   cluster order, appended as they finish), so a stopped build resumes it after a new scan; the
   checkpoint fits only the same scan (count and a fingerprint) and is deleted once the index is

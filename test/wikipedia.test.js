@@ -176,6 +176,29 @@ describe('wikipedia', () => {
     }
   });
 
+  it('reports the size pass\'s progress in clusters, not pages', async () => {
+    // One cluster of six small pages, then two of one page each: by pages the first cluster would
+    // be 75 % of the work; it is one decompression of three.
+    const P = (url, cluster) => ({ ns: 'C', url, title: url, mime: 'text/html', cluster, content: article(url, 'Text.') });
+    const file = path.join(tmp, 'progress.zim');
+    writeZim(file, {
+      scheme: 'new',
+      entries: [
+        ...['A1', 'A2', 'A3', 'A4', 'A5', 'A6'].map((u) => P(u, 'many')),
+        P('B', 'b'),
+        P('C', 'c'),
+      ],
+    });
+    const z = await ZimArchive.open(file);
+    try {
+      const steps = [];
+      await buildIndex(z, { lanes: 1, onProgress: (stage, f) => { if (stage === 'sizes') steps.push(Math.round(f * 100)); } });
+      assert.deepEqual(steps, [33, 67, 100, 100]);
+    } finally {
+      await z.close();
+    }
+  });
+
   it('resumes an interrupted index build from its checkpoint, and ignores one of another scan', async () => {
     const file = path.join(tmp, 'wp-resume.zim');
     writeWikipediaZim(file);

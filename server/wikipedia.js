@@ -154,9 +154,16 @@ async function sizePages(archive, { n, index, cluster, blob, onProgress, log, ch
   if (done) log(` resuming: ${done} of ${n} page sizes from the checkpoint`);
   const finished = new Uint8Array(n);
   finished.fill(1, 0, done);
+  // Progress counts clusters, not pages: each costs about one decompression, while the pages in
+  // one vary (mwoffliner's redirect pages are tiny and stored together at the end, so counted in
+  // pages the top 1M's second half took 19 s of 115).
+  const runStart = (p) => p === 0 || cluster[byCluster[p]] !== cluster[byCluster[p - 1]];
+  let runsBefore = 0;
+  for (let p = 0; p < done; p++) if (runStart(p)) runsBefore++;
+  let runs = 0;
+  for (let p = done; p < n; p++) if (p === done || runStart(p)) runs++;
+  let runsDone = 0;
   let next = done; // next position (in cluster order) to hand out
-  let completed = done;
-  let reported = done;
   let flushed = done; // positions before this are in the checkpoint
   let writing = Promise.resolve();
   const flush = (all) => {
@@ -184,11 +191,7 @@ async function sizePages(archive, { n, index, cluster, blob, onProgress, log, ch
         for (let k = 0; k < out.length; k++) sizes[byCluster[from + k]] = pageKind(out[k].size, out[k].data);
       }
       finished.fill(1, from, to);
-      completed += to - from;
-      if (completed - reported >= 2000) {
-        reported = completed;
-        onProgress('sizes', completed / n);
-      }
+      onProgress('sizes', (runsBefore + ++runsDone) / (runsBefore + runs));
       if (ck) flush(false);
     }
   };
