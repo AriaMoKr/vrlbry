@@ -52,10 +52,11 @@ client: api.js ─► rooms.js (what to shelve) ─► World/Bookshelves ─► 
 
 ### Server
 
-- **`server/zim/reader.js` (`ZimArchive`)**: reads ZIM files with positional reads only.
+- **`public/js/core/`** is the code the server and a browser share (step 2 on this branch: reading ZIMs in the browser). It never imports `node:*` or bare specifiers (a module worker has no import map); what differs goes through `core/platform.js`, which `server/platform-node.js` fills in on Node (zlib, crypto, files, htmlparser2, Buffers: so the server keeps Buffer's speed and its callers still get Buffers). Core code uses only `Uint8Array` features plus `platform.*` (`utf8`, `indexOf`, `alloc`, `copy`, …) and `core/util/bytes.js` (`u32`, `compareBytes`, …), never Buffer methods. Node code that uses core modules directly (tests) imports `server/platform-node.js` first.
+- **`public/js/core/zim/reader.js` (`ZimArchive`)**: reads ZIM files with positional reads only, from a byte source: `ZimArchive.open(path)` (Node: `platform.openFile`), a `Blob`/`File` (`core/zim/blob-source.js`), or any `{ name, size, read(position, length), close() }`.
   - Binary search over the URL pointer list compares **bytes** of (namespace char + UTF-8 URL), not JS strings. UTF-16 order differs for astral characters.
   - **Uncompressed clusters are never read whole.** Only the two offset-table entries and the blob byte range are read, because images and EPUBs can be tens of MB.
-  - Compressed clusters (zstd = 5, xz = 4 via the pure-JS `server/zim/xz.js`, zlib = 2) are decompressed asynchronously into a byte-budgeted `LRUCache` (`server/util/lru.js`). Concurrent requests for the same cluster share one in-flight decompression.
+  - Compressed clusters (zstd = 5, xz = 4 via the pure-JS `core/zim/xz.js`, zlib = 2) are decompressed asynchronously (`platform.zstd` / `platform.inflate`) into a byte-budgeted `LRUCache` (`core/util/lru.js`). Concurrent requests for the same cluster share one in-flight decompression.
   - Both namespace layouts are supported. The new scheme puts all content in `C`; the old scheme uses `A`/`I`/`-`.
 - **Gutenberg catalog**: book list comes from `C/full_by_popularity.js` = `var json_data = [[title, author, formatsFlags, bookId, lccShelf], …]`, in popularity order.
   - `formatsFlags` is a `[html, epub, pdf]` string such as `"110"`. Some books are EPUB-only (`"010"`) and are made readable by parsing their EPUB (`server/content/epub.js`).

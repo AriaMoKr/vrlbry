@@ -18,8 +18,9 @@ import zlib from 'node:zlib';
 import { parseEpub } from './content/epub.js';
 import { blockChars, chunkBlocks, htmlToBlocks, imageSize } from './content/html.js';
 import { IndexQueue } from './util/index-queue.js';
-import { LRUCache } from './util/lru.js';
-import { ZimArchive } from './zim/reader.js';
+import './platform-node.js';
+import { LRUCache } from '../public/js/core/util/lru.js';
+import { ZimArchive } from '../public/js/core/zim/reader.js';
 import {
   isWikisource, buildIndex, indexPath, loadIndex, saveIndex, collectWork, partTitle, genreOf, cleanCategories,
 } from './wikisource.js';

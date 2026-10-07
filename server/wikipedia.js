@@ -37,7 +37,7 @@ const collator = new Intl.Collator();
  * Builds the article index: the HTML entries of the article namespace but redirects, the main
  * page, mwoffliner's own pages and the pages that sizePages finds are not articles, in title
  * order, and the volumes cut from it.
- * @param {import('./zim/reader.js').ZimArchive} archive
+ * @param {import('../public/js/core/zim/reader.js').ZimArchive} archive
  * Stages: 'scan' (the directory), 'sizes' (sizePages: resumable with `checkpoint`), 'sort'.
  * @param {{ volumeSize?: number, onProgress?: (stage: string, fraction: number) => void, log?: (msg: string) => void,
  *   checkpoint?: string|null, checkpointEvery?: number, lanes?: number }} [opts] checkpoint: base path
@@ -295,7 +295,7 @@ export const SEARCH_LIMIT = 50;
  * Articles whose title starts with `query`, in title order. Matching uses the index's own key
  * (titleKey: case, accents, a leading "The" and punctuation are ignored), so a binary search over
  * the sorted index finds the first match after reading ~log2(count) directory entries.
- * @param {import('./zim/reader.js').ZimArchive} archive
+ * @param {import('../public/js/core/zim/reader.js').ZimArchive} archive
  * @param {{ order: Uint32Array, count: number }} idx
  * @param {string} query
  * @param {number} [limit]

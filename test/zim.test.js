@@ -6,8 +6,9 @@ import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import zlib from 'node:zlib';
-import { LRUCache } from '../server/util/lru.js';
-import { ZimArchive, ZimError } from '../server/zim/reader.js';
+import '../server/platform-node.js';
+import { LRUCache } from '../public/js/core/util/lru.js';
+import { ZimArchive, ZimError } from '../public/js/core/zim/reader.js';
 import { writeZim } from './helpers/zimwriter.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -142,6 +143,34 @@ describe('LRUCache', () => {
     c.set(2, { n: 60 });
     assert.deepEqual([...c.keys()], [2]);
     assert.equal(c.bytes, 60);
+  });
+});
+
+describe('ZimArchive: from a Blob (as a browser opens a File)', () => {
+  it('reads the same entries and content as from the file', async () => {
+    const info = writeZim(tmpFile('blob.zim'), { entries: newSchemeEntries(), mainPage: 'W/mainPage', blobsPerCluster: 3 });
+    const fromFile = await ZimArchive.open(info.filePath);
+    const fromBlob = await ZimArchive.open(new File([fs.readFileSync(info.filePath)], 'blob.zim'));
+    try {
+      assert.equal(fromBlob.filePath, 'blob.zim', 'the File name, for messages');
+      assert.deepEqual(fromBlob.header, fromFile.header);
+      assert.deepEqual(fromBlob.mimeTypes, fromFile.mimeTypes);
+      // Content as bytes, or the error (without the file name) for the corrupt test entries.
+      const content = (zim, e) => zim.getContent(e).then((c) => c && Buffer.from(c.data).toString('base64'),
+        (err) => err.message.slice(zim.filePath.length));
+      for (let i = 0; i < fromFile.entryCount; i++) {
+        const [a, b] = [await fromFile.getEntryByIndex(i), await fromBlob.getEntryByIndex(i)];
+        assert.deepEqual(b, a);
+        assert.deepEqual(await content(fromBlob, b), await content(fromFile, a), a.path);
+      }
+      assert.deepEqual(await fromBlob.getMetadata(), await fromFile.getMetadata());
+      // A truncated file fails the same way.
+      const cut = new Blob([fs.readFileSync(info.filePath).subarray(0, 60)]);
+      await assert.rejects(ZimArchive.open(cut), /not a ZIM file \(too small\)/);
+    } finally {
+      await fromFile.close();
+      await fromBlob.close();
+    }
   });
 });
 

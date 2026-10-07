@@ -4,14 +4,14 @@
  * Supports the complete container as written by xz / liblzma / libzim: stream header and footer,
  * any number of blocks, concatenated streams with stream padding, optional compressed /
  * uncompressed sizes in block headers, index validation, and the check types none, CRC32, CRC64
- * and SHA-256 (all verified; unknown check types are skipped like liblzma does).
+ * and SHA-256 (all verified, SHA-256 where the platform has it; unknown check types are skipped
+ * like liblzma does). Shared by the server and the browser (core/platform.js).
  *
  * The whole input is in memory and the whole output is produced into one buffer, so the output
  * buffer doubles as the LZMA dictionary: no sliding window copy is needed. The block's LZMA2 chunk
  * headers carry exact sizes, so the output is sized exactly before decoding the block.
  */
-import { createHash } from 'node:crypto';
-import zlib from 'node:zlib';
+import { platform } from '../platform.js';
 
 const HEADER_MAGIC = [0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00];
 const FOOTER_MAGIC_0 = 0x59; // 'Y'
@@ -28,9 +28,9 @@ const CHECK_SHA256 = 0x0a;
 // Checksums
 
 let crc32Table = null;
-/** CRC-32 (IEEE). Uses the native zlib.crc32 (Node >= 22.2) and falls back to a table. */
+/** CRC-32 (IEEE). Uses the platform's (Node: the native zlib.crc32) and falls back to a table. */
 function crc32(buf) {
-  if (typeof zlib.crc32 === 'function') return zlib.crc32(buf) >>> 0;
+  if (platform.crc32) return platform.crc32(buf);
   if (!crc32Table) {
     crc32Table = new Int32Array(256);
     for (let n = 0; n < 256; n++) {
@@ -110,8 +110,9 @@ function verifyCheck(checkType, data, input, pos) {
       fail('CRC64 check failed (corrupt data)');
     }
   } else if (checkType === CHECK_SHA256) {
-    const digest = createHash('sha256').update(data).digest();
-    for (let i = 0; i < 32; i++) {
+    // Only where the platform has SHA-256 (Node); a browser skips this check.
+    const digest = platform.sha256?.(data);
+    for (let i = 0; digest && i < 32; i++) {
       if (digest[i] !== input[pos + i]) fail('SHA-256 check failed (corrupt data)');
     }
   }
@@ -756,11 +757,11 @@ class Sink {
   reserve(n) {
     const need = this.pos + n;
     if (!this.buf) {
-      // allocUnsafe is fine: every byte below pos is written by the decoder before it is exposed.
-      this.buf = Buffer.allocUnsafe(need);
+      // Uninitialised is fine: every byte below pos is written by the decoder before it is exposed.
+      this.buf = platform.alloc(need);
     } else if (need > this.buf.length) {
-      const grown = Buffer.allocUnsafe(Math.max(need, Math.min(this.buf.length * 2, 0x7fffffff)));
-      this.buf.copy(grown, 0, 0, this.pos);
+      const grown = platform.alloc(Math.max(need, Math.min(this.buf.length * 2, 0x7fffffff)));
+      grown.set(this.buf.subarray(0, this.pos));
       this.buf = grown;
     }
     return this.pos;
@@ -780,7 +781,7 @@ function startsWithMagic(inp, pos) {
  * @param {boolean} [opts.ignoreTrailing=false] stop quietly at the first byte after a stream (and
  *   its padding) that does not start another stream, instead of failing. A ZIM cluster's byte
  *   range is only known as "up to the next known offset", which may include unrelated bytes.
- * @returns {Buffer} the uncompressed data
+ * @returns {Uint8Array} the uncompressed data (a Buffer on Node)
  * @throws {Error} on corrupt, truncated or unsupported input (never loops forever)
  */
 export function xzDecompress(input, { ignoreTrailing = false } = {}) {
@@ -801,6 +802,6 @@ export function xzDecompress(input, { ignoreTrailing = false } = {}) {
     streams++;
   }
   if (streams === 0) fail('unexpected end of input (empty input)');
-  if (!sink.buf) return Buffer.alloc(0);
-  return sink.pos === sink.buf.length ? sink.buf : Buffer.from(sink.buf.subarray(0, sink.pos));
+  if (!sink.buf) return platform.alloc(0);
+  return sink.pos === sink.buf.length ? sink.buf : platform.copy(sink.buf.subarray(0, sink.pos));
 }

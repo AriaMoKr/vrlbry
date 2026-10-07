@@ -10,7 +10,7 @@ import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { ArchiveLibrary, Library } from '../server/library.js';
 import { createApp } from '../server/http.js';
-import { ZimArchive } from '../server/zim/reader.js';
+import { ZimArchive } from '../public/js/core/zim/reader.js';
 import { isWikipedia, buildIndex, volumeTitle, removeCheckpoint } from '../server/wikipedia.js';
 import { writeZim } from './helpers/zimwriter.js';
 
@@ -348,8 +348,9 @@ describe('wikipedia', () => {
     const logs = [];
     const library = await Library.scan(dir, { log: (m) => logs.push(m), cacheDir: path.join(tmp, 'queue-cache'), indexQueue: { smallBytes: 0 } });
     try {
+      // Read at once: info() reads the archive, and meanwhile the small index can be finished.
       const big = library.get('a_big');
-      assert.deepEqual((await big.info()).indexing, { stage: 'queued', progress: 0 }, 'waits for its turn');
+      assert.deepEqual(big._indexing, { stage: 'queued', progress: 0 }, 'waits for its turn');
       await waitForBooks(big);
       await waitForBooks(library.get('b_small'));
       const started = logs.filter((m) => /indexing Wikipedia articles/.test(m)).map((m) => m.split(':')[0]);

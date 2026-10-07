@@ -153,7 +153,7 @@ async function eachLimit(items, limit, fn) {
 
 /**
  * Builds the works index of a Wikisource archive (takes a minute or few for a full ZIM).
- * @param {import('./zim/reader.js').ZimArchive} archive
+ * @param {import('../public/js/core/zim/reader.js').ZimArchive} archive
  * @param {{ onProgress?: (stage: string, fraction: number) => void, log?: (msg: string) => void }} [opts]
  * @returns {Promise<{ version: number, uuid: string, works: Array<object> }>}
  */
@@ -297,7 +297,7 @@ function naturalCompare(a, b) {
  * their parent links to them (the main page may link any descendant, other pages only their own
  * descendants, so in-text links to sibling chapters cannot reorder the book). Subpages nobody
  * links to are appended in natural order when the links found cover less than half of them.
- * @param {import('./zim/reader.js').ZimArchive} archive
+ * @param {import('../public/js/core/zim/reader.js').ZimArchive} archive
  * @param {string} rootUrl URL of the work's main page in namespace C
  * @param {{ maxParts?: number, maxBytes?: number, expectedParts?: number }} [opts]
  * @returns {Promise<{ parts: Array<{ url: string, path: string, html: string, depth: number }>, truncated: boolean, total: number }>}

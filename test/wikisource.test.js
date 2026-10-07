@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { Library } from '../server/library.js';
-import { ZimArchive } from '../server/zim/reader.js';
+import { ZimArchive } from '../public/js/core/zim/reader.js';
 import {
   isWikisource, genreOf, yearOf, cleanCategories, pageCategories, coverOf, contentLinks, partTitle,
   buildIndex, collectWork, OTHER_GENRE,
