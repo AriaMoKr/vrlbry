@@ -1,0 +1,74 @@
+# Publishes the vrlbry-standalone branch (AriaMoKr/vrlbry-standalone) to GitHub Pages: the static
+# site (tools/build-pages.mjs) where visitors open their own ZIM files in the browser (the local
+# library, SPEC §2.6). On every push to the branch, the app alone (~4 MB, a minute or two). Run it
+# by hand (Actions → Pages (standalone) → Run workflow) with "demo set" ticked to also pre-render
+# the ZIMs of tools/demo-set.txt, like the public site (~605 MB, ~10 min).
+#
+# One-time setup in the repository: Settings → Pages → Build and deployment → Source: GitHub
+# Actions. Pages for a private repository needs a paid plan, and the site itself is public.
+# (The public site deploys from main of AriaMoKr/vrlbry with .github/workflows/pages.yml, which
+# this branch does not have.)
+name: Pages (standalone)
+
+on:
+  push:
+    branches: [vrlbry-standalone]
+  workflow_dispatch:
+    inputs:
+      demo_set:
+        description: Also pre-render the demo set (tools/demo-set.txt, ~10 min, ~605 MB site)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time; a newer push waits rather than cancelling one in progress.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      # The demo set (tools/demo-set.txt, one ZIM URL per line), cached until the list changes.
+      - if: inputs.demo_set
+        uses: actions/cache@v4
+        with:
+          path: .demo
+          key: demo-set-${{ hashFiles('tools/demo-set.txt') }}
+      - name: Download the demo set
+        if: inputs.demo_set
+        run: |
+          mkdir -p .demo
+          while read -r url; do
+            [ -n "$url" ] || continue
+            file=".demo/$(basename "$url")"
+            [ -f "$file" ] || curl -fsSL --retry 3 -o "$file" "$url"
+          done < tools/demo-set.txt
+          ls -l .demo
+      - name: Build the site
+        run: npm run build:pages -- ${{ inputs.demo_set && '--zims .demo' || '' }}
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
