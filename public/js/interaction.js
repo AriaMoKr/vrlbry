@@ -463,7 +463,7 @@ export class Interaction {
         const busy = lib.indexing && lib.indexing.stage !== 'failed';
         return {
           label: lib.title,
-          right: busy ? `indexing ${Math.round((lib.indexing.progress || 0) * 100)}%`
+          right: busy ? (lib.indexing.stage === 'queued' ? 'waiting to index' : `indexing ${Math.round((lib.indexing.progress || 0) * 100)}%`)
             : `${n.toLocaleString()} ${n === 1 ? unitOf(lib).slice(0, -1) : unitOf(lib)}`,
           active: place?.id === lib.id, disabled: !n,
           onClick: () => this.setPlace(lib.id),

@@ -17,6 +17,7 @@ import { promisify } from 'node:util';
 import zlib from 'node:zlib';
 import { parseEpub } from './content/epub.js';
 import { blockChars, chunkBlocks, htmlToBlocks, imageSize } from './content/html.js';
+import { IndexQueue } from './util/index-queue.js';
 import { LRUCache } from './util/lru.js';
 import { ZimArchive } from './zim/reader.js';
 import {
@@ -248,7 +249,7 @@ class Chunk {
  */
 export class ArchiveLibrary {
   /** @private */
-  constructor({ id, filePath, archive, log, warn, maxGenericBooks, contentCache, cacheDir = DEFAULT_CACHE_DIR, onChange = null, volumeSize = null }) {
+  constructor({ id, filePath, archive, log, warn, maxGenericBooks, contentCache, cacheDir = DEFAULT_CACHE_DIR, onChange = null, volumeSize = null, indexQueue = null }) {
     /** URL-safe id (§3.6). */
     this.id = id;
     /** Basename of the ZIM file. */
@@ -275,7 +276,8 @@ export class ArchiveLibrary {
     this._conversions = 0;
     this._cacheDir = cacheDir;
     this._onChange = onChange; // called when the catalogue changes on its own (index finished)
-    this._indexing = null; // { stage, progress } while a Wikisource/Wikipedia index is being built
+    this._indexing = null; // { stage, progress } while a Wikisource/Wikipedia index is being built (or 'queued')
+    this._indexQueue = indexQueue; // IndexQueue shared by a folder's libraries, or null: build at once
     this._wikipedia = null; // the Wikipedia article index (order + volumes)
     this._volumeSize = volumeSize;
     this._indexTask = null;
@@ -295,6 +297,7 @@ export class ArchiveLibrary {
    * @param {object} [opts.archiveOptions] passed to ZimArchive.open (default cluster cache 64 MB)
    * @param {string} [opts.cacheDir] where derived indexes are cached (default <project>/.cache)
    * @param {() => void} [opts.onChange] called when the catalogue changes later (index built)
+   * @param {IndexQueue} [opts.indexQueue] runs the background index build in turn (default: at once)
    * @returns {Promise<ArchiveLibrary>}
    */
   static async open(filePath, {
@@ -308,11 +311,12 @@ export class ArchiveLibrary {
     cacheDir,
     onChange,
     volumeSize, // articles per Wikipedia volume (tests use small volumes)
+    indexQueue,
   } = {}) {
     const archive = await ZimArchive.open(filePath, { clusterCacheBytes: ARCHIVE_CLUSTER_CACHE_BYTES, ...archiveOptions });
     try {
       const lib = new ArchiveLibrary({
-        id, filePath, archive, log, warn, maxGenericBooks, cacheDir, onChange, volumeSize,
+        id, filePath, archive, log, warn, maxGenericBooks, cacheDir, onChange, volumeSize, indexQueue,
         contentCache: contentCache ?? createContentCache(contentCacheBytes),
       });
       await lib.books(); // catalog now: `kind` is final and errors surface at scan time
@@ -612,20 +616,29 @@ export class ArchiveLibrary {
   /**
    * Builds a derived index in the background (first open only), caches it, then rebuilds the
    * catalogue and announces it (onChange). Meanwhile books() is empty and info().indexing
-   * reports progress, weighted per stage.
+   * reports progress, weighted per stage ('queued' while a big archive waits its turn in the
+   * folder's IndexQueue).
    */
   _startIndexing({ file, what, unit, build, save, weights, saved = null }) {
     if (this._indexTask) return;
-    this._indexing = { stage: 'scan', progress: 0 };
-    this._log(`${this.file}: indexing ${what} in the background (first open only)…`);
-    const t0 = performance.now();
-    this._indexTask = build({
-      onProgress: (stage, f) => {
-        const [base, span] = weights[stage] ?? [0, 0];
-        this._indexing = { stage, progress: Math.min(1, base + span * f) };
-      },
-      log: (m) => this._log(`${this.file}:${m}`),
-    }).then(async (idx) => {
+    const queue = this._indexQueue;
+    const bytes = this.archive.fileSize;
+    this._indexing = { stage: 'queued', progress: 0 };
+    if (queue?.queues(bytes)) this._log(`${this.file}: waiting to index ${what} (big archives one at a time, smallest first)…`);
+    let t0;
+    const task = () => {
+      this._indexing = { stage: 'scan', progress: 0 };
+      this._log(`${this.file}: indexing ${what} in the background (first open only)…`);
+      t0 = performance.now();
+      return build({
+        onProgress: (stage, f) => {
+          const [base, span] = weights[stage] ?? [0, 0];
+          this._indexing = { stage, progress: Math.min(1, base + span * f) };
+        },
+        log: (m) => this._log(`${this.file}:${m}`),
+      });
+    };
+    this._indexTask = (queue ? queue.run(bytes, task, { cancelled: () => this._closed }) : task()).then(async (idx) => {
       if (this._closed) return;
       const ok = await save(file, idx).then(() => true, (err) => {
         this._warn(`${this.file}: cannot cache the ${what} index (${err.message})`);
@@ -1236,6 +1249,8 @@ export class Library {
     this._debounce = null;
     this._interval = null;
     this.contentCache = contentCache;
+    /** Background index builds of this folder's libraries, big archives one at a time. */
+    this.indexQueue = new IndexQueue(opts.indexQueue);
     /** Increments whenever the set of libraries changes (clients poll it to re-shelve). */
     this.generation = 0;
   }
@@ -1252,6 +1267,7 @@ export class Library {
    * @param {number} [opts.contentCacheBytes=314572800] budget for converted books (all archives)
    * @param {object} [opts.archiveOptions] passed to ZimArchive.open (default cluster cache 64 MB)
    * @param {string} [opts.cacheDir] where derived indexes are cached (default <project>/.cache)
+   * @param {{ smallBytes?: number }} [opts.indexQueue] IndexQueue options (archives indexed at once)
    * @returns {Promise<Library>}
    */
   static async scan(dir, {
@@ -1261,10 +1277,11 @@ export class Library {
     contentCacheBytes = CONTENT_CACHE_BYTES,
     archiveOptions,
     cacheDir = DEFAULT_CACHE_DIR,
+    indexQueue,
   } = {}) {
     const abs = path.resolve(dir);
     await fs.readdir(abs); // fail early (and loudly) on a missing or unreadable directory
-    const lib = new Library(abs, createContentCache(contentCacheBytes), { maxGenericBooks, log, warn, archiveOptions, cacheDir });
+    const lib = new Library(abs, createContentCache(contentCacheBytes), { maxGenericBooks, log, warn, archiveOptions, cacheDir, indexQueue });
     await lib.rescan({ quiet: true });
     return lib;
   }
@@ -1281,6 +1298,8 @@ export class Library {
       this._rescanAgain = true;
       return this._scanning;
     }
+    // No index build starts until every new archive is open, so the smallest goes first.
+    this.indexQueue.hold();
     this._scanning = (async () => {
       const total = { added: [], removed: [], reopened: [], failed: [] };
       do {
@@ -1291,6 +1310,7 @@ export class Library {
       return { generation: this.generation, ...total };
     })().finally(() => {
       this._scanning = null;
+      this.indexQueue.release();
     });
     return this._scanning;
   }
@@ -1348,7 +1368,7 @@ export class Library {
       const t0 = performance.now();
       try {
         const lib = await ArchiveLibrary.open(path.join(this.dir, name), {
-          id, maxGenericBooks, log, warn, contentCache: this.contentCache, archiveOptions, cacheDir,
+          id, maxGenericBooks, log, warn, contentCache: this.contentCache, archiveOptions, cacheDir, indexQueue: this.indexQueue,
           // A background index finishing changes the catalogue: clients poll `generation`.
           onChange: () => { this.generation++; },
         });

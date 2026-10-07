@@ -478,7 +478,7 @@ export async function collectWork(archive, rootUrl, { maxParts = 1200, maxBytes 
   works (a link to a subpage credits its work). A work with several credits (author, translator,
   editor) gets the one whose surname appears on its title page, else the first.
 - While the index is built the library's `books()` is empty and `info().indexing` =
-  `{ stage: 'scan'|'works'|'authors', progress: 0..1 }` (`stage: 'failed', error` on failure);
+  `{ stage: 'queued'|'scan'|'works'|'authors', progress: 0..1 }` (`stage: 'failed', error` on failure);
   when it is ready the catalogue is rebuilt and `onChange` → `Library.generation++`.
 - **Books**: id `w<entryIndex>`, `genre` (also `shelf`), `year`, `parts`, `rank: null`,
   `size = (parts + 1) × 30000` (shelf thickness follows length), `cover` (or null), `author`
@@ -537,7 +537,16 @@ already contains. `generation` changes when
 libraries are added/removed/replaced or a catalogue finishes building: clients poll it and
 re-fetch. Wikisource libraries (`"kind": "wikisource"`) add `"genres": [{ "name": "Novels",
 "count": 1644 }, …]` (largest first; `shelves` = genre names) and `"indexing": null | { "stage",
-"progress" }` (live; `bookCount` is 0 until the index is ready).
+"progress" }` (live; `bookCount` is 0 until the index is ready; `"stage": "queued"` while it
+waits for its turn, see below).
+
+A folder's index builds (Wikisource, Wikipedia) go through one `IndexQueue`
+(`server/util/index-queue.js`): archives over 1 GB are indexed one at a time, the smallest
+first, and smaller ones at once. Builds share the main thread and libuv's four threads, so
+together they only slow each other down: 8 Wikipedias re-indexed at once took 52 min, Simple
+English 20 min instead of about 1. A folder scan holds the queue until it has opened every new
+archive, so the order does not depend on the file names. `ArchiveLibrary.open` without a queue
+builds at once.
 
 **`POST /api/rescan`** → rescans the ZIM folder now: `{ "generation", "added": [ids],
 "removed": [ids], "reopened": [ids], "failed": [file names], "libraries": [ … ] }`. `GET` → 405.
@@ -946,7 +955,7 @@ States: `browse` → `inspect` → `read` (and back).
     A–Z letter grid over the shelved books (teleports to the first book with that letter via
     `shelves.locate` and highlights it for 4 s), "Surprise me" (random book), "Recently read"
     list (opens directly into read), settings toggles (sound, smooth move).
-  - *Rooms*: one button per library (with its book count, or indexing progress), and for a
+  - *Rooms*: one button per library (with its book count, its indexing progress or "waiting to index"), and for a
     library browsed by rooms the current room ("Now: Poetry, titles starting with A · 39 works")
     with a "✕ Clear filters" button, genre buttons and a title-letter grid. Genre and letter are
     independent toggles: tapping one sets or swaps that filter, tapping the active one removes
@@ -1039,7 +1048,7 @@ States: `browse` → `inspect` → `read` (and back).
   `settings.updateNotices = false` (no banner, no VR notice; the kiosk's note stays), and the help
   dialog's "Tell me when this site has been updated" checkbox turns it back on.
 - DOM overlay (non-VR): see `ui/overlay.js` — title with the same "Updated …" stamp, library
-  cards (with indexing progress), a ⟳ rescan button, search box (filters by title / author across *all* books of all libraries;
+  cards (with indexing progress or "waiting to index"), a ⟳ rescan button, search box (filters by title / author across *all* books of all libraries;
   picking a result = switch room if needed, teleport to it and select it; for Wikipedia
   libraries it also asks the server for articles by title, 150 ms after typing stops, listed
   after up to 6 books; picking an article takes its volume off the shelf and opens it at that

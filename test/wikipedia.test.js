@@ -39,7 +39,8 @@ const redirectPage = (title, target) => `<html><head><title>${title}</title><met
 
 const png = Buffer.from('89504e470d0a1a0a0000000d49484452000000c80000012c00000000', 'hex'); // 200×300 header
 
-function writeWikipediaZim(file) {
+/** @param {number} [padding] bytes of an extra (uncompressed) file, to make the archive bigger */
+function writeWikipediaZim(file, padding = 0) {
   const A = (url, title, lead) => ({ ns: 'C', url, title, mime: 'text/html', content: article(title, lead) });
   const entries = [
     A('Main_Page', 'Main Page', 'Welcome to Wikipedia.'),
@@ -64,6 +65,7 @@ function writeWikipediaZim(file) {
     { ns: 'M', url: 'Creator', mime: 'text/plain', content: 'Wikipedia' },
     { ns: 'M', url: 'Illustration_48x48@1', mime: 'image/png', content: png },
   ];
+  if (padding) entries.push({ ns: 'C', url: '_assets_/pad.bin', mime: 'application/octet-stream', content: Buffer.alloc(padding, 7), compression: 'none' });
   return writeZim(file, { entries, scheme: 'new', mainPage: 'C/Main_Page' });
 }
 
@@ -312,6 +314,28 @@ describe('wikipedia', () => {
       assert.equal(logs.filter((m) => /indexing Wikipedia/.test(m)).length, 1, 'indexed only once');
     } finally {
       await lib.close();
+    }
+  });
+
+  it('indexes a folder\'s big archives one at a time, the smallest first', async () => {
+    const dir = path.join(tmp, 'queue');
+    fs.mkdirSync(dir);
+    writeWikipediaZim(path.join(dir, 'a_big.zim'), 300000); // opened first (name order), indexed last
+    writeWikipediaZim(path.join(dir, 'b_small.zim'));
+    const logs = [];
+    const library = await Library.scan(dir, { log: (m) => logs.push(m), cacheDir: path.join(tmp, 'queue-cache'), indexQueue: { smallBytes: 0 } });
+    try {
+      const big = library.get('a_big');
+      assert.deepEqual((await big.info()).indexing, { stage: 'queued', progress: 0 }, 'waits for its turn');
+      await waitForBooks(big);
+      await waitForBooks(library.get('b_small'));
+      const started = logs.filter((m) => /indexing Wikipedia articles/.test(m)).map((m) => m.split(':')[0]);
+      assert.deepEqual(started, ['b_small.zim', 'a_big.zim']);
+      const ready = logs.filter((m) => /index ready/.test(m)).map((m) => m.split(':')[0]);
+      assert.deepEqual(ready, ['b_small.zim', 'a_big.zim'], 'one after the other');
+      assert.ok(logs.some((m) => /a_big\.zim: waiting to index Wikipedia articles/.test(m)));
+    } finally {
+      await library.close();
     }
   });
 
