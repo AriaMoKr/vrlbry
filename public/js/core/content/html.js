@@ -3,7 +3,7 @@
 // The converter is a streaming state machine driven by htmlparser2's Parser callbacks: no DOM is
 // built, so a 30 MB dictionary converts in linear time with memory proportional to the output.
 
-import { Parser } from 'htmlparser2';
+import { platform } from '../platform.js';
 
 /** Run style bits (§3.5). */
 export const STYLE = Object.freeze({
@@ -1378,10 +1378,10 @@ function expandTabs(x) {
  * @returns {{ title: string|null, blocks: object[] }}
  */
 export function htmlToBlocks(html, { docPath = '' } = {}) {
-  if (typeof html !== 'string') html = Buffer.from(html ?? '').toString('utf8');
+  if (typeof html !== 'string') html = html ? platform.utf8(html) : '';
   if (html.charCodeAt(0) === 0xfeff) html = html.slice(1);
   const conv = new Converter(docPath);
-  const parser = new Parser(conv, { decodeEntities: true, recognizeSelfClosing: true, lowerCaseTags: true });
+  const parser = new platform.Parser(conv, { decodeEntities: true, recognizeSelfClosing: true, lowerCaseTags: true });
   parser.end(html);
   return { title: conv.title, blocks: conv.out };
 }
@@ -1485,7 +1485,7 @@ function svgLength(v) {
 }
 
 function svgSize(buf) {
-  const head = Buffer.from(buf.buffer, buf.byteOffset, Math.min(buf.length, 65536)).toString('utf8');
+  const head = platform.utf8(buf, 0, Math.min(buf.length, 65536));
   const tag = /<svg\b[^>]*>/i.exec(head);
   if (!tag) return null;
   const attr = (n) => {

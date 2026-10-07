@@ -9,7 +9,7 @@
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { resolveHref } from './content/html.js';
+import { resolveHref } from '../public/js/core/content/html.js';
 
 export const INDEX_VERSION = 1;
 

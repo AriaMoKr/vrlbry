@@ -1,4 +1,4 @@
-// Tests for server/content/epub.js (SPEC §3.4).
+// Tests for public/js/core/content/epub.js (SPEC §3.4).
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
@@ -6,8 +6,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import zlib from 'node:zlib';
-import { readZip, parseEpub } from '../server/content/epub.js';
-import { htmlToBlocks } from '../server/content/html.js';
+import '../server/platform-node.js';
+import { readZip, parseEpub } from '../public/js/core/content/epub.js';
+import { htmlToBlocks } from '../public/js/core/content/html.js';
 
 const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'content');
 
@@ -257,12 +258,15 @@ describe('parseEpub', () => {
     assert.equal(epub.author, 'One, Two');
   });
 
-  test('text encodings: BOM, UTF-16, declared legacy charset', () => {
+  test('text encodings: BOM, UTF-16 (both byte orders), declared legacy charset', () => {
     const utf16 = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('<p>\u00e9t\u00e9</p>', 'utf16le')]);
+    const utf16be = Buffer.concat([Buffer.from([0xfe, 0xff]), Buffer.from('<p>\u00e9t\u00e9</p>', 'utf16le').swap16()]);
     const latin1 = Buffer.from('<?xml version="1.0" encoding="iso-8859-1"?><p>\u00e9t\u00e9</p>', 'latin1');
     const bom = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('<p>\u00e9t\u00e9</p>')]);
-    const opf = '<package><metadata/><manifest><item id="a" href="a.xhtml" media-type="application/xhtml+xml"/><item id="b" href="b.xhtml" media-type="application/xhtml+xml"/><item id="c" href="c.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="a"/><itemref idref="b"/><itemref idref="c"/></spine></package>';
-    const epub = parseEpub(makeZip([{ name: 'p.opf', data: opf }, { name: 'a.xhtml', data: utf16 }, { name: 'b.xhtml', data: latin1 }, { name: 'c.xhtml', data: bom }]));
+    const item = (id) => `<item id="${id}" href="${id}.xhtml" media-type="application/xhtml+xml"/>`;
+    const opf = `<package><metadata/><manifest>${['a', 'b', 'c', 'd'].map(item).join('')}</manifest><spine><itemref idref="a"/><itemref idref="b"/><itemref idref="c"/><itemref idref="d"/></spine></package>`;
+    const epub = parseEpub(makeZip([{ name: 'p.opf', data: opf }, { name: 'a.xhtml', data: utf16 }, { name: 'b.xhtml', data: latin1 }, { name: 'c.xhtml', data: bom }, { name: 'd.xhtml', data: utf16be }]));
+    assert.equal(epub.docs.length, 4);
     for (const d of epub.docs) assert.ok(d.html.endsWith('<p>\u00e9t\u00e9</p>'), d.path);
   });
 

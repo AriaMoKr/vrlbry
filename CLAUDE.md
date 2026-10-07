@@ -45,7 +45,7 @@ node --test --test-name-pattern="redirect" test/zim.test.js   # tests matching a
 *.zim ─► ZimArchive (server/zim) ─► Library/ArchiveLibrary (server/library.js) ─► HTTP API (server/http.js)
           (folder watched;            │ catalog: Gutenberg JSON index | Wikisource works index
            generation counter)        │          (server/wikisource.js, cached in .cache/) | generic HTML entries
-                                       └ content: htmlToBlocks → chunkBlocks (server/content) + LRU cache
+                                       └ content: htmlToBlocks → chunkBlocks (core/content) + LRU cache
 client: api.js ─► rooms.js (what to shelve) ─► World/Bookshelves ─► interaction.js state machine ─► Book3D
                 └► BookReader (paginates blocks onto a 1024×1448 canvas) ─► Book3D page textures
 ```
@@ -59,7 +59,7 @@ client: api.js ─► rooms.js (what to shelve) ─► World/Bookshelves ─► 
   - Compressed clusters (zstd = 5, xz = 4 via the pure-JS `core/zim/xz.js`, zlib = 2) are decompressed asynchronously (`platform.zstd` / `platform.inflate`) into a byte-budgeted `LRUCache` (`core/util/lru.js`). Concurrent requests for the same cluster share one in-flight decompression.
   - Both namespace layouts are supported. The new scheme puts all content in `C`; the old scheme uses `A`/`I`/`-`.
 - **Gutenberg catalog**: book list comes from `C/full_by_popularity.js` = `var json_data = [[title, author, formatsFlags, bookId, lccShelf], …]`, in popularity order.
-  - `formatsFlags` is a `[html, epub, pdf]` string such as `"110"`. Some books are EPUB-only (`"010"`) and are made readable by parsing their EPUB (`server/content/epub.js`).
+  - `formatsFlags` is a `[html, epub, pdf]` string such as `"110"`. Some books are EPUB-only (`"010"`) and are made readable by parsing their EPUB (`core/content/epub.js`).
   - A book's entry URL mirrors the ZIM's own JS exactly: `title.replace("/", "-").substring(0, 230) + "." + id`. Only the **first** `/` is replaced, and the substring is in UTF-16 units. The HTML lives at that path, the EPUB at that path plus `.epub`, and the cover at `C/covers/<id>_cover_image.jpg`.
   - Titles may contain MARC ` : $b ` subtitle markers, which are split into title and subtitle.
   - A ZIM without that index falls back to "generic" mode: its HTML articles become the books, capped.

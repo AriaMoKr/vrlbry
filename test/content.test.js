@@ -1,4 +1,4 @@
-// Tests for server/content/html.js (SPEC §3.3, §3.5).
+// Tests for public/js/core/content/html.js (SPEC §3.3, §3.5).
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
@@ -6,7 +6,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import zlib from 'node:zlib';
-import { htmlToBlocks, chunkBlocks, blockChars, imageSize, resolveHref } from '../server/content/html.js';
+import '../server/platform-node.js';
+import { htmlToBlocks, chunkBlocks, blockChars, imageSize, resolveHref } from '../public/js/core/content/html.js';
 
 const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'content');
 const NBSP = '\u00a0';

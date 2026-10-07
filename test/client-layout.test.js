@@ -6,7 +6,7 @@ import path from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { makeMetrics, layoutBoxes, layoutChunk, paginate, ChunkLayout, blockChars as clientChars } from '../public/js/reader/layout.js';
-import { blockChars as serverChars } from '../server/content/html.js';
+import { blockChars as serverChars } from '../public/js/core/content/html.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REAL_ZIM = path.join(HERE, '..', 'gutenberg_en_lcc-pe_2026-03.zim');

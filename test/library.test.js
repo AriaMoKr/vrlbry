@@ -5,7 +5,7 @@ import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import zlib from 'node:zlib';
-import { blockChars } from '../server/content/html.js';
+import { blockChars } from '../public/js/core/content/html.js';
 import {
   ArchiveLibrary, Library, LibraryError, gutenbergBase, libraryIdFor, libraryTitle, parseIndexScript, splitTitle, zimUrl,
 } from '../server/library.js';
