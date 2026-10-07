@@ -51,6 +51,15 @@
   allocates in those (`quest-perf run` traces GC per scenario; a heap profile of a room switch
   and of a walk), and allocate less: reuse objects in per-frame code, build rooms with fewer
   temporary arrays.
+- **Reading: dropped frames while pages are prepared.** Reading in VR on a Quest 3 (2026-10-06,
+  a local ZIM, step 2) dropped 2.6–2.7 % of frames at 72 Hz, while page turns themselves stayed
+  smooth (1.3 %). The drops cluster where the reader prepares the next spreads on the main
+  thread: 41 of 189 during layout steps (3.7 s of 100: about 6× the rate elsewhere), about half
+  within a few frames of a page being drawn (4.5 ms typical, 16.6 ms worst), and one gap of
+  ~100 ms when a book opens (its first chunk laid out and drawn at once). Not yet traced for GC
+  (`quest-perf dump` does not; `run`'s read scenario does). Ideas: smaller layout steps while in
+  VR, drawing pages in a worker on an OffscreenCanvas (as the spine atlases are), and showing
+  the first spread before the rest of the first chunk is laid out.
 - **All-libraries hall draw calls.** On the Quest: 380 → 104 standing (both eyes), 142 → 56
   walking, with one draw call per sign and no books drawn behind a nearer row. The room itself
   (chandeliers, walls, wainscots, ~31 calls per eye) could still be merged per material.
@@ -121,7 +130,16 @@
     no pre-rendering and no longer has the 1 GB limit. *Milestone 1 done (2026-10-06):* local
     Gutenberg and generic ZIMs ("Open ZIM files…", or a drop), read by the shared core
     (`public/js/core/`, also the server's) in a worker over `File.slice`, with fzstd and fflate;
-    images as blob URLs (SPEC §2.6). Next:
+    images as blob URLs (SPEC §2.6). *Checked on a Quest 3 (2026-10-06,
+    `perf/quest-2026-10-07_04-57-10.json`, Quest Browser 152):* the example ZIM downloaded from
+    the card's link and opened from Downloads; reading two of its books in VR ran at 72 Hz with
+    2.6–2.7 % of frames dropped, the worst gap when a book opened (98 and 124 ms: its first
+    chunk laid out and drawn), the rest single gaps of 40–70 ms. All 21 page turns had the next
+    pages ready (1.3 % dropped during the turn animations). Decompression runs in the worker
+    and never showed: a chunk from it parsed in at most 3 ms (117 KB). The drops come while the
+    reader prepares pages (41 of 189 during the 3.7 s of layout work, about half within a few
+    frames of a page being drawn), as when reading from the server: see "Reading: dropped
+    frames while pages are prepared". Browser memory 1.28 GB, JS heap 78 MB. Next:
     - *Milestone 2: Wikipedia and Wikisource in the browser.* A store in IndexedDB (the core
       takes any store), so an index is built once per file; the index build in the worker (the
       top 1M took ~5 min on Node: measure fzstd, and on a Quest); a file's identity across
