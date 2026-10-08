@@ -193,9 +193,13 @@
         whole once a second blob of it is wanted (`wholeClusterBytes`; a book's pictures share
         a few clusters: the cat book's 362 pictures lie in 24). Counted on the PC: the file
         718 reads (from 4,656 this morning), the cat book 73 (from 2,084). On the Quest: the
-        file opens in 19.4 s (from ~70), the book in 4.3 s (from ~30). Further: the 700 reads
-        of the open are the books' sizes (one per cluster of EPUBs), only for their thickness
-        on the shelf; they could be deferred or dropped for local libraries.
+        file opens in 19.4 s (from ~70), the book in 4.3 s (from ~30). Then (`838ffc2`) the
+        handler opens the file once (the library takes the archive over) and books' sizes,
+        which only set their thickness on the shelf (logarithmic), are estimated from the
+        cluster pointers instead of read (`estimateSizes`: median 1.4–2.2× the real size,
+        94–100 % within 10×, a median thickness change of 4–10 %): 28 reads instead of 738,
+        and on the Quest the file opens in 3.0 s. So a 4.5 GB Gutenberg ZIM now opens in 3 s
+        and a book of 362 pictures in 4 s, from a minute and half a minute this morning.
     - *Milestone 3: remote ZIMs* from Kiwix's mirror over HTTP range reads (a byte source like
       `BlobSource`), from a curated list.
     - *Keep files across reloads:* the File System Access API (desktop Chrome/Edge) can store a
