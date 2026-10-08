@@ -175,7 +175,9 @@ whole. It works on GitHub Pages (no server) and beside a server's own libraries.
 
 - **Opening:** "Open ZIM files…" under the library list (a file input, several at once) or a drop
   on the page (`ui/overlay.js` → `main.js` `openLocalFiles`); `__vrlbry.openZim(file)` does the
-  same for scripted tests. Under the button, a line links an example to download
+  same for scripted tests. A toast with a spinner ("Opening <file>…", "(2 of 3)" for several)
+  stays until every file is open, however long that takes; then the catalogue's "New library"
+  toast or the file's error follows. Under the button, a line links an example to download
   (`EXAMPLE_ZIM` in `local/local.js`: Gutenberg LCC-P, 37 MB, from tools/demo-set.txt, which a
   test checks) and Kiwix's Gutenberg folder. In a headset, files are picked before entering VR;
   in VR the kiosk's footer says so ("Your own ZIM files: exit VR, then …"). Opened files last

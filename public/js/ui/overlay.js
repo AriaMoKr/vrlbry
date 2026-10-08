@@ -406,13 +406,25 @@ export class Overlay {
     }
   }
 
+  /**
+   * A short message at the bottom of the page for `ms`, or with Infinity until close(): for work
+   * under way, with kind 'busy' (a spinner).
+   * @returns {{ update: (msg: string) => void, close: () => void }}
+   */
   showToast(msg, kind = 'info', ms = 3500) {
     const t = document.createElement('div');
     t.className = `ov-toast ${kind}`;
     t.textContent = msg;
     this.$('.ov-toasts').appendChild(t);
-    setTimeout(() => t.classList.add('out'), ms);
-    setTimeout(() => t.remove(), ms + 500);
+    let closed = false;
+    const close = () => {
+      if (closed) return;
+      closed = true;
+      t.classList.add('out');
+      setTimeout(() => t.remove(), 500);
+    };
+    if (Number.isFinite(ms)) setTimeout(close, ms);
+    return { update: (text) => { t.textContent = text; }, close };
   }
 
   hide() { this.root.classList.add('ov-hidden'); }

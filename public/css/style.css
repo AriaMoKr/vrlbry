@@ -132,6 +132,8 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .ov-toast { background: var(--panel-solid); border: 1px solid var(--line); padding: 8px 16px; border-radius: 999px; box-shadow: 0 8px 20px rgba(0,0,0,.4); transition: opacity .4s, transform .4s; max-width: 90vw; }
 .ov-toast.error { border-color: var(--danger); color: #ffd9d3; }
 .ov-toast.out { opacity: 0; transform: translateY(6px); }
+.ov-toast.busy::before { content: ""; display: inline-block; width: 12px; height: 12px; margin-right: 10px; vertical-align: -2px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: ov-spin .9s linear infinite; }
+@keyframes ov-spin { to { transform: rotate(360deg); } }
 
 @media (max-width: 640px) {
   .ov-card { width: calc(100vw - 24px); }

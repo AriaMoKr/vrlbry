@@ -54,6 +54,7 @@ export function createLocalLibraries({ log = () => {}, warn = log } = {}) {
   const methods = {
     /** Opens a File (or Blob): { id, title }. Wikipedia and Wikisource need the server for now. */
     async open({ file }) {
+      const t0 = performance.now();
       const probe = await ZimArchive.open(file).catch((err) => {
         throw new LocalError(`${file.name}: not a readable ZIM file (${err.message})`);
       });
@@ -75,7 +76,7 @@ export function createLocalLibraries({ log = () => {}, warn = log } = {}) {
       libs.set(id, opened);
       generation++;
       const info = await opened.info();
-      log(`${file.name}: ${opened.kind} library, ${info.bookCount} book(s)`);
+      log(`${file.name}: ${opened.kind} library, ${info.bookCount} book(s), opened in ${((performance.now() - t0) / 1000).toFixed(1)} s`);
       return { value: { id, title: info.title, kind: opened.kind, books: info.bookCount } };
     },
 

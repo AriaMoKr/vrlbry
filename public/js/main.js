@@ -264,8 +264,18 @@ async function start() {
       overlay.showToast('Only .zim files can be opened.', 'error');
       return [];
     }
-    overlay.showToast(`Opening ${zims.length === 1 ? zims[0].name || 'the ZIM file' : `${zims.length} ZIM files`}…`, 'info', 3000);
-    const results = await localLibrary.openFiles(zims);
+    // Shown until every file is open (a big file on a Quest takes a while), then the catalogue's
+    // "New library" toast follows.
+    const name = (f) => f.name || 'the ZIM file';
+    const status = overlay.showToast(`Opening ${zims.length === 1 ? name(zims[0]) : `${zims.length} ZIM files`}…`, 'busy', Infinity);
+    let results;
+    try {
+      results = await localLibrary.openFiles(zims, {
+        onFile: (file, i) => { if (zims.length > 1) status.update(`Opening ${name(file)} (${i + 1} of ${zims.length})…`); },
+      });
+    } finally {
+      status.close();
+    }
     for (const r of results) {
       if (r.error) overlay.showToast(r.error, 'error', 9000);
     }

@@ -60,11 +60,14 @@ function call(method, args = {}) {
 /**
  * Opens ZIM files (File objects from a picker or a drop), one after the other.
  * @param {Iterable<File>} files
+ * @param {{ onFile?: (file: File, i: number) => void }} [opts] onFile: called as each file starts
  * @returns {Promise<Array<{ name: string, id?: string, title?: string, kind?: string, books?: number, error?: string }>>}
  */
-export async function openFiles(files) {
+export async function openFiles(files, { onFile } = {}) {
   const results = [];
+  let i = 0;
   for (const file of files) {
+    onFile?.(file, i++);
     try {
       results.push({ name: file.name, ...(await call('open', { file })) });
       opened++;
