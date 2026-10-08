@@ -15,6 +15,8 @@ import { ZimArchive } from '../core/zim/reader.js';
 const CONTENT_CACHE_BYTES = 64 * 1024 * 1024;
 /** Decompressed clusters kept per archive. */
 const CLUSTER_CACHE_BYTES = 32 * 1024 * 1024;
+/** The directory block cache per file (ZimArchive dirCacheBytes): a 4.5 GB Gutenberg ZIM's whole directory is 1.7 MB. */
+const DIR_CACHE_BYTES = 16 * 1024 * 1024;
 
 export const LOCAL_PREFIX = '~';
 
@@ -71,7 +73,7 @@ export function createLocalLibraries({ log = () => {}, warn = log } = {}) {
       let id = base;
       for (let n = 2; libs.has(id); n++) id = `${base}-${n}`;
       const opened = await ArchiveLibrary.open(file, {
-        id, log, warn, contentCache, archiveOptions: { clusterCacheBytes: CLUSTER_CACHE_BYTES }, onProgress,
+        id, log, warn, contentCache, archiveOptions: { clusterCacheBytes: CLUSTER_CACHE_BYTES, dirCacheBytes: DIR_CACHE_BYTES }, onProgress,
       });
       libs.set(id, opened);
       generation++;

@@ -268,11 +268,18 @@ or `File` (`BlobSource`), or any byte source `{ name, size, read(position, lengt
 whose `read` resolves with `length` bytes, fewer only at the end. `filePath` is the path or
 the file's name, for messages.
 
+Lookups (`findEntry`, `lowerBound`: a binary search, one dirent per step) read dirents and URL
+pointers through a cache of aligned 64 KB directory blocks (`dirCacheBytes`, 8 MB by default;
+the local library gives each file 16 MB, §2.6), each block read once while cached: on a `File`
+in a browser a read costs about the same however small (~15 ms on a Quest 3), and opening a
+4.5 GB Gutenberg ZIM made 3,200 dirent reads over 1.7 MB of directory. Scans (`entries()`)
+read in batches and bypass it; so do clusters, which have their own cache.
+
 ```js
 export class ZimError extends Error {}
 export class ZimArchive {
   /** Opens and validates a ZIM file. Reads header, MIME list, pointer lists (lazily or eagerly). */
-  static async open(filePath, { clusterCacheBytes = 256 * 1024 * 1024 } = {}): Promise<ZimArchive>
+  static async open(input, { clusterCacheBytes = 256 * 1024 * 1024, direntCacheEntries = 50000, dirCacheBytes = 8 * 1024 * 1024 } = {}): Promise<ZimArchive>
   async close()
   filePath: string
   header: { major, minor, uuid /* 32-char hex */, entryCount, clusterCount, mainPage /* index|null */,

@@ -49,6 +49,10 @@ const DIRENT_MAX = 1 << 20;
 const ITER_BATCH = 512;
 /** entries(): dirents closer together than this are fetched with one read. */
 const ITER_SPAN = 256 * 1024;
+/** Directory reads (dirents, URL pointers) are served from cached, aligned blocks of this size. */
+const DIR_BLOCK = 64 * 1024;
+/** Default byte budget of the directory block cache. */
+const DIR_CACHE_BYTES = 8 * 1024 * 1024;
 /**
  * First read size for a compressed cluster whose end is not another cluster's start (see
  * _decompressCluster); grows x4 until the cluster decompresses completely.
@@ -190,6 +194,8 @@ export class ZimArchive {
     this._sectionStarts = null; // Set of the non-cluster boundaries
     this._ptrPages = new LRUCache({ maxEntries: 2048 });
     this._ptrPagesInflight = new Map();
+    this._dirBlocks = new LRUCache({ maxBytes: opts.dirCacheBytes, sizeOf: (b) => b.length + 32 }); // block number → bytes
+    this._dirBlocksInflight = new Map();
     this._tailWindow = opts.tailWindowBytes;
     this._dirents = new LRUCache({ maxEntries: opts.direntCacheEntries });
     this._clusterInfo = new LRUCache({ maxEntries: 65536 });
@@ -210,6 +216,8 @@ export class ZimArchive {
    * @param {object} [opts]
    * @param {number} [opts.clusterCacheBytes=268435456] budget for decompressed clusters
    * @param {number} [opts.direntCacheEntries=50000] number of parsed directory entries to cache
+   * @param {number} [opts.dirCacheBytes=8388608] budget for the directory's blocks (_readDir: the
+   *   bytes lookups read dirents and URL pointers from); 0 reads them from the source each time
    * @param {number} [opts.tailWindowBytes=4194304] first read size for a compressed cluster whose
    *   end is not exactly known (advanced; mainly for tests)
    * @returns {Promise<ZimArchive>}
@@ -218,6 +226,7 @@ export class ZimArchive {
   static async open(input, {
     clusterCacheBytes = 256 * 1024 * 1024,
     direntCacheEntries = 50000,
+    dirCacheBytes = DIR_CACHE_BYTES,
     tailWindowBytes = TAIL_WINDOW,
   } = {}) {
     const name = typeof input === 'string' ? input : input?.name || 'archive';
@@ -230,7 +239,7 @@ export class ZimArchive {
       throw new ZimError(`cannot open ${name}: ${err.message}`, { cause: err });
     }
     try {
-      const zim = new ZimArchive(source, { clusterCacheBytes, direntCacheEntries, tailWindowBytes });
+      const zim = new ZimArchive(source, { clusterCacheBytes, direntCacheEntries, dirCacheBytes, tailWindowBytes });
       await zim._init();
       return zim;
     } catch (err) {
@@ -246,6 +255,7 @@ export class ZimArchive {
     this._closed = true;
     this._clusters.clear();
     this._dirents.clear();
+    this._dirBlocks.clear();
     await this._source.close?.();
   }
 
@@ -354,6 +364,59 @@ export class ZimArchive {
     return buf;
   }
 
+  /**
+   * Reads `length` bytes of the directory (a dirent, URL pointers) at `position` through the
+   * block cache: aligned DIR_BLOCK-byte blocks, each read once while cached (dirCacheBytes). A
+   * lookup is a binary search that reads one dirent per step, and on a File in a browser a read
+   * costs about the same however small (~15 ms on a Quest 3: opening a 4.5 GB Gutenberg ZIM made
+   * 3,200 dirent reads over 1.7 MB of directory, and preparing one of its books 1,300 more).
+   * Reads of a block or more go straight to the source. The bytes returned are the cache's: do
+   * not modify them.
+   */
+  async _readDir(position, length) {
+    if (length >= DIR_BLOCK || !(this._dirBlocks.maxBytes > 0)) return this._read(position, length);
+    const first = Math.floor(position / DIR_BLOCK);
+    const last = Math.floor((position + length - 1) / DIR_BLOCK);
+    const short = () => new ZimError(`${this.filePath}: unexpected end of file reading ${length} bytes at ${position}`);
+    if (first === last) {
+      const block = await this._dirBlock(first);
+      const from = position - first * DIR_BLOCK;
+      if (from + length > block.length) throw short();
+      return block.subarray(from, from + length);
+    }
+    const out = platform.alloc(length);
+    let filled = 0;
+    for (let b = first; b <= last; b++) {
+      const block = await this._dirBlock(b);
+      const from = b === first ? position - first * DIR_BLOCK : 0;
+      const n = Math.min(block.length - from, length - filled);
+      if (n <= 0) throw short();
+      out.set(block.subarray(from, from + n), filled);
+      filled += n;
+    }
+    if (filled < length) throw short();
+    return out;
+  }
+
+  /** One block of the directory cache (block number `b`), read once; concurrent callers share the read. */
+  async _dirBlock(b) {
+    const cached = this._dirBlocks.get(b);
+    if (cached) return cached;
+    let pending = this._dirBlocksInflight.get(b);
+    if (!pending) {
+      pending = (async () => {
+        const start = b * DIR_BLOCK;
+        const block = await this._read(start, Math.min(DIR_BLOCK, this.fileSize - start));
+        this._dirBlocks.set(b, block);
+        return block;
+      })();
+      const done = () => this._dirBlocksInflight.delete(b);
+      pending.then(done, done);
+      this._dirBlocksInflight.set(b, pending);
+    }
+    return pending;
+  }
+
   // ------------------------------------------------------------------------------------------
   // Directory entries
 
@@ -365,7 +428,7 @@ export class ZimArchive {
       pending = (async () => {
         const first = page * PTR_PAGE_SIZE;
         const count = Math.min(PTR_PAGE_SIZE, this.entryCount - first);
-        const buf = await this._read(this.header.urlPtrPos + first * 8, count * 8);
+        const buf = await this._readDir(this.header.urlPtrPos + first * 8, count * 8);
         const ptrs = new Float64Array(count);
         for (let i = 0; i < count; i++) ptrs[i] = u64Raw(buf, i * 8);
         this._ptrPages.set(page, ptrs);
@@ -394,7 +457,7 @@ export class ZimArchive {
     for (;;) {
       const avail = this.fileSize - ptr;
       if (avail < 8) throw new ZimError(`${this.filePath}: directory entry ${index} beyond end of file`);
-      const buf = await this._read(ptr, Math.min(len, avail));
+      const buf = await this._readDir(ptr, Math.min(len, avail));
       const entry = parseDirent(buf, 0, index, this.mimeTypes);
       if (entry) return entry;
       if (len >= avail || len >= DIRENT_MAX) {

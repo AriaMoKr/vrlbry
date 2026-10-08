@@ -6,7 +6,7 @@ import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import zlib from 'node:zlib';
-import '../server/platform-node.js';
+import { nodePlatform } from '../server/platform-node.js';
 import { LRUCache } from '../public/js/core/util/lru.js';
 import { ZimArchive, ZimError } from '../public/js/core/zim/reader.js';
 import { writeZim } from './helpers/zimwriter.js';
@@ -762,6 +762,52 @@ describe('ZimArchive: real Gutenberg ZIM', { skip: !fs.existsSync(REAL_ZIM) && '
       }
     } finally {
       await cold.close();
+    }
+  });
+});
+
+describe('ZimArchive: directory block cache', () => {
+  /** Opens a ZIM through a source that counts its reads. */
+  async function openCounting(file, opts) {
+    const source = await nodePlatform.openFile(file);
+    const count = { reads: 0, bytes: 0 };
+    const read = source.read.bind(source);
+    source.read = (pos, len) => {
+      count.reads++;
+      count.bytes += len;
+      return read(pos, len);
+    };
+    return { zim: await ZimArchive.open(source, opts), count };
+  }
+
+  it('serves lookups from cached blocks: a read per block instead of one per search step', async () => {
+    // 3,000 entries make a directory of ~250 KB, so dirents also straddle the 64 KB block boundaries.
+    const entries = Array.from({ length: 3000 }, (_, i) => ({
+      ns: 'C', url: `article/${String(i).padStart(4, '0')}.html`, title: `Article ${i} of the test set`, mime: 'text/html', content: `<p>${i}</p>`,
+    }));
+    const info = writeZim(tmpFile('dir-cache.zim'), { entries });
+    // No parsed-entry cache, so every search step reads; the plain archive has no block cache either.
+    const cached = await openCounting(info.filePath, { direntCacheEntries: 0 });
+    const plain = await openCounting(info.filePath, { direntCacheEntries: 0, dirCacheBytes: 0 });
+    try {
+      const opened = { cached: cached.count.reads, plain: plain.count.reads };
+      for (const e of entries) {
+        const [a, b] = [await cached.zim.findEntry('C', e.url), await plain.zim.findEntry('C', e.url)];
+        assert.equal(a?.title, e.title, e.url);
+        assert.deepEqual(a, b);
+      }
+      assert.equal(await cached.zim.findEntry('C', 'article/none.html'), null);
+      assert.equal(await cached.zim.lowerBound('C', 'article/1500'), await plain.zim.lowerBound('C', 'article/1500'));
+      const lookups = { cached: cached.count.reads - opened.cached, plain: plain.count.reads - opened.plain };
+      assert.ok(lookups.plain > 30000, `without the cache, a read per search step: ${lookups.plain}`);
+      assert.ok(lookups.cached <= 12, `with it, a read per directory block: ${lookups.cached}`);
+      // Content is not served from it: clusters have their own cache.
+      const before = cached.count.reads;
+      assert.equal((await cached.zim.getContent('C/article/2999.html')).data.toString(), '<p>2999</p>');
+      assert.ok(cached.count.reads > before, 'the blob was read from the file');
+    } finally {
+      await cached.zim.close();
+      await plain.zim.close();
     }
   });
 });
