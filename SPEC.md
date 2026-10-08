@@ -276,8 +276,10 @@ however small (on a Quest 3 ~65 ms alone, ~11 ms each when 8 or more run at once
 87 ms), so the number of reads is what counts: opening a 4.5 GB Gutenberg ZIM made 3,200
 dirent reads over 1.7 MB of directory. Scans (`entries()`) read in batches and bypass it; so
 do big reads. With `wholeClusterBytes` (0 by default; the local library sets 4 MB) an
-uncompressed cluster up to that big is read whole into the cluster cache when a blob of it is
-wanted (a book's pictures share a few clusters), never for a size alone (`getBlobSize`).
+uncompressed cluster up to that big is read whole into the cluster cache once a second blob of
+it is wanted (a book's pictures usually share a few clusters; the first blob is read on its
+own, so a book with one picture per cluster reads no more than before), never for a size alone
+(`getBlobSize`).
 
 ```js
 export class ZimError extends Error {}

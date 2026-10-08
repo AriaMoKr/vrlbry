@@ -817,18 +817,27 @@ describe('ZimArchive: directory block cache', () => {
     try {
       const data = async (zim, url) => Buffer.from((await zim.getContent(`C/${url}`)).data);
       const reads = (c) => c.count.reads;
-      // The first blob reads its cluster whole; the rest of the cluster then costs nothing.
+      // The first blob of a cluster is read on its own; the second reads the cluster whole, and
+      // the rest of it then costs nothing.
+      const c0 = (await whole.zim.findPath('C/img/0.bin')).cluster;
       let n = reads(whole);
       assert.deepEqual(await data(whole.zim, 'img/0.bin'), small[0].content);
-      assert.ok(reads(whole) > n, 'the cluster was read');
+      assert.ok(reads(whole) > n, 'the blob was read');
+      assert.equal(whole.zim._clusters.has(c0), false, 'one blob wanted: not read whole');
       n = reads(whole);
-      for (const e of small.slice(1, 3)) assert.deepEqual(await data(whole.zim, e.url), e.content);
+      assert.deepEqual(await data(whole.zim, 'img/1.bin'), small[1].content);
+      assert.ok(reads(whole) > n, 'the cluster was read');
+      assert.equal(whole.zim._clusters.has(c0), true, 'two blobs wanted: read whole');
+      n = reads(whole);
+      for (const e of [small[2], small[0]]) assert.deepEqual(await data(whole.zim, e.url), e.content);
       assert.equal(reads(whole), n, 'the other blobs of the cluster came from the cache');
       // A size alone never reads a cluster whole (sizing every book at open would read gigabytes).
       const e4 = await whole.zim.findPath('C/img/4.bin');
       assert.equal(await whole.zim.getBlobSize(e4, { cheapOnly: true }), 20004);
-      assert.equal(whole.zim._clusters.has(e4.cluster), false, 'the size came from the offset table');
+      assert.equal(await whole.zim.getBlobSize(await whole.zim.findPath('C/img/5.bin'), { cheapOnly: true }), 20005);
+      assert.equal(whole.zim._clusters.has(e4.cluster), false, 'the sizes came from the offset table');
       assert.deepEqual(await data(whole.zim, 'img/4.bin'), small[4].content);
+      assert.deepEqual(await data(whole.zim, 'img/5.bin'), small[5].content);
       assert.equal(whole.zim._clusters.has(e4.cluster), true);
       // Over the limit: blob by blob, each read from the file every time.
       n = reads(whole);

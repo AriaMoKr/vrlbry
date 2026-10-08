@@ -197,6 +197,7 @@ export class ZimArchive {
     this._blocks = new LRUCache({ maxBytes: opts.blockCacheBytes, sizeOf: (b) => b.length + 32 }); // block number → bytes
     this._blocksInflight = new Map();
     this._wholeClusterBytes = opts.wholeClusterBytes;
+    this._blobsWanted = new LRUCache({ maxEntries: 4096 }); // cluster → blobs asked of it so far (_readWhole)
     this._tailWindow = opts.tailWindowBytes;
     this._dirents = new LRUCache({ maxEntries: opts.direntCacheEntries });
     this._clusterInfo = new LRUCache({ maxEntries: 65536 });
@@ -802,7 +803,7 @@ export class ZimArchive {
   async _readBlob(clusterIndex, blob) {
     const info = await this._getClusterInfo(clusterIndex);
     let cluster = this._clusters.get(clusterIndex);
-    if (!cluster && !info.compressed && !this._readWhole(info)) {
+    if (!cluster && !info.compressed && !this._readWhole(info, blob)) {
       const [start, end] = await this._uncompressedBlobRange(info, blob);
       if (end <= start) return platform.alloc(0);
       const data = await this._read(start, end - start);
@@ -818,15 +819,21 @@ export class ZimArchive {
   }
 
   /**
-   * Whether an uncompressed cluster is read whole into the cluster cache when a blob of it is
-   * wanted (wholeClusterBytes), rather than blob by blob: in a browser a File read costs about
-   * the same however big (on a Quest 3 a 4 MB read 87 ms, an 8-byte one 70 ms), and a book's
-   * pictures share a few clusters (The Book of the Cat: 362 pictures, each read on its own, took
-   * 13 s). Never for a size alone (getBlobSize): sizing every book at open would read gigabytes.
-   * The server leaves it off: its reads are cheap, and images and EPUBs can be tens of MB.
+   * Whether an uncompressed cluster is now read whole into the cluster cache (wholeClusterBytes)
+   * rather than blob by blob: in a browser a File read costs about the same however big (on a
+   * Quest 3 a 4 MB read 87 ms, an 8-byte one 70 ms), and a book's pictures share a few clusters
+   * (The Book of the Cat: 362 pictures, each read on its own, took 13 s). Only from the second
+   * blob wanted of a cluster: a book whose pictures lie one per cluster (Wild Spain: 125 in 65)
+   * would otherwise read a whole cluster for each, 118 MB for 2.4 MB of pictures. Never for a
+   * size alone (getBlobSize): sizing every book at open would read gigabytes. The server leaves
+   * it off: its reads are cheap, and images and EPUBs can be tens of MB.
    */
-  _readWhole(info) {
-    return info.end - info.start - 1 <= this._wholeClusterBytes;
+  _readWhole(info, blob) {
+    if (!(info.end - info.start - 1 <= this._wholeClusterBytes)) return false;
+    const wanted = this._blobsWanted.get(info.index) ?? new Set();
+    wanted.add(blob);
+    this._blobsWanted.set(info.index, wanted);
+    return wanted.size > 1;
   }
 
   /**
