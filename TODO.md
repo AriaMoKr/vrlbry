@@ -141,9 +141,34 @@
     frames of a page being drawn), as when reading from the server: see "Reading: dropped
     frames while pages are prepared". Browser memory 1.28 GB, JS heap 78 MB. Next:
     - *Milestone 2: Wikipedia and Wikisource in the browser.* A store in IndexedDB (the core
-      takes any store), so an index is built once per file; the index build in the worker (the
-      top 1M took ~5 min on Node: measure fzstd, and on a Quest); a file's identity across
-      reloads (its UUID). Or ship prebuilt indexes for the files of a curated list.
+      takes any store), so an index is built once per file; the index build in the worker; a
+      file's identity across reloads (its UUID). *Measured (2026-10-07,
+      `perf/quest-index-bench-2026-10-07_18-*.json`):* the Wikipedia index build on the
+      browser's platform (fzstd, fflate, TextDecoder, over a Blob, on one thread as in the
+      worker) finds the same articles as on the server's. On a Quest 3 (Quest Browser 152, in a
+      worker), then on the PC with the browser's platform and with the server's: Chemistry mini
+      (25 MB) 3.4 s, 1.3 s, 0.3 s; Mathematics mini (58 MB) 12.9 s, 4.7 s, 1.9 s; Medicine mini
+      (163 MB) 42 s, 13.6 s, 7.7 s; Golf (144 MB) 19.5 s, 10.8 s, 1.0 s; Simple English (3.1 GB)
+      ~5 min (estimated), 125 s, 25 s; top 1M (49 GB) ~55 min (estimated), ~31 min
+      (extrapolated from half), 5.6 min. The size pass dominates: it decompresses all of a
+      Wikipedia's HTML (8.7 GB for Simple English, ~100 GB for the top 1M) to read each page's
+      size and first 4 KB, and fzstd does ~40 MB/s on a Quest and ~80 MB/s on the PC, where the
+      server runs six native zstd at once. The directory scan costs the same on both platforms,
+      ~3.5× more on a Quest. The heap is as on the server (~200 MB for Simple English, ~500 MB
+      for the top 1M). three's WASM zstd (`zstddec`) cannot be used: it needs the frame's
+      content size, which no cluster frame declares (Golf, Medicine, top 1M, Gutenberg LCC-P
+      sampled). Node's `fs.openAsBlob` reports a file over 4 GB with its size modulo 2³² (the
+      unfixed nodejs/node#52585), so the bench read the top 1M through a FileHandle; the server
+      never uses it.
+      - *Plan:* build indexes in the browser for files up to a few GB (~5 min on a Quest, once
+        per file, with progress) and ship prebuilt indexes for the big editions of a curated
+        list.
+      - *To measure:* sizes from each cluster's offset table alone (decompressing only its
+        first block), with redirect pages told by size and namespaces by title prefix (which
+        is per language); a streaming WASM zstd, or two workers outside VR (the Quest gives a
+        page 3 cores): perhaps 2× each.
+      - *To check:* a file over 4 GB opened on a Quest (Chromium's `File` sizes are 64-bit, but
+        it was never tried there): Gutenberg LCC-A, 9.7 GB, opens fully today.
     - *Milestone 3: remote ZIMs* from Kiwix's mirror over HTTP range reads (a byte source like
       `BlobSource`), from a curated list.
     - *Keep files across reloads:* the File System Access API (desktop Chrome/Edge) can store a
