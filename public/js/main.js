@@ -9,6 +9,7 @@ import { Interaction, DEFAULT_SETTINGS } from './interaction.js';
 import { Overlay } from './ui/overlay.js';
 import { audio } from './audio.js';
 import { load, save } from './util/storage.js';
+import { progressText } from './util/progress.js';
 import { PLAYER, XR_FRAME_RATE } from './config.js';
 import { collectionsFor } from './rooms.js';
 import { perf } from './perf.js';
@@ -264,17 +265,32 @@ async function start() {
       overlay.showToast('Only .zim files can be opened.', 'error');
       return [];
     }
-    // Shown until every file is open (a big file on a Quest takes a while), then the catalogue's
-    // "New library" toast follows.
+    // Shown until every file is open (a big file on a Quest takes a while), with the seconds so
+    // far and, from the worker's progress, about how long is left; then the catalogue's "New
+    // library" toast follows.
     const name = (f) => f.name || 'the ZIM file';
-    const status = overlay.showToast(`Opening ${zims.length === 1 ? name(zims[0]) : `${zims.length} ZIM files`}…`, 'busy', Infinity);
+    let base = `Opening ${zims.length === 1 ? name(zims[0]) : `${zims.length} ZIM files`}…`;
+    const status = overlay.showToast(base, 'busy', Infinity);
+    const t0 = performance.now();
+    let fraction = null;
+    const tell = () => status.update(base + progressText(performance.now() - t0, fraction));
+    const timer = setInterval(tell, 1000);
     let results;
     try {
       results = await localLibrary.openFiles(zims, {
-        onFile: (file, i) => { if (zims.length > 1) status.update(`Opening ${name(file)} (${i + 1} of ${zims.length})…`); },
-        onProgress: (f) => status.progress(f),
+        onFile: (file, i) => {
+          if (zims.length > 1) {
+            base = `Opening ${name(file)} (${i + 1} of ${zims.length})…`;
+            tell();
+          }
+        },
+        onProgress: (f) => {
+          fraction = f;
+          status.progress(f);
+        },
       });
     } finally {
+      clearInterval(timer);
       status.close();
     }
     for (const r of results) {

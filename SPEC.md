@@ -176,10 +176,12 @@ whole. It works on GitHub Pages (no server) and beside a server's own libraries.
 - **Opening:** "Open ZIM files…" under the library list (a file input, several at once) or a drop
   on the page (`ui/overlay.js` → `main.js` `openLocalFiles`); `__vrlbry.openZim(file)` does the
   same for scripted tests. A toast with a spinner and a progress bar ("Opening <file>…", "(2 of
-  3)" for several; the bar from the worker's progress: how much of the catalogue is built,
-  Gutenberg books looked up or generic entries scanned, `ArchiveLibrary.open`'s `onProgress`)
-  stays until every file is open, however long that takes; then the catalogue's "New library"
-  toast or the file's error follows. Under the button, a line links an example to download
+  3)" for several, then "· 12 s · about 40 s left": the seconds so far and, from the fraction
+  done, about how long is left, `util/progress.js` `progressText`; the bar from the worker's
+  progress: how much of the catalogue is built, Gutenberg books looked up or generic entries
+  scanned, `ArchiveLibrary.open`'s `onProgress`) stays until every file is open, however long
+  that takes; then the catalogue's "New library" toast or the file's error follows. Under the
+  button, a line links an example to download
   (`EXAMPLE_ZIM` in `local/local.js`: Gutenberg LCC-P, 37 MB, from tools/demo-set.txt, which a
   test checks) and Kiwix's Gutenberg folder. In a headset, files are picked before entering VR;
   in VR the kiosk's footer says so ("Your own ZIM files: exit VR, then …"). Opened files last
@@ -1021,11 +1023,13 @@ States: `browse` → `inspect` → `opening` → `read` (and back), plus `busy` 
   flies back to the slot, `showBook`, → **browse**.
 - **opening:** while the book's metadata loads (`BookReader.load`: the server's or the worker's
   conversion; a big book from a ZIM file opened on a Quest took half a minute), the info panel
-  stays and shows "Opening…" with "Preparing its pages · N s" counting real seconds, for a local
-  book a progress bar (the worker's conversion reports how far it is, `content()`'s
-  `onProgress`: a tenth for the text, the rest per image looked up; repainted at most 5× a
-  second), and only "Put back" (also B/Esc), which cancels and puts the book back. Only that
-  panel takes input. On failure → **inspect**, with the error on the panel (and a toast).
+  stays and shows "Opening…" with "Preparing its pages · 12 s · about 40 s left" (the seconds so
+  far, once a second, and, for a local book, about how long is left, from the fraction done:
+  `util/progress.js` `progressText`, shared with the toast above), for a local book a progress
+  bar (the worker's conversion reports how far it is, `content()`'s `onProgress`: a tenth for
+  the text, the rest per image looked up; repainted at most 5× a second), and only "Put back"
+  (also B/Esc), which cancels and puts the book back. Only that panel takes input. On failure →
+  **inspect**, with the error on the panel (and a toast).
 - **read:** book moves to the reading pose (§`config.READ`), opens, shows the saved or first spread.
   Toolbar panel under the book: ◀ ▶, progress bar (click to jump), Contents, A− A+, theme, Close.
   Contents opens a scrollable TOC panel at the entry being read (highlighted). A list of more
