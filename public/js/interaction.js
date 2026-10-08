@@ -25,6 +25,7 @@ const SEARCH_KEYS = ['1234567890', 'qwertyuiop', "asdfghjkl'", 'zxcvbnm-.,'];
 const SEARCH_DELAY = 250; // ms after the last key before searching
 const OPENING_LINE = 'Preparing its pages'; // the inspect panel's line while a book opens (read)
 const CANCELLED = Symbol('cancelled'); // read(): Put back pressed while the book was opening
+const OPENING_BAR_MS = 200; // the opening progress bar's repaints, at most one per this long
 
 const _plane = new THREE.Plane();
 const _onPlane = new THREE.Vector3();
@@ -606,8 +607,9 @@ export class Interaction {
 
   /**
    * The inspect panel: the book's details, then its buttons. While it is being opened (`opening`:
-   * the line under "Opening…", which update() counts up) only Put back, which cancels; with
-   * `error`, why it could not be opened, under the buttons.
+   * the line under "Opening…", which _showOpening counts up, with a progress bar once there is
+   * progress) only Put back, which cancels; with `error`, why it could not be opened, under the
+   * buttons.
    */
   _fillInspect(book, { opening = null, error = null } = {}) {
     const p = this.inspectPanel;
@@ -631,7 +633,10 @@ export class Interaction {
     if (opening) {
       p.add({ type: 'text', x: pad, y: by, w: W - 2 * pad, h: 44, text: 'Opening…', size: 32, weight: '600', maxLines: 1 });
       p.add({ id: 'opening', type: 'text', x: pad, y: by + 46, w: W - 2 * pad, h: 34, text: opening, size: 24, color: UI.muted, maxLines: 1 });
-      p.add({ type: 'button', x: pad, y: by + 92, w: W - 2 * pad, h: 60, label: 'Put back', size: 26, onClick: () => this._cancelOpening?.() });
+      // A progress bar, once the conversion reports how far it is (local books only).
+      p.add({ id: 'opening-track', type: 'rect', x: pad, y: by + 86, w: W - 2 * pad, h: 10, radius: 5, color: 'rgba(255,255,255,0.12)', hidden: true });
+      p.add({ id: 'opening-bar', type: 'rect', x: pad, y: by + 86, w: 0, h: 10, radius: 5, color: UI.accent, hidden: true });
+      p.add({ type: 'button', x: pad, y: by + 108, w: W - 2 * pad, h: 60, label: 'Put back', size: 26, onClick: () => this._cancelOpening?.() });
       return;
     }
     if (error) p.add({ type: 'text', x: pad, y: by + 158, w: W - 2 * pad, h: 64, text: error, size: 22, color: '#e2a08f', maxLines: 2 });
@@ -644,6 +649,26 @@ export class Interaction {
       p.add({ type: 'button', x: pad, y: by, w: W - 2 * pad, h: 80, label: 'Read', size: 34, color: '#6b4f27', onClick: () => this.read() });
     }
     p.add({ type: 'button', x: pos && book.readable ? pad + (W - 2 * pad + 12) / 2 : pad, y: by + (pos && book.readable ? 80 : 92), w: pos && book.readable ? (W - 2 * pad - 12) / 2 : W - 2 * pad, h: 60, label: 'Put back', size: 26, onClick: () => this.putBack() });
+  }
+
+  /**
+   * Per frame while a book opens (read): the seconds so far and the progress bar on the inspect
+   * panel. The bar is repainted at most every OPENING_BAR_MS (each repaint uploads the panel).
+   */
+  _showOpening(o) {
+    const p = this.inspectPanel;
+    const now = performance.now();
+    const s = Math.floor((now - o.t0) / 1000);
+    if (s >= 1 && s !== o.shown) {
+      o.shown = s;
+      p.set('opening', { text: `${OPENING_LINE} · ${s} s` });
+    }
+    if (o.f !== null && o.f !== o.drawnF && (now - o.drawnAt >= OPENING_BAR_MS || o.f >= 1)) {
+      o.drawnF = o.f;
+      o.drawnAt = now;
+      const track = p.set('opening-track', { hidden: false });
+      p.set('opening-bar', { hidden: false, w: Math.max(track.h, Math.round(track.w * Math.min(1, o.f))) });
+    }
   }
 
   _buildToolbar() {
@@ -1043,7 +1068,8 @@ export class Interaction {
     // minute), so meanwhile the inspect panel says so, counting the seconds, and its Put back
     // cancels. In 'opening' only that panel takes input.
     this.state = 'opening';
-    this._opening = { t0: performance.now(), shown: 0 };
+    this._opening = { t0: performance.now(), shown: 0, f: null, drawnF: null, drawnAt: 0 };
+    const opening = this._opening;
     this._fillInspect(book, { opening: OPENING_LINE });
     const cancelled = new Promise((resolve) => { this._cancelOpening = () => resolve(CANCELLED); });
     const t0 = performance.now();
@@ -1051,7 +1077,7 @@ export class Interaction {
     let failure = null;
     try {
       startRef = await Promise.race([cancelled, (async () => {
-        await reader.load();
+        await reader.load({ onProgress: (f) => { opening.f = f; } });
         const pos = at ?? (!fromStart && load(`pos:${book.libId}:${book.id}`, null));
         return pos ? reader.refForAnchor(pos) : reader.firstRef();
       })()]);
@@ -1754,13 +1780,7 @@ export class Interaction {
       }
     }
     this.book3d?.update(dt);
-    if (this._opening) { // a book being opened: the seconds so far on the inspect panel (read)
-      const s = Math.floor((performance.now() - this._opening.t0) / 1000);
-      if (s >= 1 && s !== this._opening.shown) {
-        this._opening.shown = s;
-        this.inspectPanel.set('opening', { text: `${OPENING_LINE} · ${s} s` });
-      }
-    }
+    if (this._opening) this._showOpening(this._opening);
     this._updateExitHold(dt);
 
     if (this._grab) {

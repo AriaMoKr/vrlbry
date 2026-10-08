@@ -175,7 +175,9 @@ whole. It works on GitHub Pages (no server) and beside a server's own libraries.
 
 - **Opening:** "Open ZIM files…" under the library list (a file input, several at once) or a drop
   on the page (`ui/overlay.js` → `main.js` `openLocalFiles`); `__vrlbry.openZim(file)` does the
-  same for scripted tests. A toast with a spinner ("Opening <file>…", "(2 of 3)" for several)
+  same for scripted tests. A toast with a spinner and a progress bar ("Opening <file>…", "(2 of
+  3)" for several; the bar from the worker's progress: how much of the catalogue is built,
+  Gutenberg books looked up or generic entries scanned, `ArchiveLibrary.open`'s `onProgress`)
   stays until every file is open, however long that takes; then the catalogue's "New library"
   toast or the file's error follows. Under the button, a line links an example to download
   (`EXAMPLE_ZIM` in `local/local.js`: Gutenberg LCC-P, 37 MB, from tools/demo-set.txt, which a
@@ -190,7 +192,9 @@ whole. It works on GitHub Pages (no server) and beside a server's own libraries.
   `libraryIdFor` never makes a `~`, so they cannot clash with a server's; `~` is URL-safe.
 - **Requests:** `local/local.js` (page) ↔ `local/local-handler.js` (worker) by `postMessage`:
   `open`, `catalog`, `books`, `meta`, `chunk` (the chunk's JSON bytes, transferred), `image`
-  (bytes and MIME type of a URL), `close`. `api.js` sends the requests of `~` libraries there;
+  (bytes and MIME type of a URL), `close`. Before its answer an `open` or a `meta` may send
+  `{ id, progress }` (a fraction, at most 10 a second), for the page's progress bars. `api.js`
+  sends the requests of `~` libraries there;
   `getCatalog()` (and a rescan's answer) lists the local libraries after the server's, with
   generation `"<server>+<local>"` so the poll notices either changing. Local libraries have no
   article search (no Wikipedia).
@@ -1017,9 +1021,11 @@ States: `browse` → `inspect` → `opening` → `read` (and back), plus `busy` 
   flies back to the slot, `showBook`, → **browse**.
 - **opening:** while the book's metadata loads (`BookReader.load`: the server's or the worker's
   conversion; a big book from a ZIM file opened on a Quest took half a minute), the info panel
-  stays and shows "Opening…" with "Preparing its pages · N s" counting real seconds, and only
-  "Put back" (also B/Esc), which cancels and puts the book back. Only that panel takes input.
-  On failure → **inspect**, with the error on the panel (and a toast).
+  stays and shows "Opening…" with "Preparing its pages · N s" counting real seconds, for a local
+  book a progress bar (the worker's conversion reports how far it is, `content()`'s
+  `onProgress`: a tenth for the text, the rest per image looked up; repainted at most 5× a
+  second), and only "Put back" (also B/Esc), which cancels and puts the book back. Only that
+  panel takes input. On failure → **inspect**, with the error on the panel (and a toast).
 - **read:** book moves to the reading pose (§`config.READ`), opens, shows the saved or first spread.
   Toolbar panel under the book: ◀ ▶, progress bar (click to jump), Contents, A− A+, theme, Close.
   Contents opens a scrollable TOC panel at the entry being read (highlighted). A list of more

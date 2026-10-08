@@ -130,6 +130,37 @@ describe('local library (ZIM files read in the browser)', () => {
     await sameAnswers(REAL_ZIM, { limit: 12 });
   });
 
+  it('reports progress while a file opens and while a book is prepared', async () => {
+    provide(browser);
+    const local = createLocalLibraries();
+    const climbs = (values, what) => {
+      assert.ok(values.length, `${what}: some progress`);
+      assert.ok(values.every((f, i) => f >= 0 && f <= 1 && (i === 0 || f >= values[i - 1])), `${what}: from 0 to 1, never back: ${values}`);
+      assert.equal(values.at(-1), 1, `${what}: ends at 1`);
+    };
+    const opening = [];
+    const { id } = (await local.call('open', { file: asFile(writeGutenbergZim(path.join(tmp, 'progress.zim')).filePath) }, { onProgress: (f) => opening.push(f) })).value;
+    climbs(opening, 'Gutenberg catalogue');
+    const generic = [];
+    await local.call('open', { file: asFile(writeGenericZim(path.join(tmp, 'progress-generic.zim')).filePath) }, { onProgress: (f) => generic.push(f) });
+    climbs(generic, 'generic catalogue');
+    // A book with images (two requests at once share one conversion, and both hear of it) and one without.
+    const [a, b] = [[], []];
+    await Promise.all([
+      local.call('meta', { lib: id, book: '106' }, { onProgress: (f) => a.push(f) }),
+      local.call('meta', { lib: id, book: '106' }, { onProgress: (f) => b.push(f) }),
+    ]);
+    climbs(a, 'images book');
+    climbs(b, 'images book, second request');
+    assert.ok(a.length > 3, `one step per image: ${a}`);
+    const plain = [];
+    await local.call('meta', { lib: id, book: '102' }, { onProgress: (f) => plain.push(f) });
+    climbs(plain, 'book without images');
+    const cached = [];
+    await local.call('meta', { lib: id, book: '102' }, { onProgress: (f) => cached.push(f) });
+    assert.deepEqual(cached, [], 'nothing to report for a converted book');
+  });
+
   it('refuses Wikipedia and Wikisource ZIMs, and keeps ids apart', async () => {
     provide(browser);
     const local = createLocalLibraries();

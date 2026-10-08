@@ -53,7 +53,7 @@ export function createLocalLibraries({ log = () => {}, warn = log } = {}) {
 
   const methods = {
     /** Opens a File (or Blob): { id, title }. Wikipedia and Wikisource need the server for now. */
-    async open({ file }) {
+    async open({ file }, { onProgress } = {}) {
       const t0 = performance.now();
       const probe = await ZimArchive.open(file).catch((err) => {
         throw new LocalError(`${file.name}: not a readable ZIM file (${err.message})`);
@@ -71,7 +71,7 @@ export function createLocalLibraries({ log = () => {}, warn = log } = {}) {
       let id = base;
       for (let n = 2; libs.has(id); n++) id = `${base}-${n}`;
       const opened = await ArchiveLibrary.open(file, {
-        id, log, warn, contentCache, archiveOptions: { clusterCacheBytes: CLUSTER_CACHE_BYTES },
+        id, log, warn, contentCache, archiveOptions: { clusterCacheBytes: CLUSTER_CACHE_BYTES }, onProgress,
       });
       libs.set(id, opened);
       generation++;
@@ -90,10 +90,10 @@ export function createLocalLibraries({ log = () => {}, warn = log } = {}) {
       return { value: await lib(id).books() };
     },
 
-    async meta({ lib: id, book }) {
+    async meta({ lib: id, book }, { onProgress } = {}) {
       const l = lib(id);
       if (!(await l.book(book))) throw new LocalError(`unknown book: ${book}`);
-      return { value: (await l.content(book)).meta };
+      return { value: (await l.content(book, { onProgress })).meta };
     },
 
     /** A chunk's JSON as bytes (a copy: the cached chunk keeps its own). */
@@ -135,11 +135,14 @@ export function createLocalLibraries({ log = () => {}, warn = log } = {}) {
   };
 
   return {
-    /** Runs one request: { value, transfer? }; throws LocalError (or the core's errors). */
-    call(method, args = {}) {
+    /**
+     * Runs one request: { value, transfer? }; throws LocalError (or the core's errors).
+     * `onProgress(fraction)`: how far an open (its catalogue) or a meta (the book's conversion) is.
+     */
+    call(method, args = {}, { onProgress } = {}) {
       const fn = methods[method];
       if (!fn) throw new LocalError(`unknown request: ${method}`);
-      return fn(args);
+      return fn(args, { onProgress });
     },
     /** A local library's URL, parsed (for tests). */
     parse,

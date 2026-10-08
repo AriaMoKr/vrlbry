@@ -183,10 +183,13 @@ export class BookReader {
     this.stats = { lastLayoutMs: 0, lastRenderMs: 0 };
   }
 
-  /** Fetches reading metadata (chunks, toc). Idempotent. */
-  async load() {
+  /**
+   * Fetches reading metadata (chunks, toc). Idempotent. `onProgress(fraction)`: how far a local
+   * book's conversion is (getBookMeta); never called for the server's books.
+   */
+  async load({ onProgress } = {}) {
     if (!this._loading) {
-      this._loading = getBookMeta(this.libId, this.book.id).then((meta) => {
+      this._loading = getBookMeta(this.libId, this.book.id, { onProgress }).then((meta) => {
         this.meta = meta;
         return meta;
       });

@@ -259,6 +259,8 @@ export class ArchiveLibrary {
     this._maxGenericBooks = maxGenericBooks;
     this._contentCache = contentCache;
     this._inflight = new Map(); // bookId → Promise<content>
+    this._inflightProgress = new Map(); // bookId → Set of content()'s onProgress, while converting
+    this._catalogProgress = null; // open()'s onProgress, while the catalogue is first built
     this._epubCache = new LRUCache({ maxBytes: EPUB_CACHE_BYTES, sizeOf: (e) => e.bytes });
     this._epubInflight = new Map();
     this._imageInfo = new LRUCache({ maxEntries: 100000 }); // archive path → { ok, w, h }
@@ -309,6 +311,7 @@ export class ArchiveLibrary {
     onChange,
     volumeSize, // articles per Wikipedia volume (tests use small volumes)
     indexQueue,
+    onProgress, // (fraction) as the catalogue is built: Gutenberg books looked up, generic entries scanned
   } = {}) {
     const archive = await ZimArchive.open(input, { clusterCacheBytes: ARCHIVE_CLUSTER_CACHE_BYTES, ...archiveOptions });
     try {
@@ -316,7 +319,12 @@ export class ArchiveLibrary {
         id, filePath: archive.filePath, archive, log, warn, maxGenericBooks, store, onChange, volumeSize, indexQueue,
         contentCache: contentCache ?? createContentCache(contentCacheBytes),
       });
-      await lib.books(); // catalog now: `kind` is final and errors surface at scan time
+      lib._catalogProgress = onProgress ?? null;
+      try {
+        await lib.books(); // catalog now: `kind` is final and errors surface at scan time
+      } finally {
+        lib._catalogProgress = null;
+      }
       return lib;
     } catch (err) {
       await archive.close().catch(() => {});
@@ -404,10 +412,13 @@ export class ArchiveLibrary {
    * serialized chunks (`json` bytes, `gzip()`, `blocks` getter). Converted once, cached in the
    * shared byte-budgeted LRU; concurrent calls share one conversion.
    * @param {string} bookId
+   * @param {{ onProgress?: (fraction: number) => void }} [opts] onProgress: how far the conversion
+   *   is (mostly its images, each looked up and sized: a book of 362 took half a minute on a
+   *   Quest), also when joining one under way; not called for a cached book
    * @returns {Promise<{ meta: object, chunks: Chunk[] } | undefined>} undefined for an unknown book
    * @throws {LibraryError} (status 404) when the book has nothing readable
    */
-  async content(bookId) {
+  async content(bookId, { onProgress } = {}) {
     const id = String(bookId);
     await this.books();
     const rec = this._byId.get(id);
@@ -417,15 +428,22 @@ export class ArchiveLibrary {
     if (cached) return cached;
     let pending = this._inflight.get(id);
     if (!pending) {
+      const listeners = new Set();
+      this._inflightProgress.set(id, listeners);
+      const progress = (f) => { for (const fn of listeners) fn(f); };
       pending = (async () => {
-        const content = rec.kind === 'wikipedia' ? await this._volumeMeta(rec) : await this._convert(rec);
+        const content = rec.kind === 'wikipedia' ? await this._volumeMeta(rec) : await this._convert(rec, progress);
         this._contentCache.set(key, content);
         return content;
       })();
-      const done = () => this._inflight.delete(id);
+      const done = () => {
+        this._inflight.delete(id);
+        this._inflightProgress.delete(id);
+      };
       pending.then(done, done);
       this._inflight.set(id, pending);
     }
+    if (onProgress) this._inflightProgress.get(id)?.add(onProgress);
     return pending;
   }
 
@@ -843,6 +861,7 @@ export class ArchiveLibrary {
     }
 
     const recs = new Array(parsed.length);
+    let looked = 0;
     // Lookups are independent binary searches over cached directory entries: run them together.
     await mapLimit(parsed, 16, async (row, i) => {
       const rawTitle = typeof row[0] === 'string' ? row[0] : String(row[0] ?? '');
@@ -882,6 +901,7 @@ export class ArchiveLibrary {
         size,
       };
       recs[i] = { book, html, epub, kind: 'gutenberg' };
+      this._catalogProgress?.(++looked / parsed.length);
     });
     // Registered in rank order so iteration over the id map is deterministic.
     for (const rec of recs) this._byId.set(rec.book.id, rec);
@@ -936,6 +956,7 @@ export class ArchiveLibrary {
       const start = await this.archive.lowerBound(ns, '');
       const end = await this.archive.lowerBound(String.fromCharCode(ns.charCodeAt(0) + 1), '');
       for await (const entry of this.archive.entries(start, end)) {
+        this._catalogProgress?.(Math.max(books.length / max, (entry.index - start + 1) / (end - start)));
         if (entry.isRedirect || !entry.mime || !/^(text\/html|application\/xhtml\+xml)\b/i.test(entry.mime)) continue;
         if (books.length >= max) {
           more = true;
@@ -1009,10 +1030,15 @@ export class ArchiveLibrary {
     return pending;
   }
 
-  async _convert(rec) {
+  /**
+   * Converts a book (content()). `progress(fraction)`: a tenth for its text, read and parsed, the
+   * rest as its images are looked up and sized (_fixImages).
+   */
+  async _convert(rec, progress = () => {}) {
     const { book } = rec;
     let blocks;
     let source;
+    const images = (f) => progress(0.1 + 0.9 * f);
     const epubRes = (p) => `/api/libraries/${encodeURIComponent(this.id)}/books/${encodeURIComponent(book.id)}/res/${encodePath(p)}`;
     if (rec.kind === 'wikisource') {
       // A work = its main page + subpages in contents order, each part under its own heading.
@@ -1030,10 +1056,12 @@ export class ArchiveLibrary {
         blocks.push({ t: 'hr' }, { t: 'p', a: 'c', r: [[`This edition includes the first ${parts.length} of ${total} parts of the work.`, 1]] });
       }
       source = 'html';
+      images(0);
       await this._fixImages(blocks, {
         lookup: (p) => this._zimImage(p),
         fallback: null,
         url: (p) => zimUrl(this.id, p),
+        onProgress: images,
       });
     } else if (rec.html) {
       const content = await this.archive.getContent(rec.html);
@@ -1041,7 +1069,9 @@ export class ArchiveLibrary {
       // Relative links resolve against the entry that actually holds the HTML (after redirects).
       ({ blocks } = htmlToBlocks(decodeHtml(content.data), { docPath: content.entry.path }));
       source = 'html';
+      images(0);
       await this._fixImages(blocks, {
+        onProgress: images,
         lookup: (p) => this._zimImage(p),
         // gutenberg2zim flattens a book's images to '<id>_<name>' (some books still say img/<name>).
         fallback: rec.kind === 'gutenberg' ? (p) => {
@@ -1058,7 +1088,9 @@ export class ArchiveLibrary {
         for (const b of out) blocks.push(b);
       }
       source = 'epub';
+      images(0);
       await this._fixImages(blocks, {
+        onProgress: images,
         lookup: async (p) => {
           const data = epub.getFile(p);
           if (!data || !/^image\//.test(epub.mimeOf(p))) return { ok: false };
@@ -1120,9 +1152,9 @@ export class ArchiveLibrary {
   /**
    * Checks every image block: fills missing w/h from the image bytes, rewrites `src` to a client
    * URL, and replaces images that are not in the archive with their alt text (or drops them).
-   * Works in place on `blocks`.
+   * Works in place on `blocks`. `onProgress(fraction)` as images are done (1 when none).
    */
-  async _fixImages(blocks, { lookup, fallback, url }) {
+  async _fixImages(blocks, { lookup, fallback, url, onProgress = () => {} }) {
     const imgs = [];
     const inline = []; // image runs (SPEC §3.5): their size is known, only the path is resolved
     for (let i = 0; i < blocks.length; i++) {
@@ -1134,7 +1166,15 @@ export class ArchiveLibrary {
         for (const cell of b.c) for (const run of cell) if (run.length > 2) inline.push(run);
       }
     }
-    if (!imgs.length && !inline.length) return;
+    if (!imgs.length && !inline.length) return onProgress(1);
+    let done = 0;
+    const counted = (fn) => async (x) => {
+      try {
+        await fn(x);
+      } finally {
+        onProgress(++done / (imgs.length + inline.length));
+      }
+    };
     const resolved = new Map(); // src → { path, info } (books repeat decorative images)
     const resolve = async (src, size) => {
       const key = `${size ? 1 : 0}${src}`;
@@ -1160,7 +1200,7 @@ export class ArchiveLibrary {
       return r;
     };
     const drop = new Set();
-    await mapLimit(imgs, IMAGE_PROBE_CONCURRENCY, async (i) => {
+    await mapLimit(imgs, IMAGE_PROBE_CONCURRENCY, counted(async (i) => {
       const blk = blocks[i];
       if (blk.src.startsWith('data:')) {
         if (!(blk.w && blk.h)) {
@@ -1183,8 +1223,8 @@ export class ArchiveLibrary {
       }
       if (info.w && info.h) Object.assign(blk, fillSize(blk, info));
       blk.src = url(p);
-    });
-    await mapLimit(inline, IMAGE_PROBE_CONCURRENCY, async (run) => {
+    }));
+    await mapLimit(inline, IMAGE_PROBE_CONCURRENCY, counted(async (run) => {
       const img = run[2];
       if (img.src.startsWith('data:')) return;
       const { path: p, info } = await resolve(img.src, false);
@@ -1196,7 +1236,7 @@ export class ArchiveLibrary {
         run[0] = img.alt || '';
         run[1] |= 1;
       }
-    });
+    }));
     if (drop.size) {
       let w = 0;
       for (let r = 0; r < blocks.length; r++) if (!drop.has(r)) blocks[w++] = blocks[r];

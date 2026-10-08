@@ -5,7 +5,7 @@
 
 let worker = null;
 let seq = 0;
-const pending = new Map(); // request id → { resolve, reject }
+const pending = new Map(); // request id → { resolve, reject, onProgress? }
 const listeners = new Set();
 let opened = 0;
 
@@ -36,6 +36,10 @@ function start() {
     }
     const p = pending.get(data.id);
     if (!p) return;
+    if (data.progress !== undefined) {
+      p.onProgress?.(data.progress);
+      return;
+    }
     pending.delete(data.id);
     if ('error' in data) p.reject(new Error(data.error));
     else p.resolve(data.value);
@@ -48,11 +52,11 @@ function start() {
   return worker;
 }
 
-function call(method, args = {}) {
+function call(method, args = {}, { onProgress } = {}) {
   start();
   return new Promise((resolve, reject) => {
     const id = ++seq;
-    pending.set(id, { resolve, reject });
+    pending.set(id, { resolve, reject, onProgress });
     worker.postMessage({ id, method, args });
   });
 }
@@ -60,16 +64,19 @@ function call(method, args = {}) {
 /**
  * Opens ZIM files (File objects from a picker or a drop), one after the other.
  * @param {Iterable<File>} files
- * @param {{ onFile?: (file: File, i: number) => void }} [opts] onFile: called as each file starts
+ * @param {{ onFile?: (file: File, i: number) => void, onProgress?: (fraction: number) => void }} [opts]
+ *   onFile: called as each file starts; onProgress: how far all of them are (each file's share by
+ *   how much of its catalogue is built)
  * @returns {Promise<Array<{ name: string, id?: string, title?: string, kind?: string, books?: number, error?: string }>>}
  */
-export async function openFiles(files, { onFile } = {}) {
+export async function openFiles(files, { onFile, onProgress } = {}) {
+  const list = [...files];
   const results = [];
-  let i = 0;
-  for (const file of files) {
-    onFile?.(file, i++);
+  for (const [i, file] of list.entries()) {
+    onFile?.(file, i);
+    onProgress?.(i / list.length);
     try {
-      results.push({ name: file.name, ...(await call('open', { file })) });
+      results.push({ name: file.name, ...(await call('open', { file }, { onProgress: onProgress && ((f) => onProgress((i + f) / list.length)) })) });
       opened++;
     } catch (err) {
       results.push({ name: file.name, error: err.message });
@@ -91,7 +98,8 @@ export function catalog() {
 }
 
 export const books = (lib) => call('books', { lib });
-export const meta = (lib, book) => call('meta', { lib, book });
+/** A book's reading metadata; `onProgress(fraction)` while the worker converts it. */
+export const meta = (lib, book, { onProgress } = {}) => call('meta', { lib, book }, { onProgress });
 /** A chunk's JSON, as bytes. */
 export const chunk = (lib, book, n) => call('chunk', { lib, book, n });
 /** An image of a local library: { bytes, mime }, or null. */

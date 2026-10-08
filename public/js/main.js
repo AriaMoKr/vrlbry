@@ -272,6 +272,7 @@ async function start() {
     try {
       results = await localLibrary.openFiles(zims, {
         onFile: (file, i) => { if (zims.length > 1) status.update(`Opening ${name(file)} (${i + 1} of ${zims.length})…`); },
+        onProgress: (f) => status.progress(f),
       });
     } finally {
       status.close();

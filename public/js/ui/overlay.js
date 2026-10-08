@@ -408,14 +408,16 @@ export class Overlay {
 
   /**
    * A short message at the bottom of the page for `ms`, or with Infinity until close(): for work
-   * under way, with kind 'busy' (a spinner).
-   * @returns {{ update: (msg: string) => void, close: () => void }}
+   * under way, with kind 'busy' (a spinner) and progress(fraction) (a bar, from its first call).
+   * @returns {{ update: (msg: string) => void, progress: (fraction: number) => void, close: () => void }}
    */
   showToast(msg, kind = 'info', ms = 3500) {
     const t = document.createElement('div');
     t.className = `ov-toast ${kind}`;
-    t.textContent = msg;
+    const text = document.createTextNode(msg);
+    t.append(text);
     this.$('.ov-toasts').appendChild(t);
+    let bar = null;
     let closed = false;
     const close = () => {
       if (closed) return;
@@ -424,7 +426,20 @@ export class Overlay {
       setTimeout(() => t.remove(), 500);
     };
     if (Number.isFinite(ms)) setTimeout(close, ms);
-    return { update: (text) => { t.textContent = text; }, close };
+    return {
+      update: (msg2) => { text.data = msg2; },
+      progress: (f) => {
+        if (!bar) {
+          const track = document.createElement('div');
+          track.className = 'ov-toast-bar';
+          bar = document.createElement('div');
+          track.append(bar);
+          t.append(track);
+        }
+        bar.style.width = `${Math.round(Math.min(1, Math.max(0, f)) * 100)}%`;
+      },
+      close,
+    };
   }
 
   hide() { this.root.classList.add('ov-hidden'); }

@@ -136,11 +136,15 @@ async function searchTitles(libId, q, limit) {
   return out;
 }
 
-/** Book reading metadata: chunks, toc, totals. Cached. */
-export function getBookMeta(libId, bookId) {
+/**
+ * Book reading metadata: chunks, toc, totals. Cached. `onProgress(fraction)` while a local book
+ * is converted (the request that starts it).
+ */
+export function getBookMeta(libId, bookId, { onProgress } = {}) {
   const key = `${libId}\n${bookId}`;
   if (!metaCache.has(key)) {
-    const p = local.isLocal(libId) ? local.meta(libId, bookId) : getJSON(api(paths.meta(libId, bookId)));
+    // Only a local book reports how far its conversion is (the server's answer just arrives).
+    const p = local.isLocal(libId) ? local.meta(libId, bookId, { onProgress }) : getJSON(api(paths.meta(libId, bookId)));
     p.catch(() => metaCache.delete(key));
     metaCache.set(key, p);
   }
