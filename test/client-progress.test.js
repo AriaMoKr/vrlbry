@@ -30,4 +30,14 @@ describe('progress indicators: time so far and left (util/progress.js)', () => {
     assert.equal(progressText(12500, 0.25), ' · 12 s · about 40 s left');
     assert.equal(progressText(12500, 1), ' · 12 s');
   });
+
+  it('says an estimate is coming, for work that reports its progress', () => {
+    const estimating = { estimating: true };
+    assert.equal(progressText(400, null, estimating), '', 'the first second');
+    assert.equal(progressText(1200, null, estimating), ' · 1 s · estimating…', 'no progress yet');
+    assert.equal(progressText(2000, 0.02, estimating), ' · 2 s · estimating…', 'too little done');
+    assert.equal(progressText(12500, 0.25, estimating), ' · 12 s · about 40 s left');
+    assert.equal(progressText(12500, 1, estimating), ' · 12 s', 'done, awaiting the answer');
+    assert.equal(progressText(12500, null), ' · 12 s', 'work that reports no progress never estimates');
+  });
 });

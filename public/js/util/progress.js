@@ -28,13 +28,17 @@ export function timeLeft(elapsedMs, fraction) {
 
 /**
  * What follows an indicator's text: " · 12 s" once a second has passed, then " · about 40 s
- * left" when there is an estimate (timeLeft); '' in the first second.
+ * left" when there is an estimate (timeLeft); '' in the first second. With `estimating`, the
+ * work reports its progress, so an estimate is coming: until it does, " · estimating…" says so
+ * (never for work that reports none, such as a book from the server; nor once the fraction is 1
+ * and only the answer is awaited).
  * @param {number} elapsedMs
  * @param {number|null} fraction 0..1, or null when unknown
+ * @param {{ estimating?: boolean }} [opts]
  */
-export function progressText(elapsedMs, fraction) {
+export function progressText(elapsedMs, fraction, { estimating = false } = {}) {
   const s = Math.floor(elapsedMs / 1000);
   if (s < 1) return '';
-  const left = timeLeft(elapsedMs, fraction);
+  const left = timeLeft(elapsedMs, fraction) || (estimating && !(fraction >= 1) ? 'estimating…' : '');
   return ` · ${s} s${left ? ` · ${left}` : ''}`;
 }

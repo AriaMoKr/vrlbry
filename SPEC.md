@@ -177,7 +177,8 @@ whole. It works on GitHub Pages (no server) and beside a server's own libraries.
   on the page (`ui/overlay.js` → `main.js` `openLocalFiles`); `__vrlbry.openZim(file)` does the
   same for scripted tests. A toast with a spinner and a progress bar ("Opening <file>…", "(2 of
   3)" for several, then "· 12 s · about 40 s left": the seconds so far and, from the fraction
-  done, about how long is left, `util/progress.js` `progressText`; the bar from the worker's
+  done, about how long is left, "· estimating…" until there is enough to tell,
+  `util/progress.js` `progressText`; the bar from the worker's
   progress: how much of the catalogue is built, Gutenberg books looked up or generic entries
   scanned, `ArchiveLibrary.open`'s `onProgress`) stays until every file is open, however long
   that takes; then the catalogue's "New library" toast or the file's error follows. Under the
@@ -1024,8 +1025,10 @@ States: `browse` → `inspect` → `opening` → `read` (and back), plus `busy` 
 - **opening:** while the book's metadata loads (`BookReader.load`: the server's or the worker's
   conversion; a big book from a ZIM file opened on a Quest took half a minute), the info panel
   stays and shows "Opening…" with "Preparing its pages · 12 s · about 40 s left" (the seconds so
-  far, once a second, and, for a local book, about how long is left, from the fraction done:
-  `util/progress.js` `progressText`, shared with the toast above), for a local book a progress
+  far, once a second, and, for a local book, about how long is left, from the fraction done,
+  "· estimating…" until there is enough to tell: `util/progress.js` `progressText`, shared with
+  the toast above; a book from the server reports no progress, so its line has the seconds
+  alone), for a local book a progress
   bar (the worker's conversion reports how far it is, `content()`'s `onProgress`: a tenth for
   the text, the rest per image looked up; repainted at most 5× a second), and only "Put back"
   (also B/Esc), which cancels and puts the book back. Only that panel takes input. On failure →

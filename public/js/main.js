@@ -273,7 +273,7 @@ async function start() {
     const status = overlay.showToast(base, 'busy', Infinity);
     const t0 = performance.now();
     let fraction = null;
-    const tell = () => status.update(base + progressText(performance.now() - t0, fraction));
+    const tell = () => status.update(base + progressText(performance.now() - t0, fraction, { estimating: true }));
     const timer = setInterval(tell, 1000);
     let results;
     try {

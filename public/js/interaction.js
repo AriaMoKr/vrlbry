@@ -11,6 +11,7 @@ import { audio } from './audio.js';
 import { perf } from './perf.js';
 import { load, save } from './util/storage.js';
 import { progressText } from './util/progress.js';
+import { isLocal } from './local/local.js';
 import { letterOf, SORT_MODES, inTitleOrder, thumbIndex } from './util/books.js';
 import { PAGE_PX, READ } from './config.js';
 import {
@@ -662,7 +663,8 @@ export class Interaction {
     const s = Math.floor((now - o.t0) / 1000);
     if (s >= 1 && s !== o.shown) { // once a second: the seconds so far and about how long is left
       o.shown = s;
-      p.set('opening', { text: OPENING_LINE + progressText(now - o.t0, o.f) });
+      // Only a local book's conversion reports progress, so only there is an estimate coming.
+      p.set('opening', { text: OPENING_LINE + progressText(now - o.t0, o.f, { estimating: isLocal(this.book.libId) }) });
     }
     if (o.f !== null && o.f !== o.drawnF && (now - o.drawnAt >= OPENING_BAR_MS || o.f >= 1)) {
       o.drawnF = o.f;
