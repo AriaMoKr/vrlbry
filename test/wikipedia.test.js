@@ -13,68 +13,20 @@ import { createApp } from '../server/http.js';
 import { fileStore } from '../server/cache-store.js';
 import { ZimArchive } from '../public/js/core/zim/reader.js';
 import { isWikipedia, buildIndex, volumeTitle, removeCheckpoint } from '../public/js/core/wikipedia.js';
+import { article, redirectPage, WIKI_PNG, writeWikipediaZim } from './helpers/zim-fixtures.js';
 import { writeZim } from './helpers/zimwriter.js';
 
 let tmp;
 before(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vrlbry-wp-')); });
 after(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
 
-/**
- * An mwoffliner 2-shaped article: first heading (chrome), a sidebar, an infobox, a lead with a
- * formula, a collapsible section, an image.
- */
-function article(title, lead) {
-  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${title}</title></head><body>
-<div class="mw-body"><h1 id="firstHeading">${title}</h1><div id="mw-content-text"><div class="mw-parser-output">
-<table class="sidebar nomobile"><tr><td>Series box</td></tr></table>
-<table class="infobox"><tr><td colspan="2"><img src="./_assets_/pic.png" width="200" height="300"></td></tr><tr><th>Kind</th><td>Thing</td></tr></table>
-<p>${lead} <span class="mwe-math-element"><img src="./_assets_/f.svg" class="mwe-math-fallback-image-inline mw-invert" style="vertical-align: -0.5ex; width:2ex; height:2ex;" alt="x"></span>.</p>
-<details data-level="2" open><summary class="section-heading"><h2 id="History">History</h2></summary>
-<p>The history of ${title}.</p><figure><img src="./_assets_/pic.png" width="200" height="300" alt="A picture"></figure></details>
-<div class="navbox">Navigation box</div>
-</div></div></div></body></html>`.padEnd(1500, ' ');
-}
-
-/** mwoffliner's redirect to a section: a tiny HTML page with a meta refresh. */
-const redirectPage = (title, target) => `<html><head><title>${title}</title><meta http-equiv="refresh" content="0;URL='./${target}'" /></head><body><a href="./${target}">${title}</a></body></html>`;
-
-const png = Buffer.from('89504e470d0a1a0a0000000d49484452000000c80000012c00000000', 'hex'); // 200×300 header
-
-/** @param {number} [padding] bytes of an extra (uncompressed) file, to make the archive bigger */
-function writeWikipediaZim(file, padding = 0) {
-  const A = (url, title, lead) => ({ ns: 'C', url, title, mime: 'text/html', content: article(title, lead) });
-  const entries = [
-    A('Main_Page', 'Main Page', 'Welcome to Wikipedia.'),
-    A('Zebra', 'Zebra', 'Zebras are striped.'),
-    A('The_Beatles', 'The Beatles', 'A band from Liverpool.'),
-    A('Apple', 'apple', 'A fruit.'),
-    A('Éclair', 'Éclair', 'A pastry.'),
-    A('Banana', 'Banana', 'A yellow fruit.'),
-    A('2001:_A_Space_Odyssey', '2001: A Space Odyssey', 'A film.'),
-    A('Ant', 'Ant', 'A small insect.'),
-    { ns: 'C', url: 'Beatles', redirectTo: 'C/The_Beatles' },
-    { ns: 'C', url: 'Yellow_fruit', title: 'Yellow fruit', redirectTo: 'C/Banana' },
-    { ns: 'C', url: 'Apple_story', title: 'Apple story', redirectTo: 'C/Apples' }, // to a redirect page
-    { ns: 'C', url: 'Apples', title: 'Apples', mime: 'text/html', content: redirectPage('Apples', 'Apple#History') },
-    { ns: 'C', url: 'Zebra_stripes', title: 'Zebra stripes', mime: 'text/html', content: redirectPage('Zebra stripes', 'Zebra#History') },
-    { ns: 'C', url: '_assets_/pic.png', mime: 'image/png', content: png },
-    { ns: 'C', url: '_assets_/style.css', mime: 'text/css', content: 'body{}' },
-    { ns: 'C', url: '_assets_/f.svg', mime: 'image/svg+xml', content: '<svg xmlns="http://www.w3.org/2000/svg" width="2ex" height="2ex"/>' },
-    { ns: 'M', url: 'Source', mime: 'text/plain', content: 'en.wikipedia.org' },
-    { ns: 'M', url: 'Title', mime: 'text/plain', content: 'Wikipedia Test' },
-    { ns: 'M', url: 'Language', mime: 'text/plain', content: 'eng' },
-    { ns: 'M', url: 'Creator', mime: 'text/plain', content: 'Wikipedia' },
-    { ns: 'M', url: 'Illustration_48x48@1', mime: 'image/png', content: png },
-  ];
-  if (padding) entries.push({ ns: 'C', url: '_assets_/pad.bin', mime: 'application/octet-stream', content: Buffer.alloc(padding, 7), compression: 'none' });
-  return writeZim(file, { entries, scheme: 'new', mainPage: 'C/Main_Page' });
-}
+const png = WIKI_PNG; // 200×300 header
 
 /** The articles in the app's title order (digits first; "The" and case and accents ignored). */
 const ORDER = ['2001: A Space Odyssey', 'Ant', 'apple', 'Banana', 'The Beatles', 'Éclair', 'Zebra'];
 
 async function waitForBooks(lib) {
-  for (let i = 0; i < 200; i++) {
+  for (let i = 0; i < 1500; i++) { // up to 30 s: the suite's files run at once, and a build can wait for the CPU
     const books = await lib.books();
     if (books.length) return books;
     await new Promise((r) => setTimeout(r, 20));

@@ -26,6 +26,7 @@
     "three": "^0.186.1"
   },
   "devDependencies": {
+    "fake-indexeddb": "^6.2.5",
     "iwer": "^2.5.0"
   }
 }

@@ -188,15 +188,25 @@ whole. It works on GitHub Pages (no server) and beside a server's own libraries.
   in VR the kiosk's footer says so ("Your own ZIM files: exit VR, then …"). Opened files last
   until the page is reloaded (a browser cannot reopen a file by name); a saved place naming a
   local library that is gone falls back as for a removed ZIM.
-- **What opens:** Gutenberg and generic ZIMs. Wikipedia and Wikisource ZIMs are refused for now
-  ("… ZIMs need the vrlbry server for now"): they need a full index pass (§2.4, §2.5), which a
-  later milestone runs in the browser (with an IndexedDB store) or ships prebuilt.
+- **What opens:** Gutenberg, generic, Wikipedia and Wikisource ZIMs. The last two need a full
+  index pass (§2.4, §2.5): the worker runs the same build as the server (`ArchiveLibrary` with
+  an `IndexQueue`: past 1 GB one at a time, smallest first) in the background, and meanwhile
+  the catalogue entry says so (`indexing`, as for the server's) and has no books. The index is
+  kept in IndexedDB (`local/idb-store.js`: the store interface of `server/cache-store.js`, one
+  object store, name → string or `Uint8Array`; `appendBytes` and `truncate` read and write
+  back in one transaction), named by the ZIM's UUID like the server's, so a file is indexed
+  once however it is called or picked; the checkpoint (§2.5) lets an interrupted build resume.
+  Without IndexedDB (site data blocked) the index is built every time and kept in memory. (A
+  big edition is slow on a headset: Simple English about 5 min, the top 1M about an hour;
+  prebuilt indexes for those are a later step.)
 - **Ids:** `~` + `libraryIdFor(file name)` (then `-2`, `-3` … for the same name twice):
   `libraryIdFor` never makes a `~`, so they cannot clash with a server's; `~` is URL-safe.
 - **Requests:** `local/local.js` (page) ↔ `local/local-handler.js` (worker) by `postMessage`:
   `open`, `catalog`, `books`, `meta`, `chunk` (the chunk's JSON bytes, transferred), `image`
   (bytes and MIME type of a URL), `close`. Before its answer an `open` or a `meta` may send
-  `{ id, progress }` (a fraction, at most 10 a second), for the page's progress bars. `api.js`
+  `{ id, progress }` (a fraction, at most 10 a second), for the page's progress bars; and the
+  worker sends `{ changed }` of its own when a library's index finished (`local.onChange`: the
+  page refreshes its catalogue at once rather than at the next 10 s poll). `api.js`
   sends the requests of `~` libraries there;
   `getCatalog()` (and a rescan's answer) lists the local libraries after the server's, with
   generation `"<server>+<local>"` so the poll notices either changing. Local libraries have no

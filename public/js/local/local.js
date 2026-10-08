@@ -34,6 +34,10 @@ function start() {
       (data.warn ? console.warn : console.info)(`[vrlbry local] ${data.log}`);
       return;
     }
+    if (data.changed) { // a library's index finished: its catalogue entry and books are new
+      for (const fn of listeners) fn();
+      return;
+    }
     const p = pending.get(data.id);
     if (!p) return;
     if (data.progress !== undefined) {
@@ -82,11 +86,14 @@ export async function openFiles(files, { onFile, onProgress } = {}) {
       results.push({ name: file.name, error: err.message });
     }
   }
-  if (results.some((r) => r.id)) for (const fn of listeners) fn();
   return results;
 }
 
-/** Calls fn when local libraries were opened (the catalogue changed). */
+/**
+ * Calls fn when a local library's catalogue changed on its own: its index finished (a Wikipedia
+ * or Wikisource file), so the catalogue's generation is new and it has books now. (Files just
+ * opened are the caller's: openFiles answers them.)
+ */
 export function onChange(fn) {
   listeners.add(fn);
   return () => listeners.delete(fn);

@@ -162,7 +162,17 @@
       never uses it.
       - *Plan:* build indexes in the browser for files up to a few GB (~5 min on a Quest, once
         per file, with progress) and ship prebuilt indexes for the big editions of a curated
-        list.
+        list. *Done (2026-10-07):* Wikipedia and Wikisource files open in the browser; the
+        worker runs the same index build as the server (`ArchiveLibrary` with an `IndexQueue`)
+        and keeps the index in IndexedDB (`local/idb-store.js`, the server's store interface,
+        named by the ZIM's UUID: once per file, found again after a reload), and tells the page
+        when it is done (`{ changed }` → `local.onChange` → the catalogue refreshes at once).
+        Checked in the browser with Chemistry mini: indexing in 2.6 s, then 10 volumes; opened
+        again after a reload in 0.8 s with no build. Still to do: article search for local
+        Wikipedias (`api.searchArticles` answers [] for them); Wikisource not yet tried in the
+        browser (the same code path); prebuilt indexes for the big editions; the index build's
+        progress in the toast (today only the catalogue card and the kiosk's Rooms list show
+        it, at the 10 s poll).
       - *To measure:* sizes from each cluster's offset table alone (decompressing only its
         first block), with redirect pages told by size and namespaces by title prefix (which
         is per language); a streaming WASM zstd, or two workers outside VR (the Quest gives a

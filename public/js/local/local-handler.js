@@ -7,8 +7,7 @@
 // those images here (image()) instead of fetching them.
 
 import { ArchiveLibrary, createContentCache, libraryIdFor } from '../core/library.js';
-import { isWikipedia } from '../core/wikipedia.js';
-import { isWikisource } from '../core/wikisource.js';
+import { IndexQueue } from '../core/util/index-queue.js';
 import { ZimArchive } from '../core/zim/reader.js';
 
 /** Converted books kept for all local libraries: a headset has far less memory than a PC. */
@@ -26,11 +25,15 @@ export const LOCAL_PREFIX = '~';
 export class LocalError extends Error {}
 
 /**
- * @param {{ log?: (msg: string) => void, warn?: (msg: string) => void }} [opts]
+ * @param {{ log?: (msg: string) => void, warn?: (msg: string) => void, store?: object|null, onChange?: () => void }} [opts]
+ *   store: where derived indexes are kept (idb-store.js; the server's shape, server/cache-store.js),
+ *   or null: a Wikipedia's index is built every time and kept in memory only; onChange: called
+ *   when a library's catalogue changes on its own (its index finished): the generation is new
  */
-export function createLocalLibraries({ log = () => {}, warn = log } = {}) {
+export function createLocalLibraries({ log = () => {}, warn = log, store = null, onChange = null } = {}) {
   const libs = new Map(); // id → ArchiveLibrary
   const contentCache = createContentCache(CONTENT_CACHE_BYTES);
+  const indexQueue = new IndexQueue(); // index builds one at a time past 1 GB, smallest first
   let generation = 0;
 
   const lib = (id) => {
@@ -59,32 +62,33 @@ export function createLocalLibraries({ log = () => {}, warn = log } = {}) {
     /** Opens a File (or Blob): { id, title }. Wikipedia and Wikisource need the server for now. */
     async open({ file }, { onProgress } = {}) {
       const t0 = performance.now();
-      // Opened once: the library takes the archive over, with the blocks its metadata loaded.
+      // Opened once: the library takes the archive over.
       const archive = await ZimArchive.open(file, {
         clusterCacheBytes: CLUSTER_CACHE_BYTES, blockCacheBytes: BLOCK_CACHE_BYTES, wholeClusterBytes: WHOLE_CLUSTER_BYTES,
       }).catch((err) => {
         throw new LocalError(`${file.name}: not a readable ZIM file (${err.message})`);
       });
-      try {
-        const meta = await archive.getMetadata();
-        if (isWikipedia(meta) || isWikisource(meta)) {
-          throw new LocalError(`${file.name}: ${isWikipedia(meta) ? 'Wikipedia' : 'Wikisource'} ZIMs need the vrlbry server for now (they are indexed first)`);
-        }
-      } catch (err) {
-        await archive.close().catch(() => {});
-        throw err;
-      }
       const base = LOCAL_PREFIX + libraryIdFor(file.name || 'archive.zim');
       let id = base;
       for (let n = 2; libs.has(id); n++) id = `${base}-${n}`;
       // Sizes estimated, not read: on a Quest they cost a read per cluster of books (8 s of the
-      // 4.5 GB Gutenberg ZIM's open), for a thickness on the shelf.
-      const opened = await ArchiveLibrary.open(archive, { id, log, warn, contentCache, onProgress, estimateSizes: true });
+      // 4.5 GB Gutenberg ZIM's open), for a thickness on the shelf. A Wikipedia or Wikisource
+      // file is indexed in the background (its index kept in the store, so once per file) and
+      // has no books until then: info().indexing says how far it is.
+      const opened = await ArchiveLibrary.open(archive, {
+        id, log, warn, contentCache, onProgress, estimateSizes: true, store, indexQueue,
+        onChange: () => {
+          generation++;
+          onChange?.();
+        },
+      });
       libs.set(id, opened);
       generation++;
       const info = await opened.info();
-      log(`${file.name}: ${opened.kind} library, ${info.bookCount} book(s), opened in ${((performance.now() - t0) / 1000).toFixed(1)} s`);
-      return { value: { id, title: info.title, kind: opened.kind, books: info.bookCount } };
+      const took = `${((performance.now() - t0) / 1000).toFixed(1)} s`;
+      log(info.indexing ? `${file.name}: ${opened.kind} library, indexing (${info.indexing.stage}) after ${took}`
+        : `${file.name}: ${opened.kind} library, ${info.bookCount} book(s), opened in ${took}`);
+      return { value: { id, title: info.title, kind: opened.kind, books: info.bookCount, indexing: info.indexing } };
     },
 
     /** The catalogue: { generation, libraries: [info] } in the order they were opened. */

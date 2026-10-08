@@ -341,8 +341,8 @@ async function start() {
     }
     return outdated;
   }
-  setInterval(async () => {
-    if (refreshing || (document.visibilityState !== 'visible' && !renderer.xr.isPresenting)) return;
+  async function refreshCatalog() {
+    if (refreshing) return;
     try {
       if (await isOutdated()) return;
       const c = await getCatalog();
@@ -354,7 +354,12 @@ async function start() {
         interaction.updateLibraries(libraries);
       }
     } catch { /* server briefly unavailable: try again next time */ }
+  }
+  setInterval(() => {
+    if (document.visibilityState === 'visible' || renderer.xr.isPresenting) refreshCatalog();
   }, 10000);
+  // A local library's index finished (a Wikipedia file opened here): its books are there now.
+  localLibrary.onChange(refreshCatalog);
   if (navigator.xr?.isSessionSupported) {
     navigator.xr.isSessionSupported('immersive-vr').then((ok) => overlay.setVRSupported(ok)).catch(() => overlay.setVRSupported(false));
   }

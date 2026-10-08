@@ -189,3 +189,58 @@ export function writeGenericZim(file, { creator = 'Wiki Folk' } = {}) {
   ];
   return writeZim(file, { entries, scheme: 'new', mainPage: 'C/index.html' });
 }
+
+// ---------------------------------------------------------------------------------------------
+// A miniature mwoffliner-like Wikipedia (test/wikipedia.test.js, test/local-library.test.js)
+
+/**
+ * An mwoffliner 2-shaped article: first heading (chrome), a sidebar, an infobox, a lead with a
+ * formula, a collapsible section, an image.
+ */
+export function article(title, lead) {
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${title}</title></head><body>
+<div class="mw-body"><h1 id="firstHeading">${title}</h1><div id="mw-content-text"><div class="mw-parser-output">
+<table class="sidebar nomobile"><tr><td>Series box</td></tr></table>
+<table class="infobox"><tr><td colspan="2"><img src="./_assets_/pic.png" width="200" height="300"></td></tr><tr><th>Kind</th><td>Thing</td></tr></table>
+<p>${lead} <span class="mwe-math-element"><img src="./_assets_/f.svg" class="mwe-math-fallback-image-inline mw-invert" style="vertical-align: -0.5ex; width:2ex; height:2ex;" alt="x"></span>.</p>
+<details data-level="2" open><summary class="section-heading"><h2 id="History">History</h2></summary>
+<p>The history of ${title}.</p><figure><img src="./_assets_/pic.png" width="200" height="300" alt="A picture"></figure></details>
+<div class="navbox">Navigation box</div>
+</div></div></div></body></html>`.padEnd(1500, ' ');
+}
+
+/** mwoffliner's redirect to a section: a tiny HTML page with a meta refresh. */
+export const redirectPage = (title, target) => `<html><head><title>${title}</title><meta http-equiv="refresh" content="0;URL='./${target}'" /></head><body><a href="./${target}">${title}</a></body></html>`;
+
+/** A 200×300 PNG header (enough for the size sniffer). */
+export const WIKI_PNG = Buffer.from('89504e470d0a1a0a0000000d49484452000000c80000012c00000000', 'hex');
+
+/** @param {number} [padding] bytes of an extra (uncompressed) file, to make the archive bigger */
+export function writeWikipediaZim(file, padding = 0) {
+  const A = (url, title, lead) => ({ ns: 'C', url, title, mime: 'text/html', content: article(title, lead) });
+  const entries = [
+    A('Main_Page', 'Main Page', 'Welcome to Wikipedia.'),
+    A('Zebra', 'Zebra', 'Zebras are striped.'),
+    A('The_Beatles', 'The Beatles', 'A band from Liverpool.'),
+    A('Apple', 'apple', 'A fruit.'),
+    A('Éclair', 'Éclair', 'A pastry.'),
+    A('Banana', 'Banana', 'A yellow fruit.'),
+    A('2001:_A_Space_Odyssey', '2001: A Space Odyssey', 'A film.'),
+    A('Ant', 'Ant', 'A small insect.'),
+    { ns: 'C', url: 'Beatles', redirectTo: 'C/The_Beatles' },
+    { ns: 'C', url: 'Yellow_fruit', title: 'Yellow fruit', redirectTo: 'C/Banana' },
+    { ns: 'C', url: 'Apple_story', title: 'Apple story', redirectTo: 'C/Apples' }, // to a redirect page
+    { ns: 'C', url: 'Apples', title: 'Apples', mime: 'text/html', content: redirectPage('Apples', 'Apple#History') },
+    { ns: 'C', url: 'Zebra_stripes', title: 'Zebra stripes', mime: 'text/html', content: redirectPage('Zebra stripes', 'Zebra#History') },
+    { ns: 'C', url: '_assets_/pic.png', mime: 'image/png', content: WIKI_PNG },
+    { ns: 'C', url: '_assets_/style.css', mime: 'text/css', content: 'body{}' },
+    { ns: 'C', url: '_assets_/f.svg', mime: 'image/svg+xml', content: '<svg xmlns="http://www.w3.org/2000/svg" width="2ex" height="2ex"/>' },
+    { ns: 'M', url: 'Source', mime: 'text/plain', content: 'en.wikipedia.org' },
+    { ns: 'M', url: 'Title', mime: 'text/plain', content: 'Wikipedia Test' },
+    { ns: 'M', url: 'Language', mime: 'text/plain', content: 'eng' },
+    { ns: 'M', url: 'Creator', mime: 'text/plain', content: 'Wikipedia' },
+    { ns: 'M', url: 'Illustration_48x48@1', mime: 'image/png', content: WIKI_PNG },
+  ];
+  if (padding) entries.push({ ns: 'C', url: '_assets_/pad.bin', mime: 'application/octet-stream', content: Buffer.alloc(padding, 7), compression: 'none' });
+  return writeZim(file, { entries, scheme: 'new', mainPage: 'C/Main_Page' });
+}
