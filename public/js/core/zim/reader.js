@@ -49,10 +49,10 @@ const DIRENT_MAX = 1 << 20;
 const ITER_BATCH = 512;
 /** entries(): dirents closer together than this are fetched with one read. */
 const ITER_SPAN = 256 * 1024;
-/** Directory reads (dirents, URL pointers) are served from cached, aligned blocks of this size. */
-const DIR_BLOCK = 64 * 1024;
-/** Default byte budget of the directory block cache. */
-const DIR_CACHE_BYTES = 8 * 1024 * 1024;
+/** Reads smaller than this are served from cached, aligned blocks of this size (_readBlocks). */
+const READ_BLOCK = 64 * 1024;
+/** Default byte budget of the block cache. */
+const BLOCK_CACHE_BYTES = 8 * 1024 * 1024;
 /**
  * First read size for a compressed cluster whose end is not another cluster's start (see
  * _decompressCluster); grows x4 until the cluster decompresses completely.
@@ -194,8 +194,9 @@ export class ZimArchive {
     this._sectionStarts = null; // Set of the non-cluster boundaries
     this._ptrPages = new LRUCache({ maxEntries: 2048 });
     this._ptrPagesInflight = new Map();
-    this._dirBlocks = new LRUCache({ maxBytes: opts.dirCacheBytes, sizeOf: (b) => b.length + 32 }); // block number → bytes
-    this._dirBlocksInflight = new Map();
+    this._blocks = new LRUCache({ maxBytes: opts.blockCacheBytes, sizeOf: (b) => b.length + 32 }); // block number → bytes
+    this._blocksInflight = new Map();
+    this._wholeClusterBytes = opts.wholeClusterBytes;
     this._tailWindow = opts.tailWindowBytes;
     this._dirents = new LRUCache({ maxEntries: opts.direntCacheEntries });
     this._clusterInfo = new LRUCache({ maxEntries: 65536 });
@@ -216,8 +217,11 @@ export class ZimArchive {
    * @param {object} [opts]
    * @param {number} [opts.clusterCacheBytes=268435456] budget for decompressed clusters
    * @param {number} [opts.direntCacheEntries=50000] number of parsed directory entries to cache
-   * @param {number} [opts.dirCacheBytes=8388608] budget for the directory's blocks (_readDir: the
-   *   bytes lookups read dirents and URL pointers from); 0 reads them from the source each time
+   * @param {number} [opts.blockCacheBytes=8388608] budget for the block cache (_readBlocks), which
+   *   serves every read under 64 KB: dirents, URL pointers, cluster heads, small blobs; 0 reads
+   *   each from the source
+   * @param {number} [opts.wholeClusterBytes=0] an uncompressed cluster up to this big is read whole
+   *   into the cluster cache when a blob of it is wanted (_readWhole), not blob by blob
    * @param {number} [opts.tailWindowBytes=4194304] first read size for a compressed cluster whose
    *   end is not exactly known (advanced; mainly for tests)
    * @returns {Promise<ZimArchive>}
@@ -226,7 +230,8 @@ export class ZimArchive {
   static async open(input, {
     clusterCacheBytes = 256 * 1024 * 1024,
     direntCacheEntries = 50000,
-    dirCacheBytes = DIR_CACHE_BYTES,
+    blockCacheBytes = BLOCK_CACHE_BYTES,
+    wholeClusterBytes = 0,
     tailWindowBytes = TAIL_WINDOW,
   } = {}) {
     const name = typeof input === 'string' ? input : input?.name || 'archive';
@@ -239,7 +244,7 @@ export class ZimArchive {
       throw new ZimError(`cannot open ${name}: ${err.message}`, { cause: err });
     }
     try {
-      const zim = new ZimArchive(source, { clusterCacheBytes, direntCacheEntries, dirCacheBytes, tailWindowBytes });
+      const zim = new ZimArchive(source, { clusterCacheBytes, direntCacheEntries, blockCacheBytes, wholeClusterBytes, tailWindowBytes });
       await zim._init();
       return zim;
     } catch (err) {
@@ -255,7 +260,7 @@ export class ZimArchive {
     this._closed = true;
     this._clusters.clear();
     this._dirents.clear();
-    this._dirBlocks.clear();
+    this._blocks.clear();
     await this._source.close?.();
   }
 
@@ -354,9 +359,18 @@ export class ZimArchive {
   // ------------------------------------------------------------------------------------------
   // Raw I/O
 
-  /** Reads exactly `length` bytes at `position` (throws ZimError at end of file). */
+  /**
+   * Reads exactly `length` bytes at `position` (throws ZimError at end of file). A read under
+   * READ_BLOCK bytes comes from the block cache (_readBlocks), a bigger one from the source.
+   */
   async _read(position, length) {
     if (this._closed) throw new ZimError(`${this.filePath}: archive is closed`);
+    if (length < READ_BLOCK && this._blocks.maxBytes > 0) return this._readBlocks(position, length);
+    return this._readRaw(position, length);
+  }
+
+  /** One read from the source, of exactly `length` bytes. */
+  async _readRaw(position, length) {
     const buf = await this._source.read(position, length);
     if (buf.length < length) {
       throw new ZimError(`${this.filePath}: unexpected end of file reading ${length} bytes at ${position}`);
@@ -365,30 +379,29 @@ export class ZimArchive {
   }
 
   /**
-   * Reads `length` bytes of the directory (a dirent, URL pointers) at `position` through the
-   * block cache: aligned DIR_BLOCK-byte blocks, each read once while cached (dirCacheBytes). A
-   * lookup is a binary search that reads one dirent per step, and on a File in a browser a read
-   * costs about the same however small (~15 ms on a Quest 3: opening a 4.5 GB Gutenberg ZIM made
-   * 3,200 dirent reads over 1.7 MB of directory, and preparing one of its books 1,300 more).
-   * Reads of a block or more go straight to the source. The bytes returned are the cache's: do
-   * not modify them.
+   * A small read served from the block cache: aligned READ_BLOCK-byte blocks, each read once
+   * while cached (blockCacheBytes). On a File in a browser a read costs about the same however
+   * small (on a Quest 3 ~65 ms alone, ~11 ms each when 8 or more run at once; a 4 MB read only
+   * 87 ms), so what counts is how many reads are made: a lookup is a binary search reading one
+   * dirent per step (opening a 4.5 GB Gutenberg ZIM made 3,200 such reads over 1.7 MB of
+   * directory), a book's size at open two tiny reads from its cluster's head, a picture's bytes
+   * two or three. The bytes returned are the cache's: do not modify them.
    */
-  async _readDir(position, length) {
-    if (length >= DIR_BLOCK || !(this._dirBlocks.maxBytes > 0)) return this._read(position, length);
-    const first = Math.floor(position / DIR_BLOCK);
-    const last = Math.floor((position + length - 1) / DIR_BLOCK);
+  async _readBlocks(position, length) {
+    const first = Math.floor(position / READ_BLOCK);
+    const last = Math.floor((position + length - 1) / READ_BLOCK);
     const short = () => new ZimError(`${this.filePath}: unexpected end of file reading ${length} bytes at ${position}`);
     if (first === last) {
-      const block = await this._dirBlock(first);
-      const from = position - first * DIR_BLOCK;
+      const block = await this._block(first);
+      const from = position - first * READ_BLOCK;
       if (from + length > block.length) throw short();
       return block.subarray(from, from + length);
     }
     const out = platform.alloc(length);
     let filled = 0;
     for (let b = first; b <= last; b++) {
-      const block = await this._dirBlock(b);
-      const from = b === first ? position - first * DIR_BLOCK : 0;
+      const block = await this._block(b);
+      const from = b === first ? position - first * READ_BLOCK : 0;
       const n = Math.min(block.length - from, length - filled);
       if (n <= 0) throw short();
       out.set(block.subarray(from, from + n), filled);
@@ -398,21 +411,21 @@ export class ZimArchive {
     return out;
   }
 
-  /** One block of the directory cache (block number `b`), read once; concurrent callers share the read. */
-  async _dirBlock(b) {
-    const cached = this._dirBlocks.get(b);
+  /** Block number `b` of the block cache, read once; concurrent callers share the read. */
+  async _block(b) {
+    const cached = this._blocks.get(b);
     if (cached) return cached;
-    let pending = this._dirBlocksInflight.get(b);
+    let pending = this._blocksInflight.get(b);
     if (!pending) {
       pending = (async () => {
-        const start = b * DIR_BLOCK;
-        const block = await this._read(start, Math.min(DIR_BLOCK, this.fileSize - start));
-        this._dirBlocks.set(b, block);
+        const start = b * READ_BLOCK;
+        const block = await this._readRaw(start, Math.min(READ_BLOCK, this.fileSize - start));
+        this._blocks.set(b, block);
         return block;
       })();
-      const done = () => this._dirBlocksInflight.delete(b);
+      const done = () => this._blocksInflight.delete(b);
       pending.then(done, done);
-      this._dirBlocksInflight.set(b, pending);
+      this._blocksInflight.set(b, pending);
     }
     return pending;
   }
@@ -428,7 +441,7 @@ export class ZimArchive {
       pending = (async () => {
         const first = page * PTR_PAGE_SIZE;
         const count = Math.min(PTR_PAGE_SIZE, this.entryCount - first);
-        const buf = await this._readDir(this.header.urlPtrPos + first * 8, count * 8);
+        const buf = await this._read(this.header.urlPtrPos + first * 8, count * 8);
         const ptrs = new Float64Array(count);
         for (let i = 0; i < count; i++) ptrs[i] = u64Raw(buf, i * 8);
         this._ptrPages.set(page, ptrs);
@@ -457,7 +470,7 @@ export class ZimArchive {
     for (;;) {
       const avail = this.fileSize - ptr;
       if (avail < 8) throw new ZimError(`${this.filePath}: directory entry ${index} beyond end of file`);
-      const buf = await this._readDir(ptr, Math.min(len, avail));
+      const buf = await this._read(ptr, Math.min(len, avail));
       const entry = parseDirent(buf, 0, index, this.mimeTypes);
       if (entry) return entry;
       if (len >= avail || len >= DIRENT_MAX) {
@@ -597,11 +610,11 @@ export class ZimArchive {
     const target = await this.resolveRedirect(entry);
     if (target.cluster === null) return null;
     const info = await this._getClusterInfo(target.cluster);
-    if (!info.compressed) {
+    let cluster = this._clusters.get(target.cluster);
+    if (!cluster && !info.compressed) { // never read whole for a size alone (_readWhole)
       const [start, end] = await this._uncompressedBlobRange(info, target.blob);
       return end - start;
     }
-    let cluster = this._clusters.get(target.cluster);
     if (!cluster) {
       if (cheapOnly) return null;
       cluster = await this._loadCluster(target.cluster, info);
@@ -788,23 +801,43 @@ export class ZimArchive {
 
   async _readBlob(clusterIndex, blob) {
     const info = await this._getClusterInfo(clusterIndex);
-    if (!info.compressed) {
+    let cluster = this._clusters.get(clusterIndex);
+    if (!cluster && !info.compressed && !this._readWhole(info)) {
       const [start, end] = await this._uncompressedBlobRange(info, blob);
-      return end > start ? this._read(start, end - start) : platform.alloc(0);
+      if (end <= start) return platform.alloc(0);
+      const data = await this._read(start, end - start);
+      // A small read is a view of a cached block (_readBlocks): copied, as callers may keep or
+      // modify the data.
+      return end - start < READ_BLOCK ? platform.copy(data) : data;
     }
-    const cluster = this._clusters.get(clusterIndex) ?? await this._loadCluster(clusterIndex, info);
+    cluster ??= await this._loadCluster(clusterIndex, info);
     const [start, end] = this._blobRange(cluster, clusterIndex, blob);
     // Copy: callers may keep or modify the data, and a slice would pin the whole cluster in
     // memory after the LRU has dropped it.
     return platform.copy(cluster.data.subarray(start, end));
   }
 
-  /** Decompresses a compressed cluster (deduplicating concurrent requests) and caches it. */
+  /**
+   * Whether an uncompressed cluster is read whole into the cluster cache when a blob of it is
+   * wanted (wholeClusterBytes), rather than blob by blob: in a browser a File read costs about
+   * the same however big (on a Quest 3 a 4 MB read 87 ms, an 8-byte one 70 ms), and a book's
+   * pictures share a few clusters (The Book of the Cat: 362 pictures, each read on its own, took
+   * 13 s). Never for a size alone (getBlobSize): sizing every book at open would read gigabytes.
+   * The server leaves it off: its reads are cheap, and images and EPUBs can be tens of MB.
+   */
+  _readWhole(info) {
+    return info.end - info.start - 1 <= this._wholeClusterBytes;
+  }
+
+  /**
+   * Loads a cluster into the cache, deduplicating concurrent requests: decompressed, or an
+   * uncompressed one read whole (_readWhole).
+   */
   _loadCluster(clusterIndex, info) {
     let pending = this._clustersInflight.get(clusterIndex);
     if (pending) return pending;
     pending = (async () => {
-      const data = await this._decompressCluster(info);
+      const data = info.compressed ? await this._decompressCluster(info) : await this._read(info.start + 1, info.end - info.start - 1);
       const cluster = { data, extended: info.extended, blobCount: 0 };
       cluster.blobCount = this._validateOffsets(data, info.extended, clusterIndex);
       this._clusters.set(clusterIndex, cluster);

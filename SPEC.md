@@ -268,18 +268,22 @@ or `File` (`BlobSource`), or any byte source `{ name, size, read(position, lengt
 whose `read` resolves with `length` bytes, fewer only at the end. `filePath` is the path or
 the file's name, for messages.
 
-Lookups (`findEntry`, `lowerBound`: a binary search, one dirent per step) read dirents and URL
-pointers through a cache of aligned 64 KB directory blocks (`dirCacheBytes`, 8 MB by default;
-the local library gives each file 16 MB, §2.6), each block read once while cached: on a `File`
-in a browser a read costs about the same however small (~15 ms on a Quest 3), and opening a
-4.5 GB Gutenberg ZIM made 3,200 dirent reads over 1.7 MB of directory. Scans (`entries()`)
-read in batches and bypass it; so do clusters, which have their own cache.
+Every read under 64 KB (dirents and URL pointers for lookups, a binary search reading one
+dirent per step; cluster heads and offset tables; small blobs) comes from a cache of aligned
+64 KB blocks (`blockCacheBytes`, 8 MB by default; the local library gives each file 16 MB,
+§2.6), each block read once while cached. On a `File` in a browser a read costs about the same
+however small (on a Quest 3 ~65 ms alone, ~11 ms each when 8 or more run at once, a 4 MB read
+87 ms), so the number of reads is what counts: opening a 4.5 GB Gutenberg ZIM made 3,200
+dirent reads over 1.7 MB of directory. Scans (`entries()`) read in batches and bypass it; so
+do big reads. With `wholeClusterBytes` (0 by default; the local library sets 4 MB) an
+uncompressed cluster up to that big is read whole into the cluster cache when a blob of it is
+wanted (a book's pictures share a few clusters), never for a size alone (`getBlobSize`).
 
 ```js
 export class ZimError extends Error {}
 export class ZimArchive {
   /** Opens and validates a ZIM file. Reads header, MIME list, pointer lists (lazily or eagerly). */
-  static async open(input, { clusterCacheBytes = 256 * 1024 * 1024, direntCacheEntries = 50000, dirCacheBytes = 8 * 1024 * 1024 } = {}): Promise<ZimArchive>
+  static async open(input, { clusterCacheBytes = 256 * 1024 * 1024, direntCacheEntries = 50000, blockCacheBytes = 8 * 1024 * 1024, wholeClusterBytes = 0 } = {}): Promise<ZimArchive>
   async close()
   filePath: string
   header: { major, minor, uuid /* 32-char hex */, entryCount, clusterCount, mainPage /* index|null */,

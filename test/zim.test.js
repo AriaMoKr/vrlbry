@@ -788,7 +788,7 @@ describe('ZimArchive: directory block cache', () => {
     const info = writeZim(tmpFile('dir-cache.zim'), { entries });
     // No parsed-entry cache, so every search step reads; the plain archive has no block cache either.
     const cached = await openCounting(info.filePath, { direntCacheEntries: 0 });
-    const plain = await openCounting(info.filePath, { direntCacheEntries: 0, dirCacheBytes: 0 });
+    const plain = await openCounting(info.filePath, { direntCacheEntries: 0, blockCacheBytes: 0 });
     try {
       const opened = { cached: cached.count.reads, plain: plain.count.reads };
       for (const e of entries) {
@@ -801,12 +801,48 @@ describe('ZimArchive: directory block cache', () => {
       const lookups = { cached: cached.count.reads - opened.cached, plain: plain.count.reads - opened.plain };
       assert.ok(lookups.plain > 30000, `without the cache, a read per search step: ${lookups.plain}`);
       assert.ok(lookups.cached <= 12, `with it, a read per directory block: ${lookups.cached}`);
-      // Content is not served from it: clusters have their own cache.
-      const before = cached.count.reads;
-      assert.equal((await cached.zim.getContent('C/article/2999.html')).data.toString(), '<p>2999</p>');
-      assert.ok(cached.count.reads > before, 'the blob was read from the file');
     } finally {
       await cached.zim.close();
+      await plain.zim.close();
+    }
+  });
+
+  it('reads a small uncompressed cluster whole (wholeClusterBytes), a big one blob by blob', async () => {
+    // Clusters of 3 uncompressed blobs: two small clusters (~60 KB) and one over the limit (300 KB).
+    const small = Array.from({ length: 6 }, (_, i) => ({ ns: 'C', url: `img/${i}.bin`, mime: 'application/octet-stream', content: bytes(20000 + i, 10 + i), compression: 'none' }));
+    const big = Array.from({ length: 3 }, (_, i) => ({ ns: 'C', url: `big/${i}.bin`, mime: 'application/octet-stream', content: bytes(100000 + i, 20 + i), compression: 'none' }));
+    const info = writeZim(tmpFile('whole-cluster.zim'), { entries: [...small, ...big], blobsPerCluster: 3 });
+    const whole = await openCounting(info.filePath, { wholeClusterBytes: 100000 });
+    const plain = await openCounting(info.filePath, { wholeClusterBytes: 0 });
+    try {
+      const data = async (zim, url) => Buffer.from((await zim.getContent(`C/${url}`)).data);
+      const reads = (c) => c.count.reads;
+      // The first blob reads its cluster whole; the rest of the cluster then costs nothing.
+      let n = reads(whole);
+      assert.deepEqual(await data(whole.zim, 'img/0.bin'), small[0].content);
+      assert.ok(reads(whole) > n, 'the cluster was read');
+      n = reads(whole);
+      for (const e of small.slice(1, 3)) assert.deepEqual(await data(whole.zim, e.url), e.content);
+      assert.equal(reads(whole), n, 'the other blobs of the cluster came from the cache');
+      // A size alone never reads a cluster whole (sizing every book at open would read gigabytes).
+      const e4 = await whole.zim.findPath('C/img/4.bin');
+      assert.equal(await whole.zim.getBlobSize(e4, { cheapOnly: true }), 20004);
+      assert.equal(whole.zim._clusters.has(e4.cluster), false, 'the size came from the offset table');
+      assert.deepEqual(await data(whole.zim, 'img/4.bin'), small[4].content);
+      assert.equal(whole.zim._clusters.has(e4.cluster), true);
+      // Over the limit: blob by blob, each read from the file every time.
+      n = reads(whole);
+      assert.deepEqual(await data(whole.zim, 'big/1.bin'), big[1].content);
+      assert.deepEqual(await data(whole.zim, 'big/1.bin'), big[1].content);
+      assert.ok(reads(whole) - n >= 2, `each read of a big cluster's blob reads the file: ${reads(whole) - n}`);
+      assert.equal(whole.zim._clusters.has((await whole.zim.findPath('C/big/1.bin')).cluster), false);
+      // Both ways give the same bytes, and the whole-read archive makes fewer reads.
+      n = reads(whole);
+      const m = reads(plain);
+      for (const e of [...small, ...big]) assert.deepEqual(await data(whole.zim, e.url), await data(plain.zim, e.url), e.url);
+      assert.ok(reads(whole) - n < reads(plain) - m, `whole ${reads(whole) - n} reads, blob by blob ${reads(plain) - m}`);
+    } finally {
+      await whole.zim.close();
       await plain.zim.close();
     }
   });
