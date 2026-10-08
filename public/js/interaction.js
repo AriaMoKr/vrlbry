@@ -23,6 +23,8 @@ const TOC_THUMBS_MIN = 30; // contents entries before a list in title order gets
 const TOC_THUMBS = 9; // its stops
 const SEARCH_KEYS = ['1234567890', 'qwertyuiop', "asdfghjkl'", 'zxcvbnm-.,'];
 const SEARCH_DELAY = 250; // ms after the last key before searching
+const OPENING_LINE = 'Preparing its pages'; // the inspect panel's line while a book opens (read)
+const CANCELLED = Symbol('cancelled'); // read(): Put back pressed while the book was opening
 
 const _plane = new THREE.Plane();
 const _onPlane = new THREE.Vector3();
@@ -602,7 +604,12 @@ export class Interaction {
     this.holder.add(p.mesh);
   }
 
-  _fillInspect(book) {
+  /**
+   * The inspect panel: the book's details, then its buttons. While it is being opened (`opening`:
+   * the line under "Opening…", which update() counts up) only Put back, which cancels; with
+   * `error`, why it could not be opened, under the buttons.
+   */
+  _fillInspect(book, { opening = null, error = null } = {}) {
     const p = this.inspectPanel;
     const W = p.w;
     const pad = 34;
@@ -621,6 +628,13 @@ export class Interaction {
     p.add({ type: 'text', x: pad, y, w: W - 2 * pad, h: 64, text: meta, size: 24, color: UI.muted, maxLines: 2 });
     const pos = load(`pos:${book.libId}:${book.id}`, null);
     const by = p.h - 230;
+    if (opening) {
+      p.add({ type: 'text', x: pad, y: by, w: W - 2 * pad, h: 44, text: 'Opening…', size: 32, weight: '600', maxLines: 1 });
+      p.add({ id: 'opening', type: 'text', x: pad, y: by + 46, w: W - 2 * pad, h: 34, text: opening, size: 24, color: UI.muted, maxLines: 1 });
+      p.add({ type: 'button', x: pad, y: by + 92, w: W - 2 * pad, h: 60, label: 'Put back', size: 26, onClick: () => this._cancelOpening?.() });
+      return;
+    }
+    if (error) p.add({ type: 'text', x: pad, y: by + 158, w: W - 2 * pad, h: 64, text: error, size: 22, color: '#e2a08f', maxLines: 2 });
     if (!book.readable) {
       p.add({ type: 'text', x: pad, y: by, w: W - 2 * pad, h: 80, text: 'This book has no readable text in the archive.', size: 26, color: '#e2a08f', maxLines: 2 });
     } else if (pos) {
@@ -754,7 +768,8 @@ export class Interaction {
   _hitTest(pointer) {
     const rc = pointer.raycaster;
     let best = null;
-    const panels = [this.kiosk, this.inspectPanel, this.toolbar, this.tocPanel].filter((p) => p.visible && p.mesh.parent);
+    const panels = (this.state === 'opening' ? [this.inspectPanel] : [this.kiosk, this.inspectPanel, this.toolbar, this.tocPanel])
+      .filter((p) => p.visible && p.mesh.parent);
     const ph = rc.intersectObjects(panels.map((p) => p.mesh), false)[0];
     if (ph) best = { kind: 'panel', panel: ph.object.userData.panel, uv: ph.uv, distance: ph.distance };
     if (this.book3d && (this.state === 'read' || this.state === 'inspect')) {
@@ -878,6 +893,8 @@ export class Interaction {
       if (key === 'Enter' || key === ' ') {
         if (this.book.readable) this.read();
       } else if (key === 'Escape' || key === 'Backspace') this.putBack();
+    } else if (this.state === 'opening' && (key === 'Escape' || key === 'Backspace')) {
+      this._cancelOpening?.();
     }
   }
 
@@ -887,6 +904,7 @@ export class Interaction {
       if (this.tocPanel.visible) this.toggleToc(false);
       else this.closeBook();
     } else if (this.state === 'inspect') this.putBack();
+    else if (this.state === 'opening') this._cancelOpening?.();
   }
 
   // ===========================================================================================
@@ -1016,25 +1034,45 @@ export class Interaction {
    */
   async read({ fromStart = false, at = null, side = null } = {}) {
     if (this.state !== 'inspect' || !this.book.readable) return;
-    this.state = 'busy';
-    this.inspectPanel.visible = false;
     const book = this.book;
     const b3 = this.book3d;
     const reader = new BookReader({ libId: book.libId, book, fontScale: this.settings.fontScale, theme: this.settings.theme });
     this.reader = reader;
     this.toolbar.set('label', { text: 'Opening…' });
+    // Preparing a book can take a while (a big one from a ZIM file opened on a Quest took half a
+    // minute), so meanwhile the inspect panel says so, counting the seconds, and its Put back
+    // cancels. In 'opening' only that panel takes input.
+    this.state = 'opening';
+    this._opening = { t0: performance.now(), shown: 0 };
+    this._fillInspect(book, { opening: OPENING_LINE });
+    const cancelled = new Promise((resolve) => { this._cancelOpening = () => resolve(CANCELLED); });
+    const t0 = performance.now();
     let startRef;
+    let failure = null;
     try {
-      await reader.load();
-      const pos = at ?? (!fromStart && load(`pos:${book.libId}:${book.id}`, null));
-      startRef = pos ? await reader.refForAnchor(pos) : reader.firstRef();
+      startRef = await Promise.race([cancelled, (async () => {
+        await reader.load();
+        const pos = at ?? (!fromStart && load(`pos:${book.libId}:${book.id}`, null));
+        return pos ? reader.refForAnchor(pos) : reader.firstRef();
+      })()]);
     } catch (err) {
-      console.error(err);
-      this.overlay?.showToast(`Could not open this book: ${err.message}`, 'error');
+      failure = err;
+    }
+    this._opening = null;
+    this._cancelOpening = null;
+    if (failure || startRef === CANCELLED) {
+      reader.dispose();
+      this.reader = null;
       this.state = 'inspect';
-      this.inspectPanel.visible = true;
+      if (!failure) return this.putBack();
+      console.error(failure);
+      this.overlay?.showToast(`Could not open this book: ${failure.message}`, 'error');
+      this._fillInspect(book, { error: `Could not open this book: ${failure.message}` });
       return;
     }
+    perf.event('book-load', { t: t0, ms: performance.now() - t0, chunks: reader.chunkCount });
+    this.state = 'busy';
+    this.inspectPanel.visible = false;
 
     // Reading pose: in front of the eyes, a little below, facing them. On a flat screen the book
     // sits higher and further so that it and its toolbar fit the (narrower) field of view.
@@ -1716,6 +1754,13 @@ export class Interaction {
       }
     }
     this.book3d?.update(dt);
+    if (this._opening) { // a book being opened: the seconds so far on the inspect panel (read)
+      const s = Math.floor((performance.now() - this._opening.t0) / 1000);
+      if (s >= 1 && s !== this._opening.shown) {
+        this._opening.shown = s;
+        this.inspectPanel.set('opening', { text: `${OPENING_LINE} · ${s} s` });
+      }
+    }
     this._updateExitHold(dt);
 
     if (this._grab) {

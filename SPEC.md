@@ -728,7 +728,7 @@ public/
     xr/controls.js       input: XR controllers/hands, desktop mouse+keyboard, touch; locomotion.
     ui/panel.js          canvas-texture UI panels with buttons/text, hover & click via UV.
     ui/overlay.js        DOM overlay: library info, search, help (non-VR); setReading(bool) fades it while a book is open.
-    interaction.js       app state machine: browse → inspect → read; wires everything.
+    interaction.js       app state machine: browse → inspect → opening → read; wires everything.
     rooms.js             which books are shelved: the current place (one library, or one room of a huge one).
     audio.js             tiny WebAudio synth: page turn, book slide/thud, UI click.
     perf.js              ?perf recorder (frame timing, events, segments), a no-op unless started (§5.7).
@@ -1006,15 +1006,20 @@ export class Panel {
 
 ### 5.6 Interaction (`interaction.js`) — the state machine
 
-States: `browse` → `inspect` → `read` (and back).
+States: `browse` → `inspect` → `opening` → `read` (and back), plus `busy` during animations.
 - **browse:** pointers raycast shelves + panels. Hover a book → `shelves.setHighlight`, tooltip
   panel near the book with title / author. Select → book leaves its slot (`hideBook`, a `Book3D`
   at its slot transform) and flies (~0.5 s ease) to ~0.45 m in front of the viewer at chest height,
   turning to show the cover → **inspect**.
 - **inspect:** info panel beside the book: title, subtitle, author, library, "Read" /
   "Continue (p. N)" / "Put back" buttons. In XR the book can be grabbed with squeeze and turned
-  in the hand (bonus). Select on the book or "Read" → **read**. "Put back"/B/Esc → flies back to
-  the slot, `showBook`, → **browse**.
+  in the hand (bonus). Select on the book or "Read" → **opening** → **read**. "Put back"/B/Esc →
+  flies back to the slot, `showBook`, → **browse**.
+- **opening:** while the book's metadata loads (`BookReader.load`: the server's or the worker's
+  conversion; a big book from a ZIM file opened on a Quest took half a minute), the info panel
+  stays and shows "Opening…" with "Preparing its pages · N s" counting real seconds, and only
+  "Put back" (also B/Esc), which cancels and puts the book back. Only that panel takes input.
+  On failure → **inspect**, with the error on the panel (and a toast).
 - **read:** book moves to the reading pose (§`config.READ`), opens, shows the saved or first spread.
   Toolbar panel under the book: ◀ ▶, progress bar (click to jump), Contents, A− A+, theme, Close.
   Contents opens a scrollable TOC panel at the entry being read (highlighted). A list of more
