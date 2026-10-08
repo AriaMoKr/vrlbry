@@ -180,11 +180,22 @@
         the same however small, ~15–25 ms. The directory block cache (`ZimArchive._readDir`,
         64 KB blocks, 16 MB per local file) cut the file to 1,437 reads and the book to 824:
         measured on the Quest (dev server, `?perf`), the file opens in 34.7 s (from ~70) and the
-        book in 13.3 s (from ~30). What is left are the cluster reads: 2 tiny ones per book
-        for its size at open, 2–3 per picture when a book opens. *To measure next*, on a `File`
-        on the Quest: whether reads at once overlap or queue, and what a 64 KB read costs
-        against an 8-byte one; then batch, parallelise or defer them (book sizes after the room
-        shows; picture sizes per chunk).
+        book in 13.3 s (from ~30). What was left were the cluster reads: 2 tiny ones per book
+        for its size at open, 2–3 per picture when a book opens. *Measured on the Quest
+        (`perf/quest-reads-2026-10-07_20-23.json`, a `File` read in a worker):* a read costs
+        about the same however big, ~65–70 ms alone for 8 B up to 256 KB, 77 ms for 1 MB,
+        87 ms for 4 MB; reads at once overlap up to about 4 (4 at once take no longer than 1),
+        then the headset serves ~90 reads a second (8 or more at once: ~11.5 ms each); nearby
+        or sequential reads cost the same as random ones. So the number of reads is what
+        counts, and bytes are nearly free. Hence (commits `6275f9a`, `7b0ce38`): the block
+        cache serves every read under 64 KB (a book's size at open: one read, shared by the
+        books of a cluster), and the local library reads an uncompressed cluster up to 4 MB
+        whole once a second blob of it is wanted (`wholeClusterBytes`; a book's pictures share
+        a few clusters: the cat book's 362 pictures lie in 24). Counted on the PC: the file
+        718 reads (from 4,656 this morning), the cat book 73 (from 2,084). On the Quest: the
+        file opens in 19.4 s (from ~70), the book in 4.3 s (from ~30). Further: the 700 reads
+        of the open are the books' sizes (one per cluster of EPUBs), only for their thickness
+        on the shelf; they could be deferred or dropped for local libraries.
     - *Milestone 3: remote ZIMs* from Kiwix's mirror over HTTP range reads (a byte source like
       `BlobSource`), from a curated list.
     - *Keep files across reloads:* the File System Access API (desktop Chrome/Edge) can store a
