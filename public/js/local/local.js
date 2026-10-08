@@ -7,6 +7,7 @@ let worker = null;
 let seq = 0;
 const pending = new Map(); // request id → { resolve, reject, onProgress? }
 const listeners = new Set();
+const indexingListeners = new Set();
 let opened = 0;
 
 /**
@@ -36,6 +37,10 @@ function start() {
     }
     if (data.changed) { // a library's index finished: its catalogue entry and books are new
       for (const fn of listeners) fn();
+      return;
+    }
+    if (data.indexing) { // a library's index build moved on
+      for (const fn of indexingListeners) fn(data.indexing);
       return;
     }
     const p = pending.get(data.id);
@@ -97,6 +102,16 @@ export async function openFiles(files, { onFile, onProgress } = {}) {
 export function onChange(fn) {
   listeners.add(fn);
   return () => listeners.delete(fn);
+}
+
+/**
+ * Calls fn({ id, stage, progress, error? } | { id, done }) as a local library's index build
+ * moves on (a Wikipedia or Wikisource file: 'queued', then the stages of §2.4/§2.5, 'failed'
+ * with `error`), for a progress indicator; `done` once the index is ready (onChange follows).
+ */
+export function onIndexing(fn) {
+  indexingListeners.add(fn);
+  return () => indexingListeners.delete(fn);
 }
 
 /** The local libraries: { generation, libraries: [info] }. Starts nothing when none are open. */

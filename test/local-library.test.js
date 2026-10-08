@@ -96,10 +96,10 @@ async function localAnswers(local, id, limit = Infinity) {
 /** Answers with the local library's id ('~x') written as the server's ('x'). */
 const asServer = (answers, id) => JSON.parse(JSON.stringify(answers).split(`~${id}`).join(id));
 
-async function sameAnswers(file, { limit, store = null } = {}) {
+async function sameAnswers(file, { limit, store = null, onIndexing = null } = {}) {
   const id = path.basename(file).replace(/\.zim$/i, '');
   const server = await serverAnswers(file, limit);
-  const local = createLocalLibraries({ store });
+  const local = createLocalLibraries({ store, onIndexing });
   provide(browser);
   const opened = (await local.call('open', { file: asFile(file) })).value;
   assert.equal(opened.id, `~${id}`);
@@ -200,9 +200,16 @@ describe('local library (ZIM files read in the browser)', () => {
     const factory = new IDBFactory();
     const store = idbStore('local', { indexedDB: factory });
     // Opened: indexing, no books yet; then the same volume, articles and images as the server.
-    const { local, id } = await sameAnswers(file, { store });
+    const events = [];
+    const { local, id } = await sameAnswers(file, { store, onIndexing: (libId, info) => events.push({ libId, info }) });
     const opened = (await local.call('open', { file: asFile(file) })).value;
     assert.equal(opened.kind, 'wikipedia');
+    // The build's progress was reported as it went: the stages in order, then null once ready.
+    assert.ok(events.length >= 4 && events.every((e) => e.libId === id), `${events.length} events for ${id}`);
+    const stages = [...new Set(events.map((e) => e.info?.stage ?? 'ready'))];
+    assert.deepEqual(stages, ['queued', 'scan', 'sizes', 'sort', 'ready'], stages.join(' '));
+    assert.ok(events.slice(0, -1).every((e, k) => k === 0 || e.info.progress >= events[k - 1].info.progress), 'progress never falls');
+    assert.equal(events.at(-1).info, null);
     assert.deepEqual([...new Set((await store.names()).map((n) => n.replace(/-[0-9a-f]{32}\./, '-<uuid>.')))], ['wikipedia-<uuid>.v4.json'], 'the index, no checkpoint left');
     // Opened again (another page load): the index is found by the ZIM's UUID, nothing is built.
     const again = createLocalLibraries({ store });

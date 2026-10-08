@@ -171,9 +171,10 @@
         again after a reload in 0.8 s with no build. On the Quest: Chemistry mini indexed in
         8 s (the page rendering alongside), reopened from the store in 2.0 s, a volume read.
         Article search for local Wikipedias goes to the worker (the same search as the
-        server's). Still to do: Wikisource not yet tried in the browser (the same code path);
-        prebuilt indexes for the big editions; the index build's progress in the toast (today
-        only the catalogue card and the kiosk's Rooms list show it, at the 10 s poll).
+        server's). The build's progress is a toast ("Indexing <title>… · 12 s · about 4 min
+        left", with a bar) fed by the worker, besides the catalogue card and the kiosk's Rooms
+        list at the 10 s poll. Still to do: Wikisource not yet tried in the browser (the same
+        code path); prebuilt indexes for the big editions.
       - *To measure:* sizes from each cluster's offset table alone (decompressing only its
         first block), with redirect pages told by size and namespaces by title prefix (which
         is per language); a streaming WASM zstd, or two workers outside VR (the Quest gives a

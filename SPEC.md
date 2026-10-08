@@ -206,9 +206,13 @@ whole. It works on GitHub Pages (no server) and beside a server's own libraries.
   route), `meta`, `chunk` (the chunk's JSON bytes, transferred), `image` (bytes and MIME type
   of a URL), `close`. Before its answer an `open` or a `meta` may send
   `{ id, progress }` (a fraction, at most 10 a second), for the page's progress bars; and the
-  worker sends `{ changed }` of its own when a library's index finished (`local.onChange`: the
-  page refreshes its catalogue at once rather than at the next 10 s poll). `api.js`
-  sends the requests of `~` libraries there;
+  worker sends of its own `{ indexing: { id, stage, progress } }` as a library's index build
+  moves on (at most 4 a second per library; `{ id, done }` once ready, `error` with stage
+  'failed'; `local.onIndexing`: the page keeps a toast per build, "Indexing <title>… · 12 s ·
+  about 4 min left" with a bar, "Waiting to index …" while queued, until it is ready or
+  failed) and `{ changed }` when a library's index finished (`local.onChange`: the page
+  refreshes its catalogue at once rather than at the next 10 s poll). `api.js` sends the
+  requests of `~` libraries there;
   `getCatalog()` (and a rescan's answer) lists the local libraries after the server's, with
   generation `"<server>+<local>"` so the poll notices either changing. A local Wikipedia's
   article search (`api.searchArticles`) goes to the worker's `articles`, so the search box and

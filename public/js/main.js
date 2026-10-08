@@ -232,7 +232,10 @@ async function start() {
       libraries = next.libraries;
       booksByLib = nextBooks;
       overlay.setLibraries(libraries, booksByLib);
-      for (const l of added) overlay.showToast(`New library: ${l.title} (${(nextBooks[l.id]?.length || 0).toLocaleString()} books) — shelving…`, 'info', 6000);
+      for (const l of added) {
+        if (l.indexing) continue; // its indexing toast says so (local), or the card does (server)
+        overlay.showToast(`New library: ${l.title} (${(nextBooks[l.id]?.length || 0).toLocaleString()} books) — shelving…`, 'info', 6000);
+      }
       for (const l of removed) overlay.showToast(`Library removed: ${l.title}`, 'info', 5000);
       if (manual && !added.length && !removed.length) overlay.showToast('No new ZIM files found.');
       await new Promise((r) => setTimeout(r, 50)); // let the toast paint before the rebuild
@@ -296,6 +299,7 @@ async function start() {
     for (const r of results) {
       if (r.error) overlay.showToast(r.error, 'error', 9000);
     }
+    for (const r of results) if (r.id && r.indexing) showIndexing(r.id, r.title, r.indexing);
     const added = results.filter((r) => r.id);
     if (added.length) {
       // Shelve the (first) new library: the catalogue's rebuild goes to its room.
@@ -308,6 +312,38 @@ async function start() {
     return results;
   }
   overlay.onOpenFiles(openLocalFiles);
+  // A toast per local library whose index is being built (a Wikipedia or Wikisource file: a big
+  // one takes minutes on a headset): the stage, the time so far and about how long is left, with
+  // a bar, until the index is ready (the worker says: local.onIndexing) or the build fails.
+  const indexingToasts = new Map(); // lib id → { toast, t0, title, info }
+  function showIndexing(id, title, info) {
+    let t = indexingToasts.get(id);
+    if (!info || info.done || info.stage === 'failed') {
+      if (t) {
+        t.toast.close();
+        indexingToasts.delete(id);
+      }
+      if (info?.stage === 'failed') overlay.showToast(`Could not index ${title}: ${info.error}`, 'error', 9000);
+      return;
+    }
+    if (!t) {
+      t = { toast: overlay.showToast('', 'busy', Infinity), t0: performance.now(), title };
+      indexingToasts.set(id, t);
+    }
+    if (title !== id) t.title = title; // the first progress can come before the open answers with the title
+    t.info = info;
+    tellIndexing(t);
+  }
+  function tellIndexing(t) {
+    const waiting = t.info.stage === 'queued';
+    t.toast.update(`${waiting ? 'Waiting to index' : 'Indexing'} ${t.title}…`
+      + progressText(performance.now() - t.t0, waiting ? null : t.info.progress, { estimating: !waiting }));
+    if (!waiting) t.toast.progress(t.info.progress);
+  }
+  setInterval(() => { for (const t of indexingToasts.values()) tellIndexing(t); }, 1000);
+  localLibrary.onIndexing(({ id, ...info }) => {
+    showIndexing(id, indexingToasts.get(id)?.title ?? libraries.find((l) => l.id === id)?.title ?? id, info);
+  });
   // A new version of the site (a deploy, or edited client files) means this page runs old code, and
   // new data may need the new code: a page left open across a deploy once took a new ZIM into the
   // catalogue but not into the Demo set, whose list was in the old rooms.js. So once the version

@@ -262,6 +262,7 @@ export class ArchiveLibrary {
     this._inflightProgress = new Map(); // bookId → Set of content()'s onProgress, while converting
     this._catalogProgress = null; // open()'s onProgress, while the catalogue is first built
     this._estimateSizes = false; // open()'s estimateSizes (_blobSizes)
+    this._onIndexing = null; // open()'s onIndexing (_setIndexing)
     this._epubCache = new LRUCache({ maxBytes: EPUB_CACHE_BYTES, sizeOf: (e) => e.bytes });
     this._epubInflight = new Map();
     this._imageInfo = new LRUCache({ maxEntries: 100000 }); // archive path → { ok, w, h }
@@ -314,6 +315,7 @@ export class ArchiveLibrary {
     indexQueue,
     onProgress, // (fraction) as the catalogue is built: Gutenberg books looked up, generic entries scanned
     estimateSizes = false, // books' sizes estimated from the cluster pointers, not read (_blobSizes)
+    onIndexing, // (info) whenever info().indexing changes: { stage, progress }, or null once the index is ready
   } = {}) {
     // An open ZimArchive is taken over (closed with the library): the local library opens the
     // file once, for the metadata that decides whether to go on, and keeps its block cache.
@@ -325,6 +327,7 @@ export class ArchiveLibrary {
       });
       lib._catalogProgress = onProgress ?? null;
       lib._estimateSizes = estimateSizes;
+      lib._onIndexing = onIndexing ?? null;
       try {
         await lib.books(); // catalog now: `kind` is final and errors surface at scan time
       } finally {
@@ -644,17 +647,17 @@ export class ArchiveLibrary {
     if (this._indexTask) return;
     const queue = this._indexQueue;
     const bytes = this.archive.fileSize;
-    this._indexing = { stage: 'queued', progress: 0 };
+    this._setIndexing({ stage: 'queued', progress: 0 });
     if (queue?.queues(bytes)) this._log(`${this.file}: waiting to index ${what} (big archives one at a time, smallest first)…`);
     let t0;
     const task = () => {
-      this._indexing = { stage: 'scan', progress: 0 };
+      this._setIndexing({ stage: 'scan', progress: 0 });
       this._log(`${this.file}: indexing ${what} in the background (first open only)…`);
       t0 = performance.now();
       return build({
         onProgress: (stage, f) => {
           const [base, span] = weights[stage] ?? [0, 0];
-          this._indexing = { stage, progress: Math.min(1, base + span * f) };
+          this._setIndexing({ stage, progress: Math.min(1, base + span * f) });
         },
         log: (m) => this._log(`${this.file}:${m}`),
       });
@@ -666,7 +669,7 @@ export class ArchiveLibrary {
         return false;
       });
       if (ok) await saved?.().catch(() => {});
-      this._indexing = null;
+      this._setIndexing(null);
       this._books = null;
       this._info = null;
       this._byId.clear();
@@ -677,11 +680,17 @@ export class ArchiveLibrary {
       this._onChange?.();
     }).catch((err) => {
       if (this._closed) return;
-      this._indexing = { stage: 'failed', progress: 0, error: err.message };
+      this._setIndexing({ stage: 'failed', progress: 0, error: err.message });
       this._warn(`${this.file}: ${what} indexing failed: ${err.message}`);
     }).finally(() => {
       this._indexTask = null;
     });
+  }
+
+  /** info().indexing, and open()'s onIndexing told (the local library's worker relays it to its page). */
+  _setIndexing(info) {
+    this._indexing = info;
+    this._onIndexing?.(info ? { ...info } : null);
   }
 
   // ------------------------------------------------------------------------------------------
