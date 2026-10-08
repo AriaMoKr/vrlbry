@@ -66,6 +66,9 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .ov-open-btn { padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--accent); }
 .ov-open-btn:hover { border-color: var(--accent); }
 .ov-open-hint { margin-top: 6px; color: var(--muted); font-size: 12px; line-height: 1.4; }
+.ov-reopen { margin-top: 6px; font-size: 12px; line-height: 1.6; color: var(--muted); }
+.ov-reopen-names { color: var(--text); }
+.ov-reopen button { margin-left: 6px; padding: 1px 8px; font-size: 12px; }
 .ov-open-hint a { color: var(--accent); }
 /* Shown while ZIM files are dragged over the page. */
 .ov-drop { position: fixed; inset: 16px; z-index: 30; display: flex; align-items: center; justify-content: center; border: 3px dashed var(--accent); border-radius: 18px; background: rgba(20, 16, 10, 0.72); color: var(--accent); font: 600 24px/1.3 var(--serif); pointer-events: none; }

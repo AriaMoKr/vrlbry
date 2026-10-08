@@ -3,6 +3,7 @@
 
 import { imageSource } from '../api.js';
 import { EXAMPLE_ZIM, MORE_ZIMS_URL, isLocalUrl } from '../local/local.js';
+import { droppedHandles } from '../local/handles.js';
 import { bookIndex, matchBooks, findArticles } from '../search.js';
 import { load, save } from '../util/storage.js';
 
@@ -92,6 +93,8 @@ export class Overlay {
         <div class="ov-open">
           <button class="ov-open-btn" title="Read ZIM files from this device, in the browser">Open ZIM files…</button>
           <input class="ov-open-input" type="file" accept=".zim" multiple hidden>
+          <div class="ov-reopen" hidden>Last time: <span class="ov-reopen-names"></span>
+            <button class="ov-reopen-btn">Reopen</button><button class="ov-reopen-forget" title="Forget these files">Forget</button></div>
           <div class="ov-open-hint">No ZIM file yet? Download
             <a href="${esc(EXAMPLE_ZIM.url)}" target="_blank" rel="noopener">${esc(EXAMPLE_ZIM.title)}</a>
             (${esc(EXAMPLE_ZIM.size)}) from Kiwix, then open it here.
@@ -134,13 +137,26 @@ export class Overlay {
     if (load('card', 'open') === 'collapsed') this.setCardCollapsed(true);
     this.$('.ov-rescan').onclick = () => this._rescan?.();
     // ZIM files from this device (the local library, step 2): a picker, or dropped on the page.
+    // A browser with the File System Access API picks through onPickFiles (handles, so the files
+    // can be reopened after a reload: local/handles.js); the file input is the fallback.
     const picker = this.$('.ov-open-input');
-    this.$('.ov-open-btn').onclick = () => picker.click();
+    this.$('.ov-open-btn').onclick = async () => {
+      if (this._pickFiles) {
+        try {
+          const picked = await this._pickFiles();
+          if (picked?.files.length) this._openFiles?.(picked.files, picked.handles);
+          return;
+        } catch { /* no such picker after all: the input */ }
+      }
+      picker.click();
+    };
     picker.onchange = () => {
       const files = [...picker.files];
       picker.value = ''; // the same file can be picked again
-      if (files.length) this._openFiles?.(files);
+      if (files.length) this._openFiles?.(files, []);
     };
+    this.$('.ov-reopen-btn').onclick = () => this._reopen?.();
+    this.$('.ov-reopen-forget').onclick = () => this._forget?.();
     const hasFiles = (e) => [...(e.dataTransfer?.types ?? [])].includes('Files');
     let dragDepth = 0;
     document.addEventListener('dragenter', (e) => {
@@ -165,7 +181,9 @@ export class Overlay {
       dragDepth = 0;
       this.$('.ov-drop').hidden = true;
       const files = [...e.dataTransfer.files];
-      if (files.length) this._openFiles?.(files);
+      if (!files.length) return;
+      // The handles must be asked for during the event; they arrive later.
+      droppedHandles(e.dataTransfer).then((handles) => this._openFiles?.(files, handles));
     });
     // The debug report describes the page as it was when the help was opened: a click there (or
     // anywhere outside the search box) closes the search results, so the state is taken on
@@ -316,7 +334,18 @@ export class Overlay {
   onRescan(cb) { this._rescan = cb; }
 
   /** cb(files): ZIM files picked or dropped, to open in the browser (main.js openLocalFiles). */
+  /** cb(files, handles): ZIM files picked or dropped (handles: the File System Access API's, or null each). */
   onOpenFiles(cb) { this._openFiles = cb; }
+  /** fn() → { files, handles } | null: the handle-giving picker the Open button uses when set. */
+  onPickFiles(fn) { this._pickFiles = fn; }
+  onReopen(fn) { this._reopen = fn; }
+  onForget(fn) { this._forget = fn; }
+  /** The files remembered from last time (names), with Reopen and Forget; none hides the line. */
+  setRemembered(names) {
+    const line = this.$('.ov-reopen');
+    line.hidden = !names.length;
+    this.$('.ov-reopen-names').textContent = names.join(', ');
+  }
   /** A build without a server (GitHub Pages): no rescan button. */
   setStatic(on) {
     this._static = !!on;

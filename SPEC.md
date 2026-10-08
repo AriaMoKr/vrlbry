@@ -186,8 +186,14 @@ whole. It works on GitHub Pages (no server) and beside a server's own libraries.
   (`EXAMPLE_ZIM` in `local/local.js`: Gutenberg LCC-P, 37 MB, from tools/demo-set.txt, which a
   test checks) and Kiwix's Gutenberg folder. In a headset, files are picked before entering VR;
   in VR the kiosk's footer says so ("Your own ZIM files: exit VR, then …"). Opened files last
-  until the page is reloaded (a browser cannot reopen a file by name); a saved place naming a
-  local library that is gone falls back as for a removed ZIM.
+  until the page is reloaded; a saved place naming a local library that is gone falls back as
+  for a removed ZIM. Where the browser gives file handles (the File System Access API: desktop
+  Chrome and Edge, Quest Browser; `local/handles.js`), the Open button picks through
+  `showOpenFilePicker` and a drop asks `getAsFileSystemHandle`, the handles of the files that
+  opened are kept in IndexedDB (`vrlbry-files`, by file name), and the card then offers "Last
+  time: <names> · Reopen · Forget": Reopen asks each handle for permission (the browser
+  prompts, once per file and load) and opens the files again; one that is refused or gone is
+  reported and forgotten. Other browsers pick the file again.
 - **What opens:** Gutenberg, generic, Wikipedia and Wikisource ZIMs. The last two need a full
   index pass (§2.4, §2.5): the worker runs the same build as the server (`ArchiveLibrary` with
   an `IndexQueue`: past 1 GB one at a time, smallest first) in the background, and meanwhile

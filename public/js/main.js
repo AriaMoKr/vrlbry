@@ -10,6 +10,7 @@ import { Overlay } from './ui/overlay.js';
 import { audio } from './audio.js';
 import { load, save } from './util/storage.js';
 import { progressText } from './util/progress.js';
+import { handleStore, pickFiles, reopen, supportsHandles } from './local/handles.js';
 import { PLAYER, XR_FRAME_RATE } from './config.js';
 import { collectionsFor } from './rooms.js';
 import { perf } from './perf.js';
@@ -262,8 +263,9 @@ async function start() {
 
   // ZIM files opened in this browser (step 2: the local library, local/local.js), from the file
   // picker, a drop or __vrlbry.openZim: shelved like the server's as soon as they are open.
-  async function openLocalFiles(files) {
-    const zims = files.filter((f) => /\.zim$/i.test(f.name ?? '') || !f.name);
+  async function openLocalFiles(files, fileHandles = []) {
+    const picked = [...files].map((file, i) => ({ file, handle: fileHandles[i] ?? null })).filter(({ file }) => /\.zim$/i.test(file.name ?? '') || !file.name);
+    const zims = picked.map((p) => p.file);
     if (!zims.length) {
       overlay.showToast('Only .zim files can be opened.', 'error');
       return [];
@@ -300,6 +302,9 @@ async function start() {
       if (r.error) overlay.showToast(r.error, 'error', 9000);
     }
     for (const r of results) if (r.id && r.indexing) showIndexing(r.id, r.title, r.indexing);
+    // Remembered (their handles kept), to be reopened after a reload: the ones that opened.
+    const keep = picked.filter((p, i) => p.handle && results[i]?.id).map((p) => p.handle);
+    if (keep.length) rememberFiles(keep);
     const added = results.filter((r) => r.id);
     if (added.length) {
       // Shelve the (first) new library: the catalogue's rebuild goes to its room.
@@ -312,6 +317,31 @@ async function start() {
     return results;
   }
   overlay.onOpenFiles(openLocalFiles);
+  // Files opened once can be reopened after a reload where the browser gives file handles (the
+  // File System Access API: desktop Chrome and Edge, Quest Browser): the picker then goes through
+  // it, the handles are kept (local/handles.js), and the card offers "Last time: … Reopen".
+  const fileHandles = supportsHandles() ? handleStore() : null;
+  function rememberFiles(handles) {
+    fileHandles?.remember(handles).then(() => fileHandles.list()).then((entries) => overlay.setRemembered(entries.map((e) => e.name))).catch(() => {});
+  }
+  if (fileHandles) {
+    overlay.onPickFiles(pickFiles);
+    overlay.onReopen(async () => {
+      const entries = await fileHandles.list().catch(() => []);
+      const { files, handles, failed } = await reopen(entries);
+      for (const name of failed) {
+        overlay.showToast(`${name} could not be opened again: pick it afresh.`, 'error', 7000);
+        fileHandles.forget(name).catch(() => {});
+      }
+      overlay.setRemembered([]);
+      if (files.length) await openLocalFiles(files, handles);
+    });
+    overlay.onForget(() => {
+      fileHandles.forgetAll().catch(() => {});
+      overlay.setRemembered([]);
+    });
+    fileHandles.list().then((entries) => overlay.setRemembered(entries.map((e) => e.name))).catch(() => {});
+  }
   // A toast per local library whose index is being built (a Wikipedia or Wikisource file: a big
   // one takes minutes on a headset): the stage, the time so far and about how long is left, with
   // a bar, until the index is ready (the worker says: local.onIndexing) or the build fails.

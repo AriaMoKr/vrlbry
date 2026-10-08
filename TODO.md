@@ -221,8 +221,10 @@
         and a book of 362 pictures in 4 s, from a minute and half a minute this morning.
     - *Milestone 3: remote ZIMs* from Kiwix's mirror over HTTP range reads (a byte source like
       `BlobSource`), from a curated list.
-    - *Keep files across reloads:* the File System Access API (desktop Chrome/Edge) can store a
-      handle in IndexedDB and ask again for permission; elsewhere the file is picked again.
+    - *Keep files across reloads (done 2026-10-08):* where the browser gives file handles (the
+      File System Access API: desktop Chrome/Edge, and Quest Browser has it too) they are kept
+      in IndexedDB and the card offers "Last time: … Reopen" (permission asked again within the
+      tap, `local/handles.js`); elsewhere the file is picked again.
     - *In VR:* the kiosk cannot open files (a picker cannot show in an immersive session); it
       could list the files opened before entering VR.
     The notes from before it began:
