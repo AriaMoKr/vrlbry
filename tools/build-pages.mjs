@@ -4,7 +4,10 @@
 // IWER files the client imports (followed from its imports), instead of the server mapping
 // node_modules.
 //
-//   node tools/build-pages.mjs [--out dist] [--zims <folder>]
+//   node tools/build-pages.mjs [--out dist] [--zims <folder>] [--indexes <folder>]
+//
+// --indexes builds the indexes of that folder's Wikipedia and Wikisource ZIMs into indexes/, for
+// visitors who open those files in the browser (buildIndexes).
 //
 // Without --zims the site has no libraries. With it, the ZIMs in that folder are pre-rendered: the
 // real server runs in this process, and every answer the client can ask for is saved as a file
@@ -388,8 +391,47 @@ export async function prerender(dir, out, { log = console.log } = {}) {
   }
 }
 
+/**
+ * Builds the indexes of the Wikipedia and Wikisource ZIMs of `dir` (as the server does on first
+ * open) and writes them to `out`/indexes/<name> (the name the core keeps them under, with the
+ * ZIM's UUID), where the local library looks before building one (public/js/local/prebuilt.js):
+ * a visitor who opens such a file skips the build, minutes on a headset for a big Wikipedia.
+ * @returns {Promise<{ libraries: number, indexes: string[] }>}
+ */
+export async function buildIndexes(dir, out, { log = console.log } = {}) {
+  const { Library } = await import('../server/library.js');
+  const { indexName: wikipediaIndexName } = await import('../public/js/core/wikipedia.js');
+  const { indexName: wikisourceIndexName } = await import('../public/js/core/wikisource.js');
+  const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vrlbry-pages-indexes-'));
+  const library = await Library.scan(dir, { log: () => {}, warn: log, cacheDir });
+  const indexes = [];
+  try {
+    for (const lib of library.list()) {
+      const name = lib.kind === 'wikipedia' ? wikipediaIndexName(lib.archive) : lib.kind === 'wikisource' ? wikisourceIndexName(lib.archive) : null;
+      if (!name) continue;
+      for (let i = 0; (await lib.info()).indexing; i++) {
+        if (i % 50 === 0) log(`  indexing ${lib.id}…`);
+        await new Promise((r) => setTimeout(r, 200));
+      }
+      const from = path.join(cacheDir, name);
+      if (!fs.existsSync(from)) {
+        log(`  ${lib.id}: no index was built`);
+        continue;
+      }
+      fs.mkdirSync(path.join(out, 'indexes'), { recursive: true });
+      fs.copyFileSync(from, path.join(out, 'indexes', name));
+      indexes.push(name);
+      log(`  ${lib.id}: indexes/${name} (${(fs.statSync(from).size / 1048576).toFixed(1)} MB)`);
+    }
+    return { libraries: library.list().length, indexes };
+  } finally {
+    await library.close();
+    fs.rmSync(cacheDir, { recursive: true, force: true });
+  }
+}
+
 async function main() {
-  const { values: opts } = parseArgs({ options: { out: { type: 'string', default: 'dist' }, zims: { type: 'string' } } });
+  const { values: opts } = parseArgs({ options: { out: { type: 'string', default: 'dist' }, zims: { type: 'string' }, indexes: { type: 'string' } } });
   const OUT = path.resolve(ROOT, opts.out);
   fs.rmSync(OUT, { recursive: true, force: true });
   copyTree(PUBLIC, OUT, SERVER_ONLY);
@@ -452,6 +494,11 @@ async function main() {
     console.log(`  ${st.libraries} libraries, ${st.books} books, ${st.chunks} chunks, ${st.images} images`);
   } else {
     fs.writeFileSync(path.join(api, 'libraries'), JSON.stringify({ generation: 0, libraries: [], static: true }));
+  }
+  if (opts.indexes) {
+    console.log(`Building the indexes of the ZIMs in ${opts.indexes}…`);
+    const st = await buildIndexes(path.resolve(opts.indexes), OUT);
+    console.log(`  ${st.indexes.length} indexes of ${st.libraries} libraries`);
   }
   fs.writeFileSync(path.join(api, 'version'), JSON.stringify({ changed: changedAt(), file: null, static: true }));
   // Served as is (no Jekyll processing).

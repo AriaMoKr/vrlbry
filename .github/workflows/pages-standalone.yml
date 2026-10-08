@@ -2,8 +2,9 @@
 # https://ariamokr.github.io/vrlbry-standalone/: the static site (tools/build-pages.mjs) where
 # visitors open their own ZIM files in the browser (the local library, SPEC §2.6). On every push to
 # the branch, the app alone (~4 MB, a minute or two). Run it by hand (Actions → Pages (standalone)
-# → Run workflow) with "demo set" ticked to also pre-render the ZIMs of tools/demo-set.txt, like
-# the main site (~605 MB, ~10 min).
+# → Run workflow) with "demo indexes" ticked to also ship the demo set's Wikipedia indexes (a few
+# MB: a visitor who opens one of those files skips its index build), or with "demo set" ticked to
+# pre-render the ZIMs of tools/demo-set.txt, like the main site (~605 MB, ~10 min).
 #
 # One-time setup in the repository: Settings → Pages → Build and deployment → Source: GitHub
 # Actions. (The main site, https://ariamokr.github.io/vrlbry/, deploys from main of
@@ -15,6 +16,10 @@ on:
     branches: [vrlbry-standalone]
   workflow_dispatch:
     inputs:
+      demo_indexes:
+        description: Also ship the demo set's Wikipedia indexes (tools/demo-set.txt; a few MB)
+        type: boolean
+        default: false
       demo_set:
         description: Also pre-render the demo set (tools/demo-set.txt, ~10 min, ~605 MB site)
         type: boolean
@@ -42,13 +47,13 @@ jobs:
       - run: npm ci
       - run: npm test
       # The demo set (tools/demo-set.txt, one ZIM URL per line), cached until the list changes.
-      - if: inputs.demo_set
+      - if: inputs.demo_set || inputs.demo_indexes
         uses: actions/cache@v4
         with:
           path: .demo
           key: demo-set-${{ hashFiles('tools/demo-set.txt') }}
       - name: Download the demo set
-        if: inputs.demo_set
+        if: inputs.demo_set || inputs.demo_indexes
         run: |
           mkdir -p .demo
           while read -r url; do
@@ -58,7 +63,7 @@ jobs:
           done < tools/demo-set.txt
           ls -l .demo
       - name: Build the site
-        run: npm run build:pages -- ${{ inputs.demo_set && '--zims .demo' || '' }}
+        run: npm run build:pages -- ${{ inputs.demo_set && '--zims .demo' || '' }} ${{ inputs.demo_indexes && '--indexes .demo' || '' }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

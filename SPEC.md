@@ -196,9 +196,15 @@ whole. It works on GitHub Pages (no server) and beside a server's own libraries.
   object store, name → string or `Uint8Array`; `appendBytes` and `truncate` read and write
   back in one transaction), named by the ZIM's UUID like the server's, so a file is indexed
   once however it is called or picked; the checkpoint (§2.5) lets an interrupted build resume.
-  Without IndexedDB (site data blocked) the index is built every time and kept in memory. (A
-  big edition is slow on a headset: Simple English about 5 min, the top 1M about an hour;
-  prebuilt indexes for those are a later step.)
+  Without IndexedDB (site data blocked) the index is kept in memory, for the page's life
+  (`memoryStore`). Before building, the worker asks the site for the index, `indexes/<name>`
+  beside the app (`local/prebuilt.js` `withPrebuilt`: a store whose `readText` fetches an index
+  it lacks, once, and keeps it; only index names, never checkpoints): a site that ships a
+  ZIM's index spares its visitors the build, minutes on a headset for a big Wikipedia (Simple
+  English about 10 min with the page rendering, the top 1M about an hour). `tools/build-pages.mjs
+  --indexes <folder>` builds the indexes of a folder's Wikipedia and Wikisource ZIMs into
+  `indexes/` (the standalone workflow's "demo indexes" does it for the demo set); the big
+  editions' indexes (the top 1M's is 10.7 MB) are for the planned remote-ZIM repo to publish.
 - **Ids:** `~` + `libraryIdFor(file name)` (then `-2`, `-3` … for the same name twice):
   `libraryIdFor` never makes a `~`, so they cannot clash with a server's; `~` is URL-safe.
 - **Requests:** `local/local.js` (page) ↔ `local/local-handler.js` (worker) by `postMessage`:

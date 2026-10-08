@@ -9,6 +9,7 @@ import { after, before, describe, it } from 'node:test';
 import { IDBFactory } from 'fake-indexeddb';
 import { fileStore } from '../server/cache-store.js';
 import { idbStore } from '../public/js/local/idb-store.js';
+import { memoryStore, withPrebuilt } from '../public/js/local/prebuilt.js';
 
 let tmp;
 before(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vrlbry-store-')); });
@@ -59,5 +60,26 @@ describe('derived-index stores', () => {
 
   it('wants IndexedDB', () => {
     assert.throws(() => idbStore('x', { indexedDB: undefined }), /IndexedDB is not available/);
+  });
+
+  it('the memory store (without IndexedDB) behaves the same', async () => {
+    await exercise(memoryStore());
+  });
+
+  it('a store with prebuilt indexes fetches an index it lacks, once, and keeps it', async () => {
+    const fetched = [];
+    const site = { 'wikipedia-0123456789abcdef0123456789abcdef.v4.json': '{"count":1}' };
+    const store = withPrebuilt(memoryStore(), async (name) => {
+      fetched.push(name);
+      return site[name] ?? null;
+    });
+    assert.equal(await store.readText('wikipedia-0123456789abcdef0123456789abcdef.v4.json'), '{"count":1}');
+    assert.equal(await store.readText('wikipedia-0123456789abcdef0123456789abcdef.v4.json'), '{"count":1}', 'from the store now');
+    assert.equal(await store.readText('wikipedia-ffffffffffffffffffffffffffffffff.v4.json'), null, 'the site has none');
+    assert.equal(await store.readText('wikipedia-ffffffffffffffffffffffffffffffff.v4.part.json'), null);
+    assert.deepEqual(fetched, ['wikipedia-0123456789abcdef0123456789abcdef.v4.json', 'wikipedia-ffffffffffffffffffffffffffffffff.v4.json'], 'checkpoints and other names are never fetched; a hit is not fetched again');
+    await store.writeText('own.json', 'x');
+    assert.equal(await store.readText('own.json'), 'x');
+    assert.deepEqual((await store.names()).sort(), ['own.json', 'wikipedia-0123456789abcdef0123456789abcdef.v4.json']);
   });
 });

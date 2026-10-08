@@ -15,18 +15,26 @@ import { provide } from '../core/platform.js';
 import { browserPlatform } from './browser-platform.js';
 import { idbStore } from './idb-store.js';
 import { createLocalLibraries } from './local-handler.js';
+import { memoryStore, withPrebuilt } from './prebuilt.js';
 
 provide(browserPlatform({ zstdDecompress: decompress, unzlibSync, inflateSync, Parser }));
 
 const warn = (msg) => self.postMessage({ log: msg, warn: true });
 // Derived indexes (a Wikipedia's) are kept in IndexedDB, so a file is indexed once; without it
-// (a browser that blocks site data) they are built every time and kept in memory only.
-let store = null;
+// (a browser that blocks site data) they are kept in memory, for the page's life. Before an
+// index is built, the site's indexes/ folder is asked for it (prebuilt.js).
+let kept;
 try {
-  store = idbStore();
+  kept = idbStore();
 } catch (err) {
-  warn(`no IndexedDB (${err.message}): indexes will not be kept`);
+  warn(`no IndexedDB (${err.message}): indexes are kept for this page only`);
+  kept = memoryStore();
 }
+const INDEXES_URL = new URL('../../indexes/', import.meta.url);
+const store = withPrebuilt(kept, async (name) => {
+  const res = await fetch(new URL(name, INDEXES_URL));
+  return res.ok ? res.text() : null;
+});
 // An index build's progress goes to the page at most every INDEXING_MS per library (it comes per
 // cluster: thousands of times); a new stage, a failure and the end go at once.
 const INDEXING_MS = 250;

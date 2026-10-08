@@ -460,7 +460,7 @@ async function start() {
   }
   overlay.setLoading(null);
   if (!libraries.length) {
-    overlay.showToast(catalog.static ? 'This online version has no books yet. Run vrlbry yourself to read your ZIM files.'
+    overlay.showToast(catalog.static ? 'This online version has no books of its own: open your ZIM files here (Open ZIM files…), or run vrlbry yourself.'
       : 'No .zim files found in the server folder.', catalog.static ? 'info' : 'error', 8000);
   }
 }

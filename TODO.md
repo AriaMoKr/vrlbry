@@ -175,8 +175,13 @@
         left", with a bar) fed by the worker, besides the catalogue card and the kiosk's Rooms
         list at the 10 s poll. Wikisource too (a parity test on the fixture, and the Croatian
         Wikizvor, 56 MB, in the browser: 199 works indexed in 2 s, a work of 172 parts
-        assembled in 3.6 s; the English one, 8.6 GB, would be a long build on a headset). Still
-        to do: prebuilt indexes for the big editions.
+        assembled in 3.6 s; the English one, 8.6 GB, would be a long build on a headset).
+        Prebuilt indexes: before building, the worker asks the site for `indexes/<name>`
+        (`local/prebuilt.js`), and `build:pages --indexes <dir>` writes them for a folder of
+        ZIMs (the standalone workflow's "demo indexes", for the demo set: a visitor who
+        downloads one of those from Kiwix skips its build). The big editions' indexes (Simple
+        English, the top 1M: 10.7 MB; a CI runner cannot download a 49 GB ZIM) are for the
+        remote-ZIM repo to publish, with the same `indexes/<name>` layout. *Milestone 2 done.*
       - *To measure:* sizes from each cluster's offset table alone (decompressing only its
         first block), with redirect pages told by size and namespaces by title prefix (which
         is per language); a streaming WASM zstd, or two workers outside VR (the Quest gives a

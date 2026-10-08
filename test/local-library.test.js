@@ -20,6 +20,8 @@ import { defaults, provide } from '../public/js/core/platform.js';
 import { browserPlatform } from '../public/js/local/browser-platform.js';
 import { idbStore } from '../public/js/local/idb-store.js';
 import { createLocalLibraries } from '../public/js/local/local-handler.js';
+import { memoryStore, withPrebuilt } from '../public/js/local/prebuilt.js';
+import { fileStore } from '../server/cache-store.js';
 import { png, writeGenericZim, writeGutenbergZim, writeOldGutenbergZim, writeWikipediaZim, writeWikisourceZim } from './helpers/zim-fixtures.js';
 import { writeZim } from './helpers/zimwriter.js';
 
@@ -220,6 +222,30 @@ describe('local library (ZIM files read in the browser)', () => {
     const books = (await again.call('books', { lib: back.id })).value;
     assert.equal(books[0].title, (await local.call('books', { lib: id })).value[0].title);
     store.close();
+  });
+
+  it('skips the build when the site ships the index (prebuilt.js)', async () => {
+    const file = writeWikipediaZim(path.join(tmp, 'wikipedia_prebuilt.zim')).filePath;
+    // The index as the server (or tools/build-pages.mjs --indexes) builds it, in a folder.
+    provide(nodePlatform);
+    const built = path.join(tmp, 'prebuilt');
+    const lib = await ArchiveLibrary.open(file, { log: () => {}, store: fileStore(built) });
+    await indexed(async () => (await lib.info()).indexing);
+    await lib.close();
+    const [name] = fs.readdirSync(built);
+    assert.match(name, /^wikipedia-[0-9a-f]{32}\.v\d+\.json$/);
+    // The local library asks the site for an index it lacks: no build, the volume at once.
+    const asked = [];
+    const site = withPrebuilt(memoryStore(), async (n) => { asked.push(n); return fs.existsSync(path.join(built, n)) ? fs.readFileSync(path.join(built, n), 'utf8') : null; });
+    const events = [];
+    const local = createLocalLibraries({ store: site, onIndexing: (id, info) => events.push(info) });
+    provide(browser);
+    const opened = (await local.call('open', { file: asFile(file) })).value;
+    assert.deepEqual({ kind: opened.kind, books: opened.books, indexing: opened.indexing }, { kind: 'wikipedia', books: 1, indexing: null });
+    assert.deepEqual(asked, [name]);
+    assert.deepEqual(events, [], 'nothing was built');
+    assert.deepEqual(await site.names(), [name], 'kept in the store');
+    assert.equal((await local.call('books', { lib: opened.id })).value[0].title, '2001: A Space Odyssey – Zebra');
   });
 
   it('answers like the server for a Wikisource ZIM, its works indexed in the worker and kept in the store', async () => {
