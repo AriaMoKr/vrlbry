@@ -741,6 +741,22 @@ export class ZimArchive {
     return i < this._boundaries.length ? this._boundaries[i] : this.fileSize;
   }
 
+  /**
+   * The bytes a cluster occupies in the file (compression byte, offset table and blobs; the
+   * compressed bytes of a compressed cluster), from the cluster pointers alone: no read. null
+   * when it ends at a section start rather than at the next cluster (libzim writes the
+   * directory after the last cluster), as its length is then unknown without reading it. For
+   * estimates (ArchiveLibrary's `estimateSizes`).
+   * @param {number} clusterIndex
+   * @returns {number|null}
+   */
+  clusterBytes(clusterIndex) {
+    if (!Number.isInteger(clusterIndex) || clusterIndex < 0 || clusterIndex >= this.clusterCount) return null;
+    const start = this._clusterOffsets[clusterIndex];
+    const end = this._clusterEnd(start);
+    return this._sectionStarts.has(end) ? null : end - start;
+  }
+
   /** Compression byte + (for uncompressed clusters) the blob count, cached per cluster. */
   async _getClusterInfo(clusterIndex) {
     const cached = this._clusterInfo.get(clusterIndex);

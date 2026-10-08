@@ -86,7 +86,18 @@ async function sameAnswers(file, { limit } = {}) {
   assert.equal(opened.id, `~${id}`);
   const fromFile = asServer(await localAnswers(local, opened.id, limit), id);
   assert.deepEqual(fromFile.info, server.info, 'catalogue entry');
-  assert.deepEqual(fromFile.books, server.books, 'books');
+  // The browser estimates sizes rather than reading them (for the thickness on the shelf, which
+  // grows with the logarithm): within an order of magnitude of what the server reads.
+  const sized = (books) => books.map(({ size, ...b }) => b);
+  assert.deepEqual(sized(fromFile.books), sized(server.books), 'books');
+  // (A small book sharing a cluster with big ones gets their average: the reference ZIM has a few
+  // at 35×, which is still at most half again as thick.)
+  const ratios = server.books.map((b, i) => (b.size ? fromFile.books[i].size / b.size : null)).filter((r) => r !== null);
+  if (ratios.length) {
+    const show = ratios.map((r) => r.toFixed(2)).join(' ');
+    assert.ok(ratios.every((r) => r > 0.01 && r < 100), `every estimate within 100×: ${show}`);
+    assert.ok(ratios.filter((r) => r > 0.1 && r < 10).length >= 0.9 * ratios.length, `9 in 10 within 10×: ${show}`);
+  }
   for (const book of Object.keys(server.byBook)) assert.deepEqual(fromFile.byBook[book], server.byBook[book], `book ${book}`);
   assert.ok(Object.values(server.byBook).some((b) => b.chunks.length), 'some text was compared');
   return { local, id: opened.id, server };

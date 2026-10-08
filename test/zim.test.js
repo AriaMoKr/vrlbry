@@ -856,3 +856,24 @@ describe('ZimArchive: directory block cache', () => {
     }
   });
 });
+
+describe('ZimArchive: clusterBytes (sizes estimated without reads)', () => {
+  it('gives a cluster\'s bytes from the pointers, null for the last one before a section', async () => {
+    const lens = [1000, 2000, 3000, 4000, 5000];
+    const entries = lens.map((n, i) => ({ ns: 'C', url: `b${i}.bin`, mime: 'application/octet-stream', content: bytes(n, i), compression: 'none' }));
+    const info = writeZim(tmpFile('cluster-bytes.zim'), { entries, blobsPerCluster: 3 });
+    const zim = await ZimArchive.open(info.filePath);
+    try {
+      const c = await Promise.all(entries.map((e) => zim.findPath(`C/${e.url}`)));
+      assert.equal(c[0].cluster, c[2].cluster);
+      assert.notEqual(c[0].cluster, c[3].cluster);
+      // Compression byte, (n + 1) offsets of 4 bytes, the blobs.
+      assert.equal(zim.clusterBytes(c[0].cluster), 1 + 4 * 4 + 1000 + 2000 + 3000);
+      assert.equal(zim.clusterBytes(c[3].cluster), null, 'the last cluster runs up to the directory: unknown');
+      assert.equal(zim.clusterBytes(99), null);
+      assert.equal(zim.clusterBytes(-1), null);
+    } finally {
+      await zim.close();
+    }
+  });
+});

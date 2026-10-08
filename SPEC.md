@@ -472,9 +472,14 @@ An empty book yields one chunk with one paragraph block `"(This book has no read
 ### 3.6 `core/library.js` (and `server/library.js`)
 
 `Library` is the server's (`server/library.js`); `ArchiveLibrary` is the core's, whose
-`open(input, { store, … })` takes a path or a `Blob`/`File` (§3.1) and a store (§3; none: the
-browser). The server's `ArchiveLibrary` subclass takes `cacheDir` instead (default
-`<project>/.cache`, as `fileStore`). Chunks keep their JSON as bytes (`Uint8Array`, a Buffer on
+`open(input, { store, … })` takes a path, a `Blob`/`File` (§3.1) or an open `ZimArchive` (taken
+over: the local library opens the file once, for the metadata that decides whether to go on),
+and a store (§3; none: the browser). The server's `ArchiveLibrary` subclass takes `cacheDir`
+instead (default `<project>/.cache`, as `fileStore`). With `estimateSizes` (the local library)
+books' sizes, which only set their thickness on the shelf (logarithmic), are not read but
+estimated from the cluster pointers: a cluster's bytes (`ZimArchive.clusterBytes`) shared
+among the books whose size entry lies in it; on a Quest the reads cost 8 s of a 4.5 GB
+Gutenberg ZIM's open. Chunks keep their JSON as bytes (`Uint8Array`, a Buffer on
 Node), with `gzip()` and `etag` from the platform (the server's).
 
 ```js

@@ -59,25 +59,27 @@ export function createLocalLibraries({ log = () => {}, warn = log } = {}) {
     /** Opens a File (or Blob): { id, title }. Wikipedia and Wikisource need the server for now. */
     async open({ file }, { onProgress } = {}) {
       const t0 = performance.now();
-      const probe = await ZimArchive.open(file).catch((err) => {
+      // Opened once: the library takes the archive over, with the blocks its metadata loaded.
+      const archive = await ZimArchive.open(file, {
+        clusterCacheBytes: CLUSTER_CACHE_BYTES, blockCacheBytes: BLOCK_CACHE_BYTES, wholeClusterBytes: WHOLE_CLUSTER_BYTES,
+      }).catch((err) => {
         throw new LocalError(`${file.name}: not a readable ZIM file (${err.message})`);
       });
-      let meta;
       try {
-        meta = await probe.getMetadata();
-      } finally {
-        await probe.close();
-      }
-      if (isWikipedia(meta) || isWikisource(meta)) {
-        throw new LocalError(`${file.name}: ${isWikipedia(meta) ? 'Wikipedia' : 'Wikisource'} ZIMs need the vrlbry server for now (they are indexed first)`);
+        const meta = await archive.getMetadata();
+        if (isWikipedia(meta) || isWikisource(meta)) {
+          throw new LocalError(`${file.name}: ${isWikipedia(meta) ? 'Wikipedia' : 'Wikisource'} ZIMs need the vrlbry server for now (they are indexed first)`);
+        }
+      } catch (err) {
+        await archive.close().catch(() => {});
+        throw err;
       }
       const base = LOCAL_PREFIX + libraryIdFor(file.name || 'archive.zim');
       let id = base;
       for (let n = 2; libs.has(id); n++) id = `${base}-${n}`;
-      const opened = await ArchiveLibrary.open(file, {
-        id, log, warn, contentCache, onProgress,
-        archiveOptions: { clusterCacheBytes: CLUSTER_CACHE_BYTES, blockCacheBytes: BLOCK_CACHE_BYTES, wholeClusterBytes: WHOLE_CLUSTER_BYTES },
-      });
+      // Sizes estimated, not read: on a Quest they cost a read per cluster of books (8 s of the
+      // 4.5 GB Gutenberg ZIM's open), for a thickness on the shelf.
+      const opened = await ArchiveLibrary.open(archive, { id, log, warn, contentCache, onProgress, estimateSizes: true });
       libs.set(id, opened);
       generation++;
       const info = await opened.info();

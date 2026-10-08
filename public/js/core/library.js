@@ -261,6 +261,7 @@ export class ArchiveLibrary {
     this._inflight = new Map(); // bookId → Promise<content>
     this._inflightProgress = new Map(); // bookId → Set of content()'s onProgress, while converting
     this._catalogProgress = null; // open()'s onProgress, while the catalogue is first built
+    this._estimateSizes = false; // open()'s estimateSizes (_blobSizes)
     this._epubCache = new LRUCache({ maxBytes: EPUB_CACHE_BYTES, sizeOf: (e) => e.bytes });
     this._epubInflight = new Map();
     this._imageInfo = new LRUCache({ maxEntries: 100000 }); // archive path → { ok, w, h }
@@ -300,7 +301,7 @@ export class ArchiveLibrary {
    * @returns {Promise<ArchiveLibrary>}
    */
   static async open(input, {
-    id = libraryIdFor(typeof input === 'string' ? input : input.name ?? 'archive'),
+    id = libraryIdFor(typeof input === 'string' ? input : input.filePath ?? input.name ?? 'archive'),
     maxGenericBooks = 2000,
     log = console.log,
     warn = log,
@@ -312,14 +313,18 @@ export class ArchiveLibrary {
     volumeSize, // articles per Wikipedia volume (tests use small volumes)
     indexQueue,
     onProgress, // (fraction) as the catalogue is built: Gutenberg books looked up, generic entries scanned
+    estimateSizes = false, // books' sizes estimated from the cluster pointers, not read (_blobSizes)
   } = {}) {
-    const archive = await ZimArchive.open(input, { clusterCacheBytes: ARCHIVE_CLUSTER_CACHE_BYTES, ...archiveOptions });
+    // An open ZimArchive is taken over (closed with the library): the local library opens the
+    // file once, for the metadata that decides whether to go on, and keeps its block cache.
+    const archive = input instanceof ZimArchive ? input : await ZimArchive.open(input, { clusterCacheBytes: ARCHIVE_CLUSTER_CACHE_BYTES, ...archiveOptions });
     try {
       const lib = new this({
         id, filePath: archive.filePath, archive, log, warn, maxGenericBooks, store, onChange, volumeSize, indexQueue,
         contentCache: contentCache ?? createContentCache(contentCacheBytes),
       });
       lib._catalogProgress = onProgress ?? null;
+      lib._estimateSizes = estimateSizes;
       try {
         await lib.books(); // catalog now: `kind` is final and errors surface at scan time
       } finally {
@@ -861,6 +866,7 @@ export class ArchiveLibrary {
     }
 
     const recs = new Array(parsed.length);
+    const sizeEntries = new Array(parsed.length).fill(null); // the entry whose blob gives the book's size
     let looked = 0;
     // Lookups are independent binary searches over cached directory entries: run them together.
     await mapLimit(parsed, 16, async (row, i) => {
@@ -881,8 +887,7 @@ export class ArchiveLibrary {
       const epub = want(1) ? await this._firstOf(nsEpub, bases.map((b) => b + '.epub')) : null;
       const pdf = flags?.[2] === '1' ? await this._firstOf(nsEpub, bases.map((b) => b + '.pdf')) : null;
       const cover = await this._firstOf(nsCover, [`covers/${id}_cover_image.jpg`, `covers/${id}_cover.jpg`]);
-      const sizeEntry = epub ?? html;
-      const size = sizeEntry ? await this.archive.getBlobSize(sizeEntry, { cheapOnly: true }).catch(() => null) : null;
+      sizeEntries[i] = epub ?? html;
 
       const book = {
         id,
@@ -898,11 +903,14 @@ export class ArchiveLibrary {
         readable: !!(html || epub),
         cover: cover ? zimUrl(this.id, cover.path) : null,
         epub: epub ? zimUrl(this.id, epub.path) : null,
-        size,
+        size: null, // _blobSizes, below
       };
       recs[i] = { book, html, epub, kind: 'gutenberg' };
       this._catalogProgress?.(++looked / parsed.length);
     });
+    // Sizes (for the thickness on the shelf) in a pass of their own: read, or estimated.
+    const sizes = await this._blobSizes(sizeEntries);
+    for (let i = 0; i < recs.length; i++) recs[i].book.size = sizes[i];
     // Registered in rank order so iteration over the id map is deterministic.
     for (const rec of recs) this._byId.set(rec.book.id, rec);
     const unreadable = recs.filter((r) => !r.book.readable).length;
@@ -951,6 +959,7 @@ export class ArchiveLibrary {
     const author = [m.Creator, m.Publisher].find((v) => typeof v === 'string' && v.trim())?.trim() ?? null;
     const language = typeof m.Language === 'string' && m.Language.trim() ? m.Language.split(',')[0].trim() : null;
     const books = [];
+    const entries = []; // each book's HTML entry, for its size
     let more = false;
     for (const ns of ['A', 'C']) {
       const start = await this.archive.lowerBound(ns, '');
@@ -977,9 +986,10 @@ export class ArchiveLibrary {
           readable: true,
           cover: null,
           epub: null,
-          size: await this.archive.getBlobSize(entry, { cheapOnly: true }).catch(() => null),
+          size: null,
         };
         books.push(book);
+        entries.push(entry);
         this._byId.set(id, { book, html: entry, epub: null, kind: 'generic' });
       }
       if (more) break;
@@ -987,8 +997,41 @@ export class ArchiveLibrary {
     if (more) {
       this._log(`${this.file}: more than ${max} HTML articles; only the first ${max} (in URL order) are listed (--max-generic)`);
     }
+    const sizes = await this._blobSizes(entries);
+    for (let i = 0; i < books.length; i++) books[i].size = sizes[i];
     this._shelves = [];
     return books;
+  }
+
+  /**
+   * The byte size of each entry's blob, null for none or unknown: read from the file (two
+   * offsets for a blob of an uncompressed cluster; null for a compressed one unless the cluster
+   * is cached: `getBlobSize` with cheapOnly), or with `estimateSizes` (the local library)
+   * estimated with no reads at all, as the entry's cluster's bytes (`clusterBytes`, compressed
+   * ones for a compressed cluster) shared equally among the entries here that lie in it. On a
+   * Quest a File read costs ~11 ms even many at once, and sizing the 729 books of a 4.5 GB
+   * Gutenberg ZIM made 700 reads, 8 s of its open, for a thickness on the shelf that grows with
+   * the logarithm of the size.
+   * @param {Array<import('./zim/reader.js').Entry|null>} entries
+   * @returns {Promise<Array<number|null>>}
+   */
+  async _blobSizes(entries) {
+    const sizes = new Array(entries.length).fill(null);
+    if (!this._estimateSizes) {
+      await mapLimit(entries, 16, async (entry, i) => {
+        if (entry) sizes[i] = await this.archive.getBlobSize(entry, { cheapOnly: true }).catch(() => null);
+      });
+      return sizes;
+    }
+    const perCluster = new Map();
+    for (const e of entries) if (e?.cluster != null) perCluster.set(e.cluster, (perCluster.get(e.cluster) ?? 0) + 1);
+    for (let i = 0; i < entries.length; i++) {
+      const e = entries[i];
+      if (e?.cluster == null) continue;
+      const bytes = this.archive.clusterBytes(e.cluster);
+      if (bytes !== null) sizes[i] = Math.max(1, Math.round(bytes / perCluster.get(e.cluster)));
+    }
+    return sizes;
   }
 
   async _findIllustration() {
