@@ -20,7 +20,7 @@ import { defaults, provide } from '../public/js/core/platform.js';
 import { browserPlatform } from '../public/js/local/browser-platform.js';
 import { idbStore } from '../public/js/local/idb-store.js';
 import { createLocalLibraries } from '../public/js/local/local-handler.js';
-import { png, writeGenericZim, writeGutenbergZim, writeOldGutenbergZim, writeWikipediaZim } from './helpers/zim-fixtures.js';
+import { png, writeGenericZim, writeGutenbergZim, writeOldGutenbergZim, writeWikipediaZim, writeWikisourceZim } from './helpers/zim-fixtures.js';
 import { writeZim } from './helpers/zimwriter.js';
 
 const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -219,6 +219,25 @@ describe('local library (ZIM files read in the browser)', () => {
     assert.equal(back.books, 1, 'one volume');
     const books = (await again.call('books', { lib: back.id })).value;
     assert.equal(books[0].title, (await local.call('books', { lib: id })).value[0].title);
+    store.close();
+  });
+
+  it('answers like the server for a Wikisource ZIM, its works indexed in the worker and kept in the store', async () => {
+    const file = writeWikisourceZim(path.join(tmp, 'wikisource_test.zim')).filePath;
+    const factory = new IDBFactory();
+    const store = idbStore('local', { indexedDB: factory });
+    const { local, id, server } = await sameAnswers(file, { store });
+    assert.equal(server.info.kind, 'wikisource');
+    assert.deepEqual(server.books.map((b) => b.title), ['Songs of Dusk', 'The Grey House']);
+    assert.ok(Object.values(server.byBook).every((b) => b.chunks.length), 'every work read');
+    assert.ok((await store.names()).some((n) => /^wikisource-[0-9a-f]{32}\.v\d+\.json$/.test(n)), 'the works index is in the store');
+    // Opened again: from the store, at once.
+    const again = createLocalLibraries({ store });
+    provide(browser);
+    const back = (await again.call('open', { file: asFile(file) })).value;
+    assert.equal(back.indexing, null);
+    assert.equal(back.books, 2);
+    assert.equal((await local.call('catalog')).value.libraries.find((l) => l.id === id).kind, 'wikisource');
     store.close();
   });
 

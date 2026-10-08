@@ -173,8 +173,10 @@
         Article search for local Wikipedias goes to the worker (the same search as the
         server's). The build's progress is a toast ("Indexing <title>… · 12 s · about 4 min
         left", with a bar) fed by the worker, besides the catalogue card and the kiosk's Rooms
-        list at the 10 s poll. Still to do: Wikisource not yet tried in the browser (the same
-        code path); prebuilt indexes for the big editions.
+        list at the 10 s poll. Wikisource too (a parity test on the fixture, and the Croatian
+        Wikizvor, 56 MB, in the browser: 199 works indexed in 2 s, a work of 172 parts
+        assembled in 3.6 s; the English one, 8.6 GB, would be a long build on a headset). Still
+        to do: prebuilt indexes for the big editions.
       - *To measure:* sizes from each cluster's offset table alone (decompressing only its
         first block), with redirect pages told by size and namespaces by title prefix (which
         is per language); a streaming WASM zstd, or two workers outside VR (the Quest gives a
