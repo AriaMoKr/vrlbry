@@ -105,6 +105,8 @@ export function catalog() {
 }
 
 export const books = (lib) => call('books', { lib });
+/** A local Wikipedia's articles whose titles (or other names) start with q: { title, book, n }. */
+export const articles = (lib, q, limit) => call('articles', { lib, q, limit });
 /** A book's reading metadata; `onProgress(fraction)` while the worker converts it. */
 export const meta = (lib, book, { onProgress } = {}) => call('meta', { lib, book }, { onProgress });
 /** A chunk's JSON, as bytes. */

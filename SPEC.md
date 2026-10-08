@@ -202,15 +202,17 @@ whole. It works on GitHub Pages (no server) and beside a server's own libraries.
 - **Ids:** `~` + `libraryIdFor(file name)` (then `-2`, `-3` … for the same name twice):
   `libraryIdFor` never makes a `~`, so they cannot clash with a server's; `~` is URL-safe.
 - **Requests:** `local/local.js` (page) ↔ `local/local-handler.js` (worker) by `postMessage`:
-  `open`, `catalog`, `books`, `meta`, `chunk` (the chunk's JSON bytes, transferred), `image`
-  (bytes and MIME type of a URL), `close`. Before its answer an `open` or a `meta` may send
+  `open`, `catalog`, `books`, `articles` (a Wikipedia's article search, §2.5, as the server's
+  route), `meta`, `chunk` (the chunk's JSON bytes, transferred), `image` (bytes and MIME type
+  of a URL), `close`. Before its answer an `open` or a `meta` may send
   `{ id, progress }` (a fraction, at most 10 a second), for the page's progress bars; and the
   worker sends `{ changed }` of its own when a library's index finished (`local.onChange`: the
   page refreshes its catalogue at once rather than at the next 10 s poll). `api.js`
   sends the requests of `~` libraries there;
   `getCatalog()` (and a rescan's answer) lists the local libraries after the server's, with
-  generation `"<server>+<local>"` so the poll notices either changing. Local libraries have no
-  article search (no Wikipedia).
+  generation `"<server>+<local>"` so the poll notices either changing. A local Wikipedia's
+  article search (`api.searchArticles`) goes to the worker's `articles`, so the search box and
+  the kiosk's Search tab list its articles like a server's.
 - **Images:** their URLs are the core's (`/zim/~id/…`, `/api/libraries/~id/books/<id>/res/…`),
   never fetched: `api.imageSource(url)` turns a local one into a blob URL, released once the
   image has loaded (the decoded image stays). The reader's page images, covers and the volume

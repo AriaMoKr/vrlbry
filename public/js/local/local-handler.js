@@ -101,6 +101,11 @@ export function createLocalLibraries({ log = () => {}, warn = log, store = null,
       return { value: await lib(id).books() };
     },
 
+    /** A Wikipedia's articles by title prefix, and by other names (redirects): as the server's route. */
+    async articles({ lib: id, q, limit }) {
+      return { value: await lib(id).searchArticles(q, limit) };
+    },
+
     async meta({ lib: id, book }, { onProgress } = {}) {
       const l = lib(id);
       if (!(await l.book(book))) throw new LocalError(`unknown book: ${book}`);

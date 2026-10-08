@@ -98,7 +98,7 @@ export async function getBooks(libId) {
 
 /** Wikipedia articles whose titles start with `q` (SPEC §2.5): [{ title, book, n, from? }]. */
 export async function searchArticles(libId, q, limit = 8) {
-  if (local.isLocal(libId)) return []; // a local Wikipedia is not supported yet
+  if (local.isLocal(libId)) return local.articles(libId, q, limit); // the worker searches its index
   if (staticSite) return searchTitles(libId, q, limit);
   return (await getJSON(api(`api/libraries/${enc(libId)}/articles?q=${enc(q)}&limit=${limit}`))).articles;
 }
