@@ -167,8 +167,24 @@
         first block), with redirect pages told by size and namespaces by title prefix (which
         is per language); a streaming WASM zstd, or two workers outside VR (the Quest gives a
         page 3 cores): perhaps 2× each.
-      - *To check:* a file over 4 GB opened on a Quest (Chromium's `File` sizes are 64-bit, but
-        it was never tried there): Gutenberg LCC-A, 9.7 GB, opens fully today.
+      - *A file over 4 GB on a Quest (checked 2026-10-07):* Gutenberg LCC-S, Agriculture
+        (4.53 GB, 729 books; its directory and book index lie in the last 0.5 % of the file, past
+        4 GiB) opened from Downloads on the Pages site, and two books read, The Book of the Cat
+        (362 pictures, its text at 4.34 GB) among them: `File` reads past 4 GiB work. But it was
+        slow, and nothing said so: opening the file took about a minute, the cat book half a
+        minute of looking frozen (hence the "Opening…" panel with Put back, then the progress
+        bars with the time so far and left). Counted on the PC: the file made 4,656 reads
+        (3,244 of them directory lookups, binary searches reading one dirent per step, 1,416
+        for the books' sizes), the book 2,084 (1,266 directory, 818 for its pictures: 2–3 each
+        plus the whole image to learn its size), and on the Quest every `File` read costs about
+        the same however small, ~15–25 ms. The directory block cache (`ZimArchive._readDir`,
+        64 KB blocks, 16 MB per local file) cut the file to 1,437 reads and the book to 824:
+        measured on the Quest (dev server, `?perf`), the file opens in 34.7 s (from ~70) and the
+        book in 13.3 s (from ~30). What is left are the cluster reads: 2 tiny ones per book
+        for its size at open, 2–3 per picture when a book opens. *To measure next*, on a `File`
+        on the Quest: whether reads at once overlap or queue, and what a 64 KB read costs
+        against an 8-byte one; then batch, parallelise or defer them (book sizes after the room
+        shows; picture sizes per chunk).
     - *Milestone 3: remote ZIMs* from Kiwix's mirror over HTTP range reads (a byte source like
       `BlobSource`), from a curated list.
     - *Keep files across reloads:* the File System Access API (desktop Chrome/Edge) can store a
