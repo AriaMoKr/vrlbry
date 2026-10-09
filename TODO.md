@@ -175,7 +175,12 @@
         left", with a bar) fed by the worker, besides the catalogue card and the kiosk's Rooms
         list at the 10 s poll. Wikisource too (a parity test on the fixture, and the Croatian
         Wikizvor, 56 MB, in the browser: 199 works indexed in 2 s, a work of 172 parts
-        assembled in 3.6 s; the English one, 8.6 GB, would be a long build on a headset).
+        assembled in 3.6 s; the English one, 8.6 GB, would be a long build on a headset; on
+        the Quest the Icelandic one, 28 MB, indexed in 4 s: 29 works). *To do:* authors come
+        from `Author:` pages (`core/wikisource.js`), the English namespace prefix; other
+        editions localise it (Icelandic "Höfundur:", Croatian "Autor:"), so their works have
+        no authors ("authors matched for 0/29 works"), on the server too. Take the prefix from
+        the ZIM's language (a small table), or match any namespace whose pages link to works.
         Prebuilt indexes: before building, the worker asks the site for `indexes/<name>`
         (`local/prebuilt.js`), and `build:pages --indexes <dir>` writes them for a folder of
         ZIMs (the standalone workflow's "demo indexes", for the demo set: a visitor who
