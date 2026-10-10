@@ -408,7 +408,13 @@
            and measure it on a Quest. *Later:* keeping popular reads at the edge (the Cache
            API, which needs a custom domain, not workers.dev; a 206 would be kept as a 200
            under a key of its own); asking the mirrors' operators for CORS (a few lines of
-           nginx), which would make the proxy unnecessary for the US ones; Cloudflare's free
+           nginx or Apache: README, "Why only Kiwix's own mirror"), which would make the proxy
+           unnecessary. Kiwix's redirects already send CORS headers (`download.kiwix.org` →
+           `lb.download.kiwix.org`, whose MirrorBrain sends California to
+           `wi.mirror.driftle.ss`; preflights answered 204), so once the mirrors do too, the
+           page could follow the redirect once per file (`response.url`) and read the mirror
+           Kiwix picks; today the five nginx mirrors answer a preflight 405 and the Apache one
+           200 without the headers (checked 2026-10-10). Cloudflare's free
            plan allows 100,000 requests a day (an article costs 20-40 reads, an index build
            over the web thousands).
         8. Quest checks and docs (SPEC §2.6 remote sources, README).
