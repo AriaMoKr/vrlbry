@@ -353,11 +353,25 @@
            (`indexes/list.json`, now written by `--indexes`) are listed last and cannot be
            opened: 47 of the 65 English ones, which is what step 6 is for. On a Quest the list
            fills in about a second. Addresses and files still open without the catalogue.
-        6. Prebuilt indexes for the curated Wikipedias and Wikisources (optional), under
-           `indexes/` on this site: building one in the browser over the network means
-           downloading all its HTML (12.7 GB for the top 1M). Built here or in CI, ~10 MB each
-           (1 GB site limit), rebuilt for new editions. Without one, the index is built in the
-           browser as today.
+        6. *Done (2026-10-10), publishing left to do:* prebuilt indexes (optional, SPEC §2.6
+           "Prebuilt indexes"): `tools/indexes.txt` lists the 49 English Wikipedias and
+           Wikisources over 256 MB; `tools/build-indexes.mjs` builds the missing ones for their
+           current editions (Kiwix's catalogue) from local copies (`--zims`) or from the mirror
+           (`--web`), resumable, with `--hours`, `--prune` and `--publish`; the cloud workflow
+           ships what the Actions cache and the release "indexes" hold, and builds missing ones
+           from the mirror only when "prebuilt indexes" is ticked. Tried first: building an
+           index from the ZIM's own list of articles (`X/listing/titleOrdered/v1`) without
+           reading HTML. It holds every article, but also every ZIM redirect and mwoffliner's
+           section-redirect pages (5.9 M entries for the top 1M's 1 M articles), and telling
+           those pages apart needs their HTML. Built here from local copies (`.indexes/`):
+           Wikipedia 100, Simple English, the top 1M, Wikisource, and the full English
+           Wikipedia (maxi). *To publish them:* `gh release create indexes .indexes/*.json`
+           (then `gh release upload indexes .indexes/*.json --clobber` for new ones), and run the
+           workflow; or tick "prebuilt indexes" to build the rest from the mirror (about 60 GB
+           of its bandwidth once without the three full English Wikipedias; over the web from
+           here Cricket, 379 MB, read 0.20 GB in 232 s). Later: a more compact index (the full
+           English one is about 75 MB, 38 MB compressed: deltas of the order and a byte per
+           size would shrink it several times), and other languages.
         7. Speed, if step 2 says so (optional): an edge proxy (e.g. a Cloudflare Worker) adding
            CORS and reading from the nearest mirror (a US one from here), or asking mirror
            operators to add CORS. Used only when configured; the direct URL otherwise.

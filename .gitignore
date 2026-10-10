@@ -15,3 +15,6 @@ dist/
 
 # Performance dumps from tools/quest-perf.mjs
 perf/
+
+# Prebuilt indexes built by tools/build-indexes.mjs (published by the Pages workflow)
+.indexes/

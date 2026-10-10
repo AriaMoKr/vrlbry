@@ -426,8 +426,8 @@ export async function buildIndexes(dir, out, { log = console.log } = {}) {
     // The list of what is there (with any index written before): Kiwix's library in the page
     // (local/kiwix.js) offers a big Wikipedia only when its index is here.
     if (indexes.length) {
-      const all = fs.readdirSync(path.join(out, 'indexes')).filter((n) => n !== 'list.json').sort();
-      fs.writeFileSync(path.join(out, 'indexes', 'list.json'), `${JSON.stringify({ indexes: all }, null, 1)}\n`);
+      const { writeIndexList } = await import('./build-indexes.mjs');
+      writeIndexList(path.join(out, 'indexes'));
     }
     return { libraries: library.list().length, indexes };
   } finally {

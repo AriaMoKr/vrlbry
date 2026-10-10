@@ -199,7 +199,10 @@ Kiwix's download links work: they are turned into the same file on Kiwix's own m
 not). Only what is shown is fetched, a few kilobytes at a time: opening a Gutenberg ZIM takes a
 few seconds, the 49 GB top-million Wikipedia about six. Web addresses reopen by themselves when
 the page loads; a library's × closes it. A Wikipedia or Wikisource from the web needs a
-prebuilt index unless it is small (building one reads most of the file).
+prebuilt index unless it is small (building one reads most of the file). The site publishes
+those of `tools/indexes.txt` under `indexes/`: `node tools/build-indexes.mjs --zims <folder>`
+builds them from local copies of the ZIMs into `.indexes/` (or `--web`, from Kiwix's mirror), and
+the Pages workflow ships them (see `.github/workflows/pages-cloud.yml`).
 
 ## Measuring performance on a Quest
 

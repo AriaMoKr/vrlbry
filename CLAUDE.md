@@ -20,6 +20,7 @@ npm test                         # = node --test "test/*.test.js" (a bare direct
 npm run build:pages              # static site for GitHub Pages into dist/ (tools/build-pages.mjs)
 npm run build:pages -- --zims <dir>   # … with the ZIMs in <dir> pre-rendered as static files
 npm run build:pages -- --indexes <dir>  # … with the indexes of <dir>'s Wikipedia/Wikisource ZIMs under indexes/ (for visitors who open those files)
+node tools/build-indexes.mjs --zims <dir>   # prebuilt indexes of tools/indexes.txt's current editions into .indexes/ (from local copies; --web: from Kiwix's mirror)
 node --test test/zim.test.js     # one test file
 node --test --test-name-pattern="redirect" test/zim.test.js   # tests matching a name
 ```

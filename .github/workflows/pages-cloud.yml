@@ -7,6 +7,17 @@
 # build), or with "demo set" ticked to pre-render the ZIMs of tools/demo-set.txt, like the main
 # site (~605 MB, ~10 min).
 #
+# Prebuilt indexes (milestone 3 step 6, tools/build-indexes.mjs, tools/indexes.txt): the big
+# Wikipedias and Wikisources a visitor opens from the web (Kiwix's library) need one, as building
+# it in the browser would read most of the file. Every run ships what it has under indexes/ (with
+# indexes/list.json): those kept in the Actions cache by earlier runs, and those published as
+# assets of the release "indexes" (built on a PC from local copies of the ZIMs:
+# node tools/build-indexes.mjs --zims <folder>, then gh release upload indexes .indexes/*.json
+# --clobber). With "prebuilt indexes" ticked, the missing ones are built here, read from Kiwix's
+# mirror (hours, and tens of GB of the mirror's bandwidth for the biggest: hence by hand only);
+# one not finished in time keeps its progress for the next run. None of this is needed: without
+# an index the site still opens every ZIM, a big Wikipedia from the web just stays unindexed.
+#
 # One-time setup in the repository: Settings → Pages → Build and deployment → Source: GitHub
 # Actions. (The main site, https://ariamokr.github.io/vrlbry/, deploys from main of
 # AriaMoKr/vrlbry with pages.yml, and https://ariamokr.github.io/vrlbry-standalone/ from
@@ -26,6 +37,10 @@ on:
         description: Also pre-render the demo set (tools/demo-set.txt, ~10 min, ~605 MB site)
         type: boolean
         default: false
+      prebuilt_indexes:
+        description: Also build the missing prebuilt indexes (tools/indexes.txt) from Kiwix's mirror (up to 5 hours)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -40,6 +55,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 345
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -66,6 +82,44 @@ jobs:
           ls -l .demo
       - name: Build the site
         run: npm run build:pages -- ${{ inputs.demo_set && '--zims .demo' || '' }} ${{ inputs.demo_indexes && '--indexes .demo' || '' }}
+      # Prebuilt indexes: the cache of earlier runs, the release's assets, and (by hand) new builds.
+      - uses: actions/cache/restore@v4
+        with:
+          path: .indexes
+          key: indexes-${{ github.run_id }}
+          restore-keys: indexes-
+      - name: Prebuilt indexes published as release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p .indexes
+          gh release download indexes --repo "$GITHUB_REPOSITORY" --dir .indexes --pattern '*.v*.json' --skip-existing \
+            || echo "No release \"indexes\" (or nothing new in it)."
+      # Optional: a build that fails (or Kiwix's catalogue out of reach) does not stop the deploy.
+      - name: Build the missing prebuilt indexes from Kiwix's mirror
+        if: inputs.prebuilt_indexes
+        continue-on-error: true
+        run: node tools/build-indexes.mjs --out .indexes --web --hours 5
+      - name: Drop the indexes of editions no longer current
+        continue-on-error: true
+        run: node tools/build-indexes.mjs --out .indexes --prune
+      - if: inputs.prebuilt_indexes && !cancelled()
+        uses: actions/cache/save@v4
+        with:
+          path: .indexes
+          key: indexes-${{ github.run_id }}
+      - name: Ship the prebuilt indexes
+        run: |
+          shopt -s nullglob
+          files=(.indexes/wikipedia-*.json .indexes/wikisource-*.json)
+          if [ ${#files[@]} -gt 0 ]; then
+            mkdir -p dist/indexes
+            cp "${files[@]}" dist/indexes/
+            node -e "import('./tools/build-indexes.mjs').then((m) => console.log(m.writeIndexList('dist/indexes').length, 'indexes'))"
+            du -sh dist/indexes
+          else
+            echo "No prebuilt indexes."
+          fi
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

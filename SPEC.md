@@ -226,8 +226,31 @@ whole. It works on GitHub Pages (no server) and beside a server's own libraries.
   --indexes <folder>` builds the indexes of a folder's Wikipedia and Wikisource ZIMs into
   `indexes/` (the standalone workflow's "demo indexes" does it for the demo set), and their
   names in `indexes/list.json` (`{ "indexes": [names] }`, with any written before), by which
-  Kiwix's library (below) knows which big Wikipedias open here; the big editions' indexes (the
-  top 1M's is 10.7 MB) are this repo's to publish (TODO, milestone 3 step 6).
+  Kiwix's library (below) knows which big Wikipedias open here.
+- **Prebuilt indexes** (milestone 3 step 6, optional; `tools/build-indexes.mjs`): the big
+  editions' indexes, for those opened from the web. `tools/indexes.txt` lists the ZIMs by file
+  name without the date (`wikipedia_en_top1m_maxi`): the English Wikipedias and Wikisources over
+  256 MB, 49 in October 2026. The tool finds each one's current edition in Kiwix's catalogue
+  (`currentEditions`, through `parseEntries`), keeps an index already in `--out` (named by the
+  edition's UUID, so a new edition gets a new one), and builds a missing one as the server
+  does, from a copy in `--zims` (the same file name) or, with `--web`, read from Kiwix's mirror
+  (64 KB blocks, compressed clusters in one read, 8 requests at once). A build works in
+  `<out>/.work`, its store, so a Wikipedia stopped at `--hours` resumes its sizes pass from the
+  checkpoint next time; `--hours` is a hard stop (no build starts after it, and one running
+  stops, as "missing", not "failed"). `--prune` deletes the indexes of editions no longer
+  current (not with `--only`); `--publish <dir>` copies them into a site's `indexes/`; both
+  folders get `list.json` (`writeIndexList`, which `build-pages.mjs --indexes` uses too). The
+  cloud site's workflow (`pages-cloud.yml`) ships on every run what it has: the indexes kept in
+  the Actions cache by earlier runs and the assets of the release "indexes" (built on a PC from
+  local copies, then `gh release upload indexes .indexes/*.json --clobber`), less old editions;
+  with "prebuilt indexes" ticked it first builds the missing ones from the mirror (up to 5 h,
+  then the cache is saved). Measured: from local copies, Wikipedia 100 in 2 s, Simple English
+  (3.1 GB) 28 s and a 2.9 MB index, Wikisource (8.6 GB) 119 s and 3.4 MB, the top 1M 396 s and
+  10.7 MB (5.6 MB compressed); over the web from here, Cricket (379 MB) read 0.20 GB in 232 s.
+  The list without the three full English Wikipedias reads about 60 GB of the mirror once, then
+  only new editions; those three about 110 GB more (each index about 75 MB), so they are best
+  built from local copies. None of it is needed: without an index a big Wikipedia from the web
+  is listed as needing one, and every ZIM still opens from a file.
 - **From the web** (milestone 3): a ZIM's web address, typed or pasted into the card's field
   under the Open button, a link dropped on the page (`text/uri-list`), the example's "read it
   online" button, or `__vrlbry.openUrl(url)`. `local/zim-url.js` `zimUrl` makes the address one
