@@ -94,6 +94,7 @@ export class Overlay {
         <header><span class="ov-brand">vrlbry</span><span class="ov-version"></span><span class="ov-tools"><button class="ov-rescan" aria-label="Rescan the ZIM folder" title="Rescan the ZIM folder">⟳</button><button class="ov-collapse" aria-label="Collapse" title="Collapse">–</button></span></header>
         <div class="ov-libs"></div>
         <div class="ov-open">
+          <button class="ov-kiwix-btn" hidden title="The ZIMs this library reads well, from library.kiwix.org">Browse Kiwix's library…</button>
           <button class="ov-open-btn" title="Read ZIM files from this device, in the browser">Open ZIM files…</button>
           <input class="ov-open-input" type="file" accept=".zim" multiple hidden>
           <form class="ov-url" autocomplete="off">
@@ -101,7 +102,6 @@ export class Overlay {
               placeholder="or the web address of a ZIM file" aria-label="Web address of a ZIM file">
             <button type="submit" title="Read it from the web, a little at a time">Open</button>
           </form>
-          <button class="ov-kiwix-btn" hidden title="The ZIMs this library reads well, from library.kiwix.org">Browse Kiwix's library…</button>
           <div class="ov-reopen" hidden>Last time: <span class="ov-reopen-names"></span>
             <button class="ov-reopen-btn">Reopen</button><button class="ov-reopen-forget" title="Forget these files">Forget</button></div>
           <div class="ov-open-hint">No ZIM file yet? Read

@@ -256,7 +256,16 @@ export function currentPlace(libraries, booksByLib, settings) {
   const group = GROUPS.find((g) => g.place.id === settings.place);
   if (group?.exists(libraries)) return group.place;
   let lib = libraries.find((l) => l.id === settings.place);
-  if (!lib) lib = libraries.find((l) => (booksByLib[l.id] || []).length) || libraries[0] || null;
+  // A place that is not here (a library gone, or one not open yet, or saved by another of the
+  // sites sharing this origin): the demo set when there is one, else the first library with books.
+  if (!lib) {
+    const demo = GROUPS.find((g) => g.place === DEMO_PLACE);
+    if (demo.exists(libraries)) {
+      settings.place = DEMO_PLACE.id;
+      return DEMO_PLACE;
+    }
+    lib = libraries.find((l) => (booksByLib[l.id] || []).length) || libraries[0] || null;
+  }
   settings.place = lib?.id ?? null;
   return lib;
 }

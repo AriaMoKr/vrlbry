@@ -172,8 +172,10 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .ov-lib-close:hover { border-color: var(--line); color: var(--text); }
 
 /* Kiwix's library (ui/kiwix-dialog.js, milestone 3 step 5) */
-.ov-kiwix-btn { margin-top: 8px; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--accent); }
+.ov-kiwix-btn { padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--accent); }
 .ov-kiwix-btn:hover { border-color: var(--accent); }
+/* Kiwix's library first (what a new visitor most likely wants), then the device's files. */
+.ov-kiwix-btn:not([hidden]) + .ov-open-btn { margin-top: 8px; }
 .ov-kiwix { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 6; }
 .ov-kiwix[hidden] { display: none; }
 .ov-kiwix-inner { background: var(--panel-solid); border: 1px solid var(--line); border-radius: var(--radius); max-width: 680px; width: 100%; height: min(85vh, 760px); display: flex; flex-direction: column; padding: 14px 20px 16px; }

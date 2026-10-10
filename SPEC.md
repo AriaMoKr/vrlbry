@@ -191,7 +191,8 @@ whole. It works on GitHub Pages (no server) and beside a server's own libraries.
   test checks) and Kiwix's Gutenberg folder. In a headset, files are picked before entering VR;
   in VR the kiosk's footer says so ("Your own ZIM files: exit VR, then …"). Opened files last
   until the page is reloaded; a saved place naming a local library that is gone falls back as
-  for a removed ZIM. Where the browser gives file handles (the File System Access API: desktop
+  for a removed ZIM: to the Demo set when there is one, else the first library with books
+  (`currentPlace`). Where the browser gives file handles (the File System Access API: desktop
   Chrome and Edge, Quest Browser; `local/handles.js`), the Open button picks through
   `showOpenFilePicker` and a drop asks `getAsFileSystemHandle`, the handles of the files that
   opened are kept in IndexedDB (`vrlbry-files`, by file name), and the card then offers "Last
@@ -275,7 +276,9 @@ whole. It works on GitHub Pages (no server) and beside a server's own libraries.
   that opened are kept in localStorage (`zimUrls`: `[{ url, name }]`) and reopen as the page
   starts, in the background (no permission is needed, unlike files); the place saved last time
   comes back once its library is open, unless the person has gone elsewhere meanwhile (the
-  first build fell back from it). One that does not reopen stays remembered (the network may be
+  first build fell back from it). Not for the site's own ZIM files: the three sites share their
+  origin's settings, and a place saved on another (the same ZIM opened there has the same id)
+  made the main site's first visit show Golf alone instead of its Demo set. One that does not reopen stays remembered (the network may be
   down): "Not reopened: …", and the card's "Last time" line offers it with the kept files
   (Reopen, Forget). Nothing else is required: no proxy, no block store, no prebuilt index for a
   Gutenberg ZIM or a small Wikipedia.
@@ -1462,8 +1465,9 @@ States: `browse` → `inspect` → `opening` → `read` (and back), plus `busy` 
   `settings.updateNotices = false` (no banner, no VR notice; the kiosk's note stays), and the help
   dialog's "Tell me when this site has been updated" checkbox turns it back on.
 - DOM overlay (non-VR): see `ui/overlay.js` — title with the same "Updated …" stamp, library
-  cards (with indexing progress or "waiting to index"), a ⟳ rescan button, "Open ZIM files…"
-  under the cards and a drop target over the page (local library, §2.6), search box (filters by title / author across *all* books of all libraries;
+  cards (with indexing progress or "waiting to index"), a ⟳ rescan button, under the cards
+  "Browse Kiwix's library…" first (what a new visitor most likely wants), then "Open ZIM files…"
+  and the web-address field, and a drop target over the page (local library, §2.6), search box (filters by title / author across *all* books of all libraries;
   picking a result = switch room if needed, teleport to it and select it; for Wikipedia
   libraries it also asks the server for articles by title, 150 ms after typing stops, listed
   after up to 6 books; picking an article takes its volume off the shelf and opens it at that

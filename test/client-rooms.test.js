@@ -135,6 +135,20 @@ describe('rooms', () => {
     assert.deepEqual(collectionsFor([], {}, { sort: 'title' }), []);
   });
 
+  it('falls back to the Demo set, when there is one, from a place that is not here', () => {
+    // The main site's first visit with Golf saved as the place (by another site sharing the
+    // origin, where the same ZIM has the same id): Golf is not open yet, so the Demo set.
+    const demoP = { id: 'gutenberg_en_lcc-p_2026-03', kind: 'gutenberg', title: 'P' };
+    const demoW = { id: 'wikipedia_en_100_2026-08', kind: 'wikipedia', title: 'W', articles: 100 };
+    const books = { [demoP.id]: pgBooks, [demoW.id]: [{ id: 'v1', title: 'A', volume: 1 }] };
+    const settings = { place: '~wikipedia_en_golf_maxi_2026-07', sort: 'title' };
+    assert.equal(currentPlace([demoP, demoW], books, settings), DEMO_PLACE);
+    assert.equal(settings.place, DEMO_PLACE.id);
+    // Without a demo set: the first library with books, as before.
+    const other = { place: 'gone', sort: 'title' };
+    assert.equal(currentPlace([pg, ws], { pg: pgBooks, ws: [] }, other).id, 'pg');
+  });
+
   it('can shelve every library whole in one hall', () => {
     const wp = { id: 'wp', kind: 'wikipedia', title: 'Wikipedia', articles: 2500 };
     const volumes = [1, 2, 3].map((v) => ({ id: `v${v}`, title: `Range ${4 - v}`, volume: v }));

@@ -369,7 +369,10 @@ async function start() {
       // catalogue's rebuild goes to that room. Reopened as the page starts, the place saved last
       // time comes back instead (unless the person has gone elsewhere meanwhile).
       if (interaction.state === 'browse') {
-        const back = reopening && savedPlace !== startPlace && settings.place === startPlace
+        // Not for the site's own files: the place saved may come from another of the sites that
+        // share this origin (the same ZIM opened there has the same id), and a first visit of the
+        // main site then showed Golf alone instead of its Demo set.
+        const back = reopening && !site && savedPlace !== startPlace && settings.place === startPlace
           && (savedPlace === LOCAL_PLACE.id ? added.length > 1 : added.some((r) => r.id === savedPlace));
         if (back) settings.place = savedPlace;
         else if (!reopening) settings.place = added.length > 1 ? LOCAL_PLACE.id : added[0].id;
