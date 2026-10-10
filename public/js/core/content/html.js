@@ -84,6 +84,10 @@ const RE_INFOBOX = /(?:^|\s)infobox(?:\s|$)/;
 const OBJ = '￼'; // the text of an image run
 const FACTS_TITLE = 'Quick facts';
 const FORMULAS = new WeakSet(); // image-run objects of formulas (sized in ex: they scale with the text)
+const BLOCK_IDS = new WeakMap(); // block → every element id in it (its `id` is only the first)
+// Parsoid's element ids in mwoffliner pages ("mwATE"): nothing links to them, and a section's
+// wrapper would otherwise give its heading block that id instead of the section's ("History").
+const PARSOID_ID = /^mw[A-Za-z0-9_-]{2,5}$/;
 
 const RE_VERSE = /^(poem|poetry|stanza|verse|linegroup|lines$|lines-container|lg-container)/i;
 const RE_STANZA = /^stanza/i;
@@ -321,9 +325,10 @@ function own(s) {
 
 class Runs {
   constructor() {
-    /** @type {Array<[string, number]>} */
+    /** @type {Array<[string, number] | [string, number, object]>} */
     this.r = [];
     this.sp = -1; // pending collapsed space: style bits of the whitespace, or -1
+    this.spLink = null; // the link the pending space lies in
     this.nl = 0; // pending hard line breaks
     this.ind = 0; // pending indentation level for the next line start
     this.vis = false; // has visible (non-whitespace) content
@@ -335,16 +340,17 @@ class Runs {
     return this.r.length === 0 || this.nl > 0;
   }
 
-  push(text, bits) {
+  /** Appends text; the text of a link (`link`: the run's link object, §3.5) is a run of its own. */
+  push(text, bits, link = null) {
     this.len += text.length;
     const r = this.r;
     const last = r[r.length - 1];
-    if (last !== undefined && last[1] === bits && last.length === 2) last[0] += text;
-    else r.push([text, bits]);
+    if (last !== undefined && last[1] === bits && (link ? last[2] === link : last.length === 2)) last[0] += text;
+    else r.push(link ? [text, bits, link] : [text, bits]);
   }
 
   /** Appends HTML text (not inside pre): collapses ASCII whitespace runs to one space. */
-  text(s, bits) {
+  text(s, bits, link = null) {
     if (this.done) return;
     // replace() yields a fresh string; untouched long text must be copied out of the source.
     const t = WS_TEST.test(s) ? s.replace(WS_RUN, ' ') : own(s);
@@ -352,16 +358,19 @@ class Runs {
     if (n === 0) return;
     const lead = t.charCodeAt(0) === 32;
     const trail = n > 1 && t.charCodeAt(n - 1) === 32;
-    if (lead) this.space(bits);
+    if (lead) this.space(bits, link);
     const core = lead || trail ? t.slice(lead ? 1 : 0, trail ? n - 1 : n) : t;
     if (core.length === 0) return;
-    this.word(core, bits);
-    if (trail) this.space(bits);
+    this.word(core, bits, link);
+    if (trail) this.space(bits, link);
   }
 
   /** Records collapsible whitespace; it materializes only if more content follows on the line. */
-  space(bits) {
-    if (this.r.length !== 0 && this.nl === 0 && this.sp < 0) this.sp = bits;
+  space(bits, link = null) {
+    if (this.r.length !== 0 && this.nl === 0 && this.sp < 0) {
+      this.sp = bits;
+      this.spLink = link;
+    }
   }
 
   /** Materializes pending line breaks and indentation before new content. */
@@ -383,25 +392,29 @@ class Runs {
   }
 
   /** Appends text that has no leading/trailing collapsible whitespace. */
-  word(core, bits) {
+  word(core, bits, link = null) {
     this.lead(bits);
     if (this.sp >= 0) {
-      if (this.sp === bits) core = ' ' + core;
-      else this.push(' ', this.sp);
+      if (this.sp === bits && this.spLink === link) core = ' ' + core;
+      else this.push(' ', this.sp, this.spLink === link ? link : null);
       this.sp = -1;
     }
-    this.push(core, bits);
+    this.push(core, bits, link);
     if (!this.vis && VISIBLE.test(core)) this.vis = true;
   }
 
-  /** An inline image: a run of one U+FFFC carrying { src, w, h, va?, alt?, inv? } (SPEC §3.5). */
-  image(img, bits) {
+  /**
+   * An inline image: a run of one U+FFFC carrying { src, w, h, va?, alt?, inv? } (SPEC §3.5), and
+   * its link's fields when it lies in one.
+   */
+  image(img, bits, link = null) {
     if (this.done) return;
     this.lead(bits);
     if (this.sp >= 0) {
-      this.push(' ', this.sp);
+      this.push(' ', this.sp, this.spLink === link ? link : null);
       this.sp = -1;
     }
+    if (link) Object.assign(img, link);
     this.r.push([OBJ, bits, img]);
     this.len += 1;
     this.vis = true;
@@ -452,6 +465,11 @@ class Runs {
   }
 }
 
+/** An image run (§3.5): its third element is the image; a link's text run has one too. */
+export function isImageRun(run) {
+  return run.length > 2 && run[2].src !== undefined;
+}
+
 /** Appends `src` runs to `dst`, merging the boundary runs when their styles match. */
 function appendRuns(dst, src) {
   let i = 0;
@@ -467,7 +485,7 @@ function appendRuns(dst, src) {
 function imagesOnly(r) {
   let imgs = null;
   for (const run of r) {
-    if (run.length > 2) (imgs ??= []).push(run[2]);
+    if (isImageRun(run)) (imgs ??= []).push(run[2]);
     else if (VISIBLE.test(run[0])) return null;
   }
   return imgs;
@@ -570,7 +588,7 @@ const LAYOUT_CELL_CHARS = 2000;
 const ROOT_CTX = Object.freeze({
   bits: 0, skip: 0, foreign: false, align: undefined, q: 0, verse: null, verseOuter: null,
   stanza: null, heading: 0, pre: false, list: null, li: null, table: null, cell: null, nest: 0,
-  blockFrame: null, blank: false,
+  blockFrame: null, blank: false, link: null,
 });
 
 /** The cell receiving inline content, unless its row was turned into normal flow. */
@@ -597,6 +615,7 @@ class Converter {
     this.tableCount = 0;
     this.lastVerse = null; // { vg, q, a, blk } for merging verse lines into one block
     this.emitted = 0;
+    this.ids = null; // ids noted since the last block went out (placeIds)
     this.box = null; // the MediaWiki infobox being captured: { main, frame }
     this.facts = null; // its blocks, waiting for the end of the lead section
   }
@@ -630,7 +649,8 @@ class Converter {
   // --- id handling ---------------------------------------------------------------------------
 
   noteId(id) {
-    if (!id) return;
+    if (!id || PARSOID_ID.test(id)) return;
+    (this.ids ??= []).push(own(id));
     const ctx = this.top.ctx;
     if (this.cur && !liveCell(ctx) && !ctx.pre) {
       if (!this.cur.id) this.cur.id = id;
@@ -655,8 +675,21 @@ class Converter {
       if (prev && prev.t === 'hr') return;
     }
     if (this.facts && !this.box && blk.t === 'h' && blk.l <= 2) this.emitFacts();
+    this.placeIds(blk);
     this.out.push(blk);
     this.emitted++;
+  }
+
+  /**
+   * The ids noted since the last block went out belong to `blk` (BLOCK_IDS): an id inside a
+   * paragraph, or before a block. (Rows are buffered until their table ends: theirs go to its first.)
+   */
+  placeIds(blk) {
+    const ids = this.ids;
+    if (!ids) return;
+    this.ids = null;
+    const had = BLOCK_IDS.get(blk);
+    BLOCK_IDS.set(blk, had ? had.concat(ids) : ids);
   }
 
   // --- MediaWiki infoboxes -----------------------------------------------------------------------
@@ -777,6 +810,7 @@ class Converter {
           else dst.push(['\n', last[1]]);
           appendRuns(dst, r);
           if (!lv.blk.id && b.id) lv.blk.id = own(b.id);
+          this.placeIds(lv.blk);
           this.emitted++;
           return;
         }
@@ -815,7 +849,7 @@ class Converter {
     const cell = liveCell(ctx);
     if (cell || ctx.pre || !asParagraph) {
       if (ctx.pre && !cell) this.pre.buf += text;
-      else this.sink(ctx).text(text, ctx.bits | (asParagraph ? 1 : 0));
+      else this.sink(ctx).text(text, ctx.bits | (asParagraph ? 1 : 0), ctx.link);
       return;
     }
     this.flush();
@@ -840,7 +874,7 @@ class Converter {
       if (alt) img.alt = own(alt);
       if (inline.inv) img.inv = 1;
       if (inline.formula) FORMULAS.add(img);
-      this.sink(ctx).image(img, ctx.bits);
+      this.sink(ctx).image(img, ctx.bits, ctx.link);
       return;
     }
     const blk = { t: 'img', src: own(src) };
@@ -1037,6 +1071,10 @@ class Converter {
 
     const bits = (pctx.bits & ~info.clear) | info.set | (info.caption ? 128 : 0);
     if (bits !== pctx.bits) mut().bits = bits;
+    if (name === 'a' && attribs.href !== undefined) {
+      const href = linkTarget(attribs.href, this.docPath);
+      mut().link = href ? { href: own(href) } : null; // one object per link: its runs share it
+    }
     if (info.caption) mut().align = 'c';
     else if (info.align !== undefined) mut().align = info.align;
     if (info.quote) mut().q = pctx.q + 1;
@@ -1239,7 +1277,7 @@ class Converter {
     if (ctx.blank) text = text.replace(INVISIBLE_CHARS, NBSP);
     const cell = liveCell(ctx);
     if (cell) {
-      cell.runs.text(text, ctx.bits);
+      cell.runs.text(text, ctx.bits, ctx.link);
       return;
     }
     if (ctx.pre) {
@@ -1247,7 +1285,7 @@ class Converter {
       return;
     }
     if (!this.cur && ALL_WS.test(text)) return;
-    (this.cur ?? this.startBlock(ctx)).runs.text(text, ctx.bits);
+    (this.cur ?? this.startBlock(ctx)).runs.text(text, ctx.bits, ctx.link);
   }
 
   onclosetag(name) {
@@ -1374,8 +1412,9 @@ function expandTabs(x) {
 /**
  * Converts one HTML (or XHTML) document into reader blocks (SPEC §3.3 / §3.5).
  * @param {string} html document source
- * @param {{ docPath: string }} opts archive path of the document (used to resolve image src)
- * @returns {{ title: string|null, blocks: object[] }}
+ * @param {{ docPath: string }} opts archive path of the document (resolves images and links)
+ * @returns {{ title: string|null, blocks: object[], ids: Map<string, object> }} ids: the block
+ *   each element id of the document is in (what links point at: linkDocs)
  */
 export function htmlToBlocks(html, { docPath = '' } = {}) {
   if (typeof html !== 'string') html = html ? platform.utf8(html) : '';
@@ -1383,7 +1422,12 @@ export function htmlToBlocks(html, { docPath = '' } = {}) {
   const conv = new Converter(docPath);
   const parser = new platform.Parser(conv, { decodeEntities: true, recognizeSelfClosing: true, lowerCaseTags: true });
   parser.end(html);
-  return { title: conv.title, blocks: conv.out };
+  const ids = new Map();
+  for (const blk of conv.out) {
+    if (blk.id && !ids.has(blk.id)) ids.set(blk.id, blk);
+    for (const id of BLOCK_IDS.get(blk) ?? []) if (!ids.has(id)) ids.set(id, blk);
+  }
+  return { title: conv.title, blocks: conv.out, ids };
 }
 
 /**
@@ -1418,15 +1462,17 @@ const TOC_TITLE_MAX = 120;
  * reaches 1.5 × targetChars (at any block boundary), or at maxBlocks blocks.
  * @param {object[]} blocks
  * @param {{ targetChars?: number, maxBlocks?: number }} [opts]
+ * Links that linkDocs tied to blocks get their `at` here (placeLinks).
  * @returns {{ chunks: Array<{start: number, chars: number, blocks: object[]}>,
  *   toc: Array<{title: string, level: number, c: number, b: number}>, totalChars: number,
- *   tocTruncated: boolean }}
+ *   tocTruncated: boolean, where: Map<object, [number, number]> }} where: each block's chunk and
+ *   index in it
  */
 export function chunkBlocks(blocks, { targetChars = 40000, maxBlocks = 3000 } = {}) {
   if (!blocks || blocks.length === 0) {
     const placeholder = { t: 'p', r: [[PLACEHOLDER_TEXT, 0]] };
     const chars = blockChars(placeholder);
-    return { chunks: [{ start: 0, chars, blocks: [placeholder] }], toc: [], totalChars: chars, tocTruncated: false };
+    return { chunks: [{ start: 0, chars, blocks: [placeholder] }], toc: [], totalChars: chars, tocTruncated: false, where: new Map() };
   }
   let tocMaxLevel = 3;
   if (!blocks.some((b) => b.t === 'h' && b.l <= 3)) tocMaxLevel = 4;
@@ -1461,12 +1507,15 @@ export function chunkBlocks(blocks, { targetChars = 40000, maxBlocks = 3000 } = 
     total += n;
   }
   if (cur.length) chunks.push({ start: total - curChars, chars: curChars, blocks: cur });
-  return { chunks, toc, totalChars: total, tocTruncated };
+  const where = new Map();
+  chunks.forEach((ch, c) => ch.blocks.forEach((b, i) => where.set(b, [c, i])));
+  placeLinks(blocks, (b) => where.get(b));
+  return { chunks, toc, totalChars: total, tocTruncated, where };
 }
 
 function tocTitle(block) {
   let s = '';
-  for (const run of block.r) if (run.length === 2) s += run[0]; // no image runs
+  for (const run of block.r) if (!isImageRun(run)) s += run[0];
   s = s.replace(/\n/g, ' ').replace(/ {2,}/g, ' ').trim();
   if (s.length > TOC_TITLE_MAX) s = s.slice(0, TOC_TITLE_MAX - 1).trimEnd() + '\u2026';
   return s;
@@ -1644,4 +1693,154 @@ export function resolveHref(href, docPath) {
     parts.push(seg);
   }
   return parts.length ? parts.join('/') : null;
+}
+
+/**
+ * Where a link goes (SPEC §3.5): '#<id>' for a place in the same document, '<archive path>' or
+ * '<archive path>#<id>' for another document, null for nothing to follow (an external or empty
+ * link, a link to the document itself without a place). The fragment is percent-decoded, as ids
+ * are written.
+ * @param {string} href
+ * @param {string} docPath
+ * @returns {string|null}
+ */
+export function linkTarget(href, docPath) {
+  if (typeof href !== 'string') return null;
+  href = href.trim();
+  const hash = href.indexOf('#');
+  let frag = hash >= 0 ? href.slice(hash + 1) : '';
+  if (frag.includes('%')) {
+    try {
+      frag = decodeURIComponent(frag);
+    } catch {
+      // malformed escape: keep it as written
+    }
+  }
+  const before = hash >= 0 ? href.slice(0, hash) : href;
+  if (!before.replace(/\?.*$/, '')) return frag ? `#${frag}` : null;
+  const path = resolveHref(before, docPath);
+  if (!path || path.startsWith('data:')) return null;
+  if (path === docPath) return frag ? `#${frag}` : null;
+  return frag ? `${path}#${frag}` : path;
+}
+
+const LINK_TARGET = new WeakMap(); // link object → the block it leads to (linkDocs → placeLinks)
+
+/** Calls fn(run) for every run of a block (a paragraph's, or each table cell's). */
+function eachRun(block, fn) {
+  if (block.r) for (const run of block.r) fn(run);
+  else if (block.c) for (const cell of block.c) for (const run of cell) fn(run);
+}
+
+/**
+ * Merges a block's neighbouring plain runs of the same style (§3.5), as after a link was dropped
+ * and its text became plain.
+ * @param {object} block
+ */
+export function mergeRuns(block) {
+  const merge = (runs) => {
+    let w = 0;
+    for (let i = 0; i < runs.length; i++) {
+      const run = runs[i];
+      const last = w > 0 ? runs[w - 1] : null;
+      if (last && last.length === 2 && run.length === 2 && last[1] === run[1]) last[0] += run[0];
+      else runs[w++] = run;
+    }
+    runs.length = w;
+  };
+  if (block.r) merge(block.r);
+  else if (block.c) block.c.forEach(merge);
+}
+
+/** A run's link object (§3.5), or null. */
+function linkOf(run) {
+  const x = run.length > 2 ? run[2] : null;
+  return x && (x.href !== undefined || x.at !== undefined || x.to !== undefined) ? x : null;
+}
+
+/** Drops a run's link (its text stays). */
+function unlink(run, x) {
+  delete x.href;
+  delete x.at;
+  delete x.to;
+  if (x.src === undefined) run.length = 2;
+}
+
+/**
+ * Resolves the links of a book made of documents converted one by one (htmlToBlocks): a link to a
+ * place in the book is tied to the block it leads to (placeLinks, after chunking, makes that `at`:
+ * [chunk, block]); a link elsewhere keeps its `href` (resolved when followed: the library's
+ * resolveLink) when `keep` says so, else it is dropped and its text stays. A link to a document
+ * leads to its `top` block (Wikisource: the part's heading), or to the block of its #id.
+ * @param {Array<{ path: string, blocks: object[], ids: Map<string, object>, top?: object }>} docs
+ * @param {{ keep?: boolean | ((path: string) => boolean) }} [opts]
+ */
+export function linkDocs(docs, { keep = false } = {}) {
+  const byPath = new Map();
+  for (const d of docs) if (!byPath.has(d.path)) byPath.set(d.path, d);
+  const keeps = typeof keep === 'function' ? keep : () => keep;
+  const seen = new Set(); // link objects already resolved (the runs of one link share one)
+  for (const doc of docs) {
+    for (const block of doc.blocks) {
+      let dropped = false;
+      eachRun(block, (run) => {
+        const x = linkOf(run);
+        if (!x) return;
+        if (!seen.has(x)) {
+          seen.add(x);
+          const href = x.href;
+          const hash = href.indexOf('#');
+          const path = hash < 0 ? href : href.slice(0, hash);
+          const id = hash < 0 ? '' : href.slice(hash + 1);
+          const target = path ? byPath.get(path) : doc;
+          if (target) {
+            const to = (id && target.ids.get(id)) || (path && target !== doc ? target.top ?? target.blocks[0] : null);
+            if (to) LINK_TARGET.set(x, to);
+            else delete x.href; // a place the document does not have
+          } else if (!path || !keeps(path)) {
+            delete x.href;
+          }
+        }
+        if (x.href === undefined && !LINK_TARGET.has(x)) {
+          unlink(run, x);
+          dropped = true;
+        }
+      });
+      if (dropped) mergeRuns(block);
+    }
+  }
+}
+
+/**
+ * Turns the links linkDocs tied to blocks into `at`: [chunk, block] (§3.5), with `where(block)`
+ * saying where a block ended up (undefined: dropped, e.g. a missing image; its links go too).
+ * @param {object[]} blocks
+ * @param {(block: object) => [number, number] | undefined} where
+ */
+export function placeLinks(blocks, where) {
+  for (const block of blocks) {
+    let dropped = false;
+    eachRun(block, (run) => {
+      const x = linkOf(run);
+      if (!x) {
+        if (run.length > 2 && run[2].src === undefined) { // a link dropped by an earlier run
+          run.length = 2;
+          dropped = true;
+        }
+        return;
+      }
+      if (x.at !== undefined) return;
+      const target = LINK_TARGET.get(x);
+      if (!target) return;
+      const at = where(target);
+      if (at) {
+        delete x.href;
+        x.at = at;
+      } else {
+        unlink(run, x);
+        dropped = true;
+      }
+    });
+    if (dropped) mergeRuns(block);
+  }
 }

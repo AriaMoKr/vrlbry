@@ -373,7 +373,7 @@ function volumeBounds(idx, key) {
 }
 
 /** Position of an article entry in title order, or -1 when it is not an article of the index. */
-async function positionOf(archive, idx, entry) {
+export async function positionOf(archive, idx, entry) {
   const key = titleKey(entry.title || entry.url);
   for (let i = await lowerBoundKey(archive, idx, key), n = 0; i < idx.count && n < 64; i++, n++) {
     if (idx.order[i] === entry.index) return i;

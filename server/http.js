@@ -199,6 +199,13 @@ export function createApp(library, { publicDir = DEFAULT_PUBLIC_DIR, vendorDirs 
       return sendBody(req, res, new Body(chunk.json, { etag: `W/${chunk.etag}`, gzip: () => chunk.gzip() }), { cacheControl: 'no-cache' });
     }
 
+    if (segs[4] === 'link' && segs.length === 5) {
+      // Where a link of this book leads (§4): ?to=<archive path>[#id], resolved when followed.
+      const to = await lib.resolveLink(bookId, new URL(req.url, 'http://x').searchParams.get('to') ?? '');
+      if (!to) return sendError(req, res, 404, 'that link leads to nothing in this library');
+      return sendBody(req, res, new Body(Buffer.from(JSON.stringify({ library: lib.id, to }), 'utf8')), { cacheControl: 'no-cache' });
+    }
+
     if (segs[4] === 'res' && segs.length >= 6) {
       const filePath = segs.slice(5).join('/');
       const found = await lib.resource(bookId, filePath);

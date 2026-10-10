@@ -12,6 +12,7 @@ import { perf } from './perf.js';
 import { load, save } from './util/storage.js';
 import { progressText } from './util/progress.js';
 import { isLocal } from './local/local.js';
+import { resolveLink } from './api.js';
 import { KINDS as KIWIX_KINDS, indexLabel, sizeText } from './local/kiwix.js';
 import { letterOf, SORT_MODES, inTitleOrder, thumbIndex } from './util/books.js';
 import { PAGE_PX, READ } from './config.js';
@@ -29,6 +30,7 @@ const SEARCH_DELAY = 250; // ms after the last key before searching
 const OPENING_LINE = 'Preparing its pages'; // the inspect panel's line while a book opens (read)
 const CANCELLED = Symbol('cancelled'); // read(): Put back pressed while the book was opening
 const OPENING_BAR_MS = 200; // the opening progress bar's repaints, at most one per this long
+const LINK_MARKS = 4; // lines of a link that the hover band covers
 
 const _plane = new THREE.Plane();
 const _onPlane = new THREE.Vector3();
@@ -93,6 +95,10 @@ export class Interaction {
     this.onSaveScene = null;
     this.onRestoreScene = null;
     this._exitHold = null; // { name, t } while B/Y is held to leave VR
+    // Where links were followed from, latest last (back()): { libId, id, at, page, fontScale, side }.
+    this._trail = [];
+    this._following = false; // a link being looked up (resolveLink)
+    this._linkMarks = null; // the bands over the link under a pointer (_markLink)
 
     this.tooltip = new Label({ width: 0.56, height: 0.13 });
     this.tooltip.visible = false;
@@ -837,6 +843,7 @@ export class Interaction {
     const W = p.w;
     const pad = 18;
     p.add({ id: 'slider', type: 'slider', x: pad + 10, y: 10, w: W - 2 * pad - 230, h: 48, value: 0, onClick: (v) => this.jumpToProgress(v) });
+    p.add({ id: 'back', type: 'button', x: pad, y: 8, w: 132, h: 52, label: '↩ Back', size: 26, hidden: true, onClick: () => this.goBack() });
     p.add({ id: 'label', type: 'text', x: W - pad - 210, y: 16, w: 210, h: 40, text: '', size: 26, align: 'right', color: UI.muted });
     const by = 68;
     const bh = 84;
@@ -1016,7 +1023,9 @@ export class Interaction {
     } else if (hit.kind === 'held' && this.state === 'inspect') {
       if (this.book.readable) this.read();
     } else if (hit.kind === 'page' && this.state === 'read') {
-      this.turn(hit.side === 'left' ? -1 : 1);
+      const found = this._linkUnder(hit);
+      if (found) this.followLink(found.link);
+      else this.turn(hit.side === 'left' ? -1 : 1);
     }
   }
 
@@ -1066,7 +1075,8 @@ export class Interaction {
       else if (['ArrowLeft', 'PageUp'].includes(key)) this.turn(-1);
       else if (key === '+' || key === '=') this.changeFont(1);
       else if (key === '-') this.changeFont(-1);
-      else if (key === 'Escape' || key === 'Backspace') {
+      else if (key === 'Backspace') this.back();
+      else if (key === 'Escape') {
         if (this.tocPanel.visible) this.toggleToc(false);
         else this.closeBook();
       } else if (code === 'KeyT' || code === 'KeyC') this.toggleToc();
@@ -1080,10 +1090,11 @@ export class Interaction {
     }
   }
 
-  /** B/Y/Esc: one step back. */
+  /** B/Y/Backspace: one step back (in a book: along the links followed, then it closes). */
   back() {
     if (this.state === 'read') {
       if (this.tocPanel.visible) this.toggleToc(false);
+      else if (this._trail.length) this.goBack();
       else this.closeBook();
     } else if (this.state === 'inspect') this.putBack();
     else if (this.state === 'opening') this._cancelOpening?.();
@@ -1169,9 +1180,12 @@ export class Interaction {
     this.state = 'inspect';
   }
 
-  /** Returns the book to its shelf. */
-  async putBack() {
+  /** Returns the book to its shelf (keepTrail: a link leads to another book: back() returns). */
+  async putBack({ keepTrail = false } = {}) {
     if (this.state !== 'inspect' && this.state !== 'read') return;
+    if (!keepTrail) this._trail = [];
+    this._showBack();
+    this._markLink(null);
     const book = this.book;
     const b3 = this.book3d;
     // Forget the spreads, or the next book finds every page canvas still in use.
@@ -1208,13 +1222,14 @@ export class Interaction {
   // Reading
 
   /**
-   * Opens the inspected book for reading: at the saved position, at the start (fromStart), or at
-   * a block anchor (at: { c, b }, e.g. a Wikipedia article found by search). `side` ('left' or
-   * 'right') puts that page on that side of the spread, as it was when a debug report was made:
+   * Opens the inspected book for reading: at the saved position, at the start (fromStart), at
+   * a block anchor (at: { c, b, f? }, e.g. a Wikipedia article found by search; f: a place's id,
+   * from a link), or at a page (page: { c, p }, a link trail's, laid out at the same font size).
+   * `side` ('left' or 'right') puts that page on that side of the spread, as it was when a debug report was made:
    * turning pairs pages one after another, while the page number decides otherwise, and page
    * numbers are partly estimated, so the pairing depends on how the page was reached.
    */
-  async read({ fromStart = false, at = null, side = null } = {}) {
+  async read({ fromStart = false, at = null, side = null, page = null } = {}) {
     if (this.state !== 'inspect' || !this.book.readable) return;
     const book = this.book;
     const b3 = this.book3d;
@@ -1235,8 +1250,9 @@ export class Interaction {
     try {
       startRef = await Promise.race([cancelled, (async () => {
         await reader.load({ onProgress: (f) => { opening.f = f; } });
+        if (page) return page;
         const pos = at ?? (!fromStart && load(`pos:${book.libId}:${book.id}`, null));
-        return pos ? reader.refForAnchor(pos) : reader.firstRef();
+        return pos ? this._refFor(reader, pos) : reader.firstRef();
       })()]);
     } catch (err) {
       failure = err;
@@ -1290,10 +1306,7 @@ export class Interaction {
     b3.group.position.set(half, 0, 0);
     b3.group.quaternion.identity();
 
-    const spread = side === 'left' ? { left: startRef, right: await this.reader.next(startRef) }
-      : side === 'right' ? { left: (await this.reader.prev(startRef)) || 'ex', right: startRef }
-        : await this._spreadFor(startRef);
-    const shown = await this._renderSpread(spread);
+    const shown = await this._renderSpread(await this._spreadAt(startRef, side));
     this._cur = shown;
     b3.setPages(shown.left, shown.right);
     audio.open();
@@ -1350,6 +1363,21 @@ export class Interaction {
     const n = r.pageNumber(ref).n;
     if (n % 2 === 1) return { left: (await r.prev(ref)) || 'ex', right: ref };
     return { left: ref, right: await r.next(ref) };
+  }
+
+  /** The spread with page `ref` on `side` ('left' / 'right'), or as the page number pairs it (null). */
+  async _spreadAt(ref, side) {
+    const r = this.reader;
+    if (side === 'left') return { left: ref, right: await r.next(ref) };
+    if (side === 'right') return { left: (await r.prev(ref)) || 'ex', right: ref };
+    return this._spreadFor(ref);
+  }
+
+  /** The page of a block anchor { c, b, f? }: f, a place's id (a link's #id), wins when found. */
+  async _refFor(reader, at) {
+    let b = at.b ?? 0;
+    if (at.f) b = (await reader.blockOfId(at.c, at.f)) ?? b;
+    return reader.refForAnchor({ c: at.c, b });
   }
 
   async _nextSpread(s) {
@@ -1493,15 +1521,15 @@ export class Interaction {
     }
   }
 
-  /** Jumps to a page (TOC, slider, recent) with a turn animation in the right direction. */
-  async _jump(ref) {
+  /** Jumps to a page (TOC, slider, recent, a link) with a turn animation in the right direction. */
+  async _jump(ref, side = null) {
     if (this.state !== 'read' || this._turnBusy) return;
     this._turnBusy = true;
     try {
       this._prepToken = (this._prepToken || 0) + 1;
       this._next = null;
       this._prev = null;
-      const s = await this._spreadFor(ref);
+      const s = await this._spreadAt(ref, side);
       const shown = await this._renderSpread(s);
       const curRef = this._cur.spread.right || this._cur.spread.left;
       const r = this.reader;
@@ -1513,6 +1541,154 @@ export class Interaction {
     } finally {
       this._turnBusy = false;
     }
+  }
+
+  /** The link under a pointer's hit on a page: { link, rect, side } (rect in page pixels), or null. */
+  _linkUnder(hit) {
+    const r = this.reader;
+    const ref = this._cur?.spread?.[hit.side];
+    if (!r || !ref || ref === 'ex' || !hit.uv || this._turnBusy) return null;
+    const found = r.linkAt(ref, hit.uv.x * r.width, (1 - hit.uv.y) * r.height);
+    return found && { ...found, side: hit.side };
+  }
+
+  /** Where the reader is, to come back to (the trail). */
+  _here() {
+    const s = this._cur.spread;
+    const side = s.left !== 'ex' ? 'left' : 'right';
+    const page = s[side];
+    return {
+      libId: this.book.libId, id: this.book.id, at: this.reader.anchorOf(page), side,
+      page: { c: page.c, p: page.p }, fontScale: this.reader.fontScale,
+    };
+  }
+
+  /**
+   * Follows a link of the open book (SPEC §3.5): `at` is a place in it, `to` one in another of
+   * the library's books, `href` is asked of the library first (resolveLink). Where the reader was
+   * goes on the trail, for back().
+   */
+  async followLink(link) {
+    if (this.state !== 'read' || this._turnBusy || this._following) return;
+    this._following = true; // one link at a time: a second tap waits for nothing
+    try {
+      const book = this.book;
+      let dest;
+      if (Array.isArray(link.at)) {
+        dest = { libId: book.libId, id: book.id, at: { c: link.at[0], b: link.at[1] } };
+      } else {
+        let to = link.to ?? null;
+        if (!to && link.href) {
+          this.toolbar.set('label', { text: 'Following…' });
+          to = await resolveLink(book.libId, book.id, link.href).catch((err) => {
+            console.warn('link', err);
+            return null;
+          });
+          if (this.state !== 'read' || this.book !== book) return; // closed meanwhile
+          if (!to) this._afterTurn(); // the label back
+        }
+        if (!to) {
+          this.notice('Not in this library', 'That link leads to a page this file does not have', 3);
+          return;
+        }
+        dest = { libId: book.libId, id: to.book, at: { c: to.c, b: to.b ?? 0, ...(to.f ? { f: to.f } : {}) } };
+      }
+      audio.click();
+      const from = this._here();
+      this._trail.push(from);
+      if (this._trail.length > 100) this._trail.shift();
+      if (!(await this._goTo(dest)) && this._trail.at(-1) === from) this._trail.pop();
+    } finally {
+      this._following = false;
+      this._showBack();
+    }
+  }
+
+  /** Back along the links followed (the toolbar's Back, B/Y, Backspace). */
+  async goBack() {
+    if (this.state !== 'read' || this._turnBusy || this._following || !this._trail.length) return;
+    this._following = true;
+    try {
+      await this._goTo(this._trail.pop());
+    } finally {
+      this._following = false;
+      this._showBack();
+    }
+  }
+
+  /**
+   * Shows a place { libId, id, at, page?, fontScale?, side? }: in the open book with a turn, in
+   * another of the library's books by putting this one back and taking that one out (a Wikipedia
+   * volume, a Wikisource work). `page` (a trail's) is used while the font size is the same.
+   * @returns {Promise<boolean>} whether the place is shown
+   */
+  async _goTo(dest) {
+    const book = this.book;
+    const page = dest.page && dest.fontScale === this.settings.fontScale ? dest.page : null;
+    if (dest.libId === book.libId && dest.id === book.id) {
+      await this._jump(page ?? await this._refFor(this.reader, dest.at), page ? dest.side : null);
+      return true;
+    }
+    const target = (this.booksByLib[dest.libId] || []).find((b) => b.id === dest.id);
+    if (!target) {
+      this.notice('Not on the shelves', 'The book that link leads to is not in this library', 3);
+      return false;
+    }
+    await this.putBack({ keepTrail: true });
+    if (this.state !== 'browse') return false;
+    if (!(await this.ensureShelved(target))) {
+      this.overlay?.showToast('That book is not on the shelves.', 'error');
+      return false;
+    }
+    await this.pick(target);
+    if (this.state !== 'inspect') return false;
+    await this.read({ at: dest.at, page, side: page ? dest.side : null });
+    return this.state === 'read';
+  }
+
+  /** The toolbar's Back button, shown while there is somewhere to go back to. */
+  _showBack() {
+    const on = this._trail.length > 0;
+    const W = this.toolbar.w;
+    const pad = 18;
+    this.toolbar.set('back', { hidden: !on });
+    this.toolbar.set('slider', on ? { x: pad + 146, w: W - 2 * pad - 230 - 136 } : { x: pad + 10, w: W - 2 * pad - 230 });
+  }
+
+  /**
+   * Translucent bands over the link a pointer is on (found: _linkUnder's), a band per line, on its
+   * page: meshes in front of the page, so the page itself is not drawn again. null hides them.
+   */
+  _markLink(found) {
+    const b3 = this.book3d;
+    const rects = found && b3 && this.state === 'read' ? found.rects.slice(0, LINK_MARKS) : [];
+    if (!this._linkMarks) {
+      if (!rects.length) return;
+      // One material and geometry for all; a link rarely spans more than LINK_MARKS lines.
+      const mat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.2, depthWrite: false });
+      const geo = new THREE.PlaneGeometry(1, 1);
+      this._linkMarks = Array.from({ length: LINK_MARKS }, () => {
+        const m = new THREE.Mesh(geo, mat);
+        m.name = 'link-mark';
+        m.visible = false;
+        return m;
+      });
+    }
+    const marks = this._linkMarks;
+    for (let i = rects.length; i < marks.length; i++) marks[i].visible = false;
+    if (!rects.length) return;
+    const page = found.side === 'left' ? b3.leftPage : b3.rightPage;
+    const { width: pw, height: ph } = page.geometry.parameters;
+    const r = this.reader;
+    const pad = 4;
+    marks[0].material.color.set(THEMES[r.theme].link);
+    rects.forEach(({ x, y, w, h }, i) => {
+      const m = marks[i];
+      if (m.parent !== page) page.add(m);
+      m.scale.set(((w + 2 * pad) / r.width) * pw, ((h + 2 * pad) / r.height) * ph, 1);
+      m.position.set(((x + w / 2) / r.width - 0.5) * pw, (0.5 - (y + h / 2) / r.height) * ph, 0.0005);
+      m.visible = true;
+    });
   }
 
   async jumpToToc(entry) {
@@ -1953,6 +2129,7 @@ export class Interaction {
 
     // Pointer hover.
     let hoverBook = null;
+    let hoverLink = null;
     const seen = new Set();
     for (const pointer of this.controls.pointers) {
       const hit = this.state === 'busy' || pointer.teleporting ? null : this._hitTest(pointer);
@@ -1968,10 +2145,12 @@ export class Interaction {
         interactive = true;
       } else if (hit?.kind === 'page' || hit?.kind === 'held') {
         interactive = true;
+        if (hit.kind === 'page' && !hoverLink) hoverLink = this._linkUnder(hit);
       }
       pointer.setHovering(interactive);
       this._hover.set(pointer.id, { panel: hit?.kind === 'panel' ? hit.panel : null });
     }
+    this._markLink(hoverLink);
     this.controls.textEntry = !!this._search.focus && this.state === 'browse' && this._kioskTab === 'search'
       && this.kiosk.visible && !this.controls.presenting;
     // A scroll bar being dragged follows its pointer, also off the panel (onto its plane).

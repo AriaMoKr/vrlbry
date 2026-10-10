@@ -40,6 +40,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { fileName } from '../public/js/util/file-names.js';
+import { mergeRuns } from '../public/js/core/content/html.js';
 import { DEFAULT_VENDOR_DIRS, rewriteVendorImports, vendorFileOf, vendorUrlOf } from '../server/vendor.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -339,6 +340,32 @@ export function blockImages(blocks, into = new Set()) {
 }
 
 /**
+ * Resolves the links of a chunk's blocks that are resolved when followed (`href`, SPEC §3.5) into
+ * `to` with `resolve(href)`; those that lead nowhere are dropped (their text stays).
+ * @returns {Promise<boolean>} whether any link changed
+ */
+export async function resolveLinks(blocks, resolve) {
+  let changed = false;
+  for (const b of blocks) {
+    let dropped = false;
+    for (const run of [...(b.r ?? []), ...(b.c ?? []).flat()]) {
+      const x = run.length > 2 ? run[2] : null;
+      if (x?.href === undefined) continue;
+      const to = await resolve(x.href);
+      delete x.href;
+      if (to) x.to = to;
+      else if (x.src === undefined) {
+        run.length = 2;
+        dropped = true;
+      }
+      changed = true;
+    }
+    if (dropped) mergeRuns(b);
+  }
+  return changed;
+}
+
+/**
  * Pre-renders the ZIMs of `dir` into `out`: runs the server in this process and saves its answers
  * as the static files api.js asks for in static mode, and every image they refer to.
  * @returns {Promise<{ libraries: number, books: number, chunks: number, images: number }>}
@@ -389,10 +416,19 @@ export async function prerender(dir, out, { log = console.log } = {}) {
       write(`${lib}/books.json`, relativeUrls(booksText));
       const { books } = JSON.parse(booksText);
       for (const b of books) for (const u of [b.cover, b.emblem]) if (u) images.add(u);
+      // Links that the reader would ask the server about when followed (href) are resolved now:
+      // a static site has no server to ask. A page names the same article many times.
+      const links = new Map();
+      const resolve = (bookId, href) => {
+        if (!links.has(href)) links.set(href, library.get(info.id).resolveLink(bookId, href).catch(() => null));
+        return links.get(href);
+      };
       const saveChunk = async (bookId, n) => {
-        const text = await (await get(`/api/libraries/${enc(info.id)}/books/${enc(bookId)}/chunks/${n}`)).text();
+        let text = await (await get(`/api/libraries/${enc(info.id)}/books/${enc(bookId)}/chunks/${n}`)).text();
+        const chunk = JSON.parse(text);
+        if (await resolveLinks(chunk.blocks, (href) => resolve(bookId, href))) text = JSON.stringify(chunk);
         write(`${lib}/books/${fileName(bookId)}/chunks/${n}.json`, relativeUrls(text));
-        blockImages(JSON.parse(text).blocks, images);
+        blockImages(chunk.blocks, images);
         stats.chunks++;
       };
       // A Wikipedia's articles are converted in the order the ZIM stores them, across volumes, so

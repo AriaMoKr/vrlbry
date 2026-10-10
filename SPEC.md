@@ -394,7 +394,8 @@ whole. It works on GitHub Pages (no server) and beside a server's own libraries.
   `getCatalog()` (and a rescan's answer) lists the local libraries after the server's, with
   generation `"<server>+<local>"` so the poll notices either changing. A local Wikipedia's
   article search (`api.searchArticles`) goes to the worker's `articles`, so the search box and
-  the kiosk's Search tab list its articles like a server's.
+  the kiosk's Search tab list its articles like a server's; a link to resolve (`api.resolveLink`)
+  to its `link`.
 - **Images:** their URLs are the core's (`/zim/~id/…`, `/api/libraries/~id/books/<id>/res/…`),
   never fetched: `api.imageSource(url)` turns a local one into a blob URL, released once the
   image has loaded (the decoded image stays). The reader's page images, covers and the volume
@@ -596,11 +597,17 @@ otherwise grow geometrically).
 ### 3.3 `core/content/html.js`
 
 ```js
-/** Converts one HTML (or XHTML) document into reader blocks (§3.5). */
-export function htmlToBlocks(html: string, { docPath }: { docPath: string }): { title: string|null, blocks: Block[] }
-/** Groups blocks into chunks; builds TOC from headings. */
+/** Converts one HTML (or XHTML) document into reader blocks (§3.5); ids: the block each element id is in. */
+export function htmlToBlocks(html: string, { docPath }: { docPath: string }): { title: string|null, blocks: Block[], ids: Map<string, Block> }
+/** Groups blocks into chunks; builds TOC from headings; places the links linkDocs tied to blocks. */
 export function chunkBlocks(blocks: Block[], { targetChars = 40000, maxBlocks = 3000 } = {}):
-    { chunks: Array<{ start, chars, blocks: Block[] }>, toc: TocEntry[], totalChars }
+    { chunks: Array<{ start, chars, blocks: Block[] }>, toc: TocEntry[], totalChars, where: Map<Block, [c, b]> }
+/** Where a link goes: '#id', '<archive path>' or '<archive path>#id'; null when nowhere (external, empty, the document itself). */
+export function linkTarget(href: string, docPath: string): string | null
+/** Ties the links of a book's documents to the blocks they lead to; keeps (`keep`) or drops the others. */
+export function linkDocs(docs: Array<{ path, blocks, ids, top? }>, { keep?: boolean | (path) => boolean }): void
+/** Turns tied links into `at` with where(block) → [c, b] (undefined: the block was dropped, so is the link). */
+export function placeLinks(blocks: Block[], where): void
 /** Character weight of a block for chunking/progress (text length; img = 600; hr = 50). */
 export function blockChars(block): number
 /** Image dimensions from file header bytes: PNG, JPEG (scan SOFn markers), GIF, WebP (VP8/VP8L/VP8X), BMP, SVG (width/height or viewBox). */
@@ -664,6 +671,18 @@ Conversion rules:
   paragraph `a:'c'` with smaller style.
 - `hr` → `t:'hr'`. `pre` → `t:'pre'` with `x` = raw text (preserve whitespace/newlines; strip one
   leading newline; drop if blank).
+- Links: an `a[href]` puts its text (and its inline images) in link runs (§3.5) when it leads to
+  something in the archive: `linkTarget(href, docPath)` gives `'#<id>'` (a place in the same
+  document), `'<archive path>'` or `'<archive path>#<id>'` (the fragment percent-decoded, as ids
+  are written); external links (`scheme:` or `//`, which includes `Author:X`: a colon in the
+  first segment reads as a scheme, RFC 3986), empty and `data:` links, and a link to the document
+  itself without a place, are no links. The runs of one link share one link object; collapsed
+  spaces at its edges stay outside it.
+- Every element id is recorded with the block it lands in (`htmlToBlocks`' `ids`: an id inside a
+  paragraph belongs to it, one between blocks to the next; a table's ids go to its first row
+  block, as rows are buffered). Parsoid's element ids in mwoffliner pages (`mwATE`, `/^mw[\w-]{2,5}$/`)
+  are ignored: nothing links to them, and a section's wrapper would otherwise give its heading
+  that id instead of the section's ("History").
 - Element `id`s (and `a[name]`) inside a block → that block gets `id` = first such id (used for
   internal link targets; optional).
 - `title`: `<title>` text if present.
@@ -709,6 +728,21 @@ vertical-align in px (negative = below the baseline), `inv` as for image blocks.
 character, is never merged with text runs, and is part of the word it touches (no break before a
 following comma). The reader grows a line to fit a tall one, shrinks one wider than the line,
 and caps them at the line height in table cells; contents titles leave them out.
+A **link run** `[text, styleBits, link]` is text that leads somewhere; an image run in a link
+carries the link's fields beside its own. `link` holds one of:
+- `at: [c, b]`: a place in the same book (chunk c, block b): resolved when the book is converted
+  (`linkDocs`, then `placeLinks` in `chunkBlocks`; a Wikipedia article is its own chunk): a
+  reference, a section, Gutenberg's contents and footnotes, a Wikisource work's other parts;
+- `href: '<archive path>[#<id>]'`: elsewhere in the archive, resolved when followed (the library's
+  `resolveLink`, the link route of §4): a Wikipedia's links to other articles (a lookup each, too
+  many to do for every link of an article as it is converted), a Wikisource work's links to other
+  works;
+- `to: { book, c, b?, f? }`: elsewhere, already resolved (a static build resolves every `href`,
+  since its site has no server to ask): book id, chunk, block (0 when absent), and `f` the id of
+  the place in that chunk (the reader looks for the block with that `id`, or a heading whose text
+  is the id with spaces for "_").
+Links that lead nowhere are dropped and their text merged with the plain runs around it.
+Gutenberg, EPUB and generic books keep only links within the book.
 Optional fields are omitted when default (`a` absent = justified/left, `q` absent = 0).
 
 `TocEntry` = `{ title: string, level: 1–6, c: chunkIndex, b: blockIndexWithinChunk }`.
@@ -781,6 +815,7 @@ export class ArchiveLibrary {
   async content(bookId): Promise<{ meta, chunks }>       // converted + cached (byte LRU ~300 MB total)
   async chunk(bookId, n): Promise<Chunk | null | undefined> // one chunk; Wikipedia articles on demand
   async resource(bookId, path): Promise<{ data, mime } | null>  // EPUB-internal files
+  async resolveLink(bookId, href): Promise<{ book, c, b?, f? } | null> // where a link's href leads
 }
 ```
 - `scan` lists `*.zim` (case-insensitive, non-recursive), opens each; a file that fails to open is
@@ -811,6 +846,17 @@ export class ArchiveLibrary {
   `chunk()`.
 - Images whose width and height the page already gives are only checked for existence, not
   read (`_zimImage(path, { size: false })`).
+- Links (§3.5): each document's links are tied to their blocks (`linkDocs`) before images are
+  fixed (a missing image becomes a paragraph in place, so links to it still find it), and become
+  `at` in `chunkBlocks`. A Wikisource work's parts are its documents (a link to a part leads to
+  its heading), and `content()` keeps `parts` (path → [c, b]) for links from other works. A
+  Wikipedia article's own places become `at` when it is converted.
+- `resolveLink(bookId, href)`: a Wikipedia follows ZIM redirects and mwoffliner's redirects to a
+  section (a tiny page whose `<meta http-equiv="refresh">` names `Article#Section`, up to 4 hops)
+  to an article of the index (`positionOf`: a binary search of the title order, as the article
+  search's) → `{ book: 'v<N>', c: n, f? }`; a Wikisource, the work the page is (or the nearest
+  page above it that is a work: parts are subpages) → `{ book, c, b }`, at the part's heading;
+  null otherwise (a page that is not an article, a main page, a file, another library).
 - Book `size`: `getBlobSize(epubEntry ?? htmlEntry, { cheapOnly: true })` (null if unknown).
   Never decompress whole archives at startup; `books()` must be fast (< 1 s for this file).
 
@@ -981,6 +1027,12 @@ accepts it (recommended: large chunks compress ~4×).
 
 **`GET /api/libraries/:lib/books/:id/res/<path>`** → raw EPUB-internal file with its mime.
 
+**`GET /api/libraries/:lib/books/:id/link?to=<href>`** → `{ "library": lib, "to": { "book", "c",
+"b"?, "f"? } }`: where a link run's `href` (§3.5) leads (`resolveLink`); 404 when it leads to
+nothing in the library. A static build has no such route: it resolves every `href` of the chunks
+it saves into `to` (`resolveLinks` in `tools/build-pages.mjs`) and drops the links that lead
+nowhere.
+
 **`GET /api/libraries/:lib/articles?q=<prefix>&limit=<n>`** (Wikipedia libraries only, 404
 otherwise) → `{ "library": lib, "articles": [ { "title", "book": "v<N>", "n", "from"? } ] }`:
 articles whose title starts with `q` in title order (matched by `titleKey`, so case, accents, a
@@ -1079,6 +1131,8 @@ export class BookReader {
   labelOf(ref): string                          // e.g. "12 / ≈340"
   fontScale; setFontScale(s)                    // clears layouts; callers re-resolve refs via anchors
   theme; setTheme('paper'|'sepia'|'night')
+  linkAt(ref, x, y): { link, rects } | null     // the link at page pixel (x, y) of a page shown; rects: its words, one per line
+  async blockOfId(c, id): Promise<number|null>  // the block of chunk c with that id (or a heading named so)
   dispose()
 }
 // PageRef = { c: chunkIndex, p: pageIndexWithinChunk }
@@ -1107,6 +1161,10 @@ export class BookReader {
   smaller/larger. Hyphenation not required; break long words that do not fit a line.
 - Lines must never be split across pages; a heading must not be the last thing on a page
   (keep-with-next). Widows/orphans: best-effort.
+- Links (§3.5): a link's text is drawn in the theme's `link` colour (an ink blue; light blue on
+  night paper), apart from plain text, and its draw items carry the link (`ln`) and their advance
+  (`w`). `linkAt` takes the nearest link within 0.35 em of the point (a laser is not exact): its
+  link object and the rectangles of its words on that page, joined along each line.
 - Images are loaded with `new Image()` (`decoding = 'async'`) and decoded (`img.decode()`, off the
   main thread) before use, cached; `render` awaits images on
   that page (timeout 8 s → draw a placeholder box with alt text). Missing `w/h` → use the loaded
@@ -1342,7 +1400,19 @@ States: `browse` → `inspect` → `opening` → `read` (and back), plus `busy` 
   right/left page, toolbar buttons, keyboard ←/→/PageUp/PageDown/Space, swipe on touch. Right stick
   up/down = move book nearer/farther, left stick up/down = scale (READ.minScale..maxScale), grip
   drag = reposition (bonus). Next spread is pre-rendered for instant turns. Saves position on every
-  turn. Close/B/Esc → closes, flies back, → **browse**. Locomotion disabled while inspecting/reading.
+  turn. Close/Esc → closes, flies back, → **browse**; B/Y/Backspace → back along the links followed,
+  then closes. Locomotion disabled while inspecting/reading.
+  **Links** (§3.5): the trigger (a click, a tap) on a link follows it instead of turning the page;
+  the link under a pointer gets a translucent band per line (meshes in front of the page, which
+  is not drawn again). `at` jumps within the book (a turn); `href` is asked of the library first
+  (`api.resolveLink`, the toolbar saying "Following…"); `to` and a resolved `href` lead to a
+  place in the book or in another of the library's books, which is swapped in: this one is put
+  back and that one taken out and opened there (a Wikipedia volume, a Wikisource work), at the
+  block with the link's `f` when that chunk has one. A link that leads nowhere says so in a
+  notice. Where the reader was goes on a trail (up to 100: the book, the spread's page and side,
+  the font size), kept while links swap books and dropped when the book is closed; the toolbar's
+  "↩ Back" (beside the progress bar while there is a trail), B/Y and Backspace go back along it,
+  to the same spread while the font size is the same.
 - **Leaving VR**: an "Exit VR" button in the kiosk header (only while presenting), or holding
   B/Y for 1 s while browsing (a short press still means "back" when a book is out): a head-locked
   ring below the line of sight fills up (shown after 0.15 s, so taps do not flash it); releasing

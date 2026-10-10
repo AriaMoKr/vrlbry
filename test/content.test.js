@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import zlib from 'node:zlib';
 import '../server/platform-node.js';
-import { htmlToBlocks, chunkBlocks, blockChars, imageSize, resolveHref } from '../public/js/core/content/html.js';
+import { htmlToBlocks, chunkBlocks, blockChars, imageSize, resolveHref, linkTarget, linkDocs, placeLinks } from '../public/js/core/content/html.js';
 
 const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'content');
 const NBSP = '\u00a0';
@@ -24,10 +24,13 @@ function validate(bs) {
   };
   const errs = [];
   const image = (run) => run.length === 3 && run[0] === '￼' && typeof run[2]?.src === 'string' && run[2].w > 0 && run[2].h > 0;
+  // A link's text: its third element holds where it goes (href, at or to) and nothing else.
+  const link = (run) => run.length === 3 && run[2]?.src === undefined && Object.keys(run[2]).length === 1 &&
+    (typeof run[2].href === 'string' || Array.isArray(run[2].at) || typeof run[2].to === 'object');
   const runs = (r, w) => {
     if (!Array.isArray(r) || r.length === 0) return errs.push(`${w}: empty runs`);
     r.forEach((run, i) => {
-      if (!Array.isArray(run) || !(run.length === 2 || image(run)) || typeof run[0] !== 'string' || !Number.isInteger(run[1])) errs.push(`${w}: bad run`);
+      if (!Array.isArray(run) || !(run.length === 2 || image(run) || link(run)) || typeof run[0] !== 'string' || !Number.isInteger(run[1])) errs.push(`${w}: bad run`);
       else if (run[0] === '') errs.push(`${w}: empty run text`);
       else if (i > 0 && r[i - 1][1] === run[1] && run.length === 2 && r[i - 1].length === 2) errs.push(`${w}: unmerged runs`);
     });
@@ -625,12 +628,14 @@ describe('real excerpts (fixtures extracted from the Gutenberg ZIM)', () => {
     assert.deepEqual(bs[contents], { t: 'h', l: 2, r: [['CONTENTS', 0]], id: 'Page_3' });
     const rows = bs.filter((b) => b.t === 'tr' && b.g === 1);
     assert.equal(rows.length, 26);
-    assert.deepEqual(rows[1].c, [[['I.', 0]], [['Introductory', 32]], [['5', 0]]]);
+    // The page numbers of the contents are links to their pages (§3.5).
+    assert.deepEqual(rows[1].c, [[['I.', 0]], [['Introductory', 32]], [['5', 0, { href: '#Page_5' }]]]);
     assert.deepEqual(rows[3].c[2], [['Form the possessive singular of nouns by adding ', 0], ["'s", 1]]);
     assert.ok(bs.some((b) => b.t === 'p' && text(b).includes('(Oxford University Press); George McLane Wood')));
     assert.ok(bs.some((b) => b.t === 'p' && b.id === 'Page_6'));
     const ins = bs.find((b) => text(b).startsWith('The writer\'s colleagues'));
-    assert.deepEqual(ins.r.slice(0, 3), [["The writer's colleagues in the Department of English in Cornell University have greatly helped him in the preparation of his ", 0], ['manuscript.', 64], [` Mr. George McLane Wood has kindly consented to the inclusion under Rule${NBSP}10 of some material from his `, 0]]);
+    // "Rule 10" links to the rule: a run of its own, the spaces around it outside the link.
+    assert.deepEqual(ins.r.slice(0, 5), [["The writer's colleagues in the Department of English in Cornell University have greatly helped him in the preparation of his ", 0], ['manuscript.', 64], [' Mr. George McLane Wood has kindly consented to the inclusion under ', 0], [`Rule${NBSP}10`, 0, { href: '#Rule_10' }], [' of some material from his ', 0]]);
     // examples in div.example get the "smaller" bit from the book's own CSS (div.example { font-size: smaller })
     assert.deepEqual(bs.find((b) => text(b) === "Charles's friend"), { t: 'p', r: [["Charles's friend", 128]] });
     // the Browning excerpt: one verse block per stanza, indent4 → 8 NBSP
@@ -666,7 +671,7 @@ describe('real excerpts (fixtures extracted from the Gutenberg ZIM)', () => {
     const toc = bs.filter((b) => b.t === 'tr');
     assert.equal(toc.length, 48);
     assert.ok(toc.every((r) => r.g === toc[0].g));
-    assert.deepEqual(toc[6].c, [[['6.', 0]], [['And the Cock Crew', 32]], [['Amelia Josephine Burr', 1]], [['57', 0]]]);
+    assert.deepEqual(toc[6].c, [[['6.', 0]], [['And the Cock Crew', 32, { href: '#AND_THE_COCK_CREW' }]], [['Amelia Josephine Burr', 1]], [['57', 0]]]);
     assert.deepEqual(bs.find((b) => b.t === 'h' && text(b).startsWith('CARDINAL')), { t: 'h', l: 3, r: [['CARDINAL MERCIER', 0]] });
     const invictus = bs.find((b) => b.id === 'Page_44');
     assert.equal(invictus.v, 1);
@@ -693,5 +698,76 @@ describe('robustness', () => {
     const ms = performance.now() - t0;
     assert.equal(bs.length, 40000);
     assert.ok(ms < 4000, `took ${ms} ms`);
+  });
+});
+
+describe('links (§3.5)', () => {
+  test('linkTarget: where a link goes, from its document', () => {
+    assert.equal(linkTarget('#Notes', 'C/Ant'), '#Notes');
+    assert.equal(linkTarget('Insect', 'C/Ant'), 'C/Insect');
+    assert.equal(linkTarget('../HIV', 'C/HIV/AIDS'), 'C/HIV');
+    assert.equal(linkTarget('./Bose%E2%80%93Einstein#Hist%C3%B6ry', 'C/Ant'), 'C/Bose\u2013Einstein#Hist\u00f6ry');
+    assert.equal(linkTarget('Bee?action=edit', 'C/Ant'), 'C/Bee');
+    assert.equal(linkTarget('Ant#Life', 'C/Ant'), '#Life', 'a place in the document itself');
+    assert.equal(linkTarget('./Ant', 'C/Ant'), null, 'the document itself: nowhere to go');
+    for (const href of ['#', '', 'https://en.wikipedia.org/wiki/Ant', '//example.org/x', 'mailto:a@example.org', 'data:text/plain,x']) {
+      assert.equal(linkTarget(href, 'C/Ant'), null, href);
+    }
+  });
+
+  test('a link is a run of its own; the runs of one link share its object; spaces stay outside', () => {
+    const [p] = blocks('<p>See <a href="Albert_Einstein">Albert <i>Einstein</i></a>, <a href="#n1">[1]</a> and <a href="https://x.org/">the web</a>.</p>', 'C/Physics');
+    assert.deepEqual(p.r, [
+      ['See ', 0], ['Albert ', 0, { href: 'C/Albert_Einstein' }], ['Einstein', 1, { href: 'C/Albert_Einstein' }],
+      [', ', 0], ['[1]', 0, { href: '#n1' }], [' and the web.', 0],
+    ]);
+    assert.equal(p.r[1][2], p.r[2][2], 'one object: resolving it once resolves every run');
+    assert.deepEqual(validate([p]), []);
+    // An image inside a link (a flag) carries the link's fields with its own.
+    const [flag] = blocks('<p>Born in <a href="Ulm"><img src="./flag.png" width="20" height="12"> Ulm</a>.</p>', 'C/Einstein');
+    assert.deepEqual(flag.r, [['Born in ', 0], ['\uFFFC', 0, { src: 'C/flag.png', w: 20, h: 12, href: 'C/Ulm' }], [' Ulm', 0, { href: 'C/Ulm' }], ['.', 0]]);
+  });
+
+  test('every element id is kept with its block (a block\'s `id` is its first); Parsoid\'s are not', () => {
+    const { blocks: bs, ids } = htmlToBlocks(`<section id="mwAQ"><h2 id="History">History</h2>
+      <p id="p1">One <span id="FNanchor_1">[1]</span> two <a name="Page_7"></a>three.</p></section>
+      <div class="footnote"><p><a id="Footnote_1"></a>A note.</p></div><p>Last.</p><span id="end"></span>`, { docPath: 'C/x' });
+    assert.equal(bs[0].id, 'History', 'not the section wrapper\'s mwAQ');
+    assert.equal(bs[1].id, 'p1');
+    assert.deepEqual([...ids].map(([id, b]) => [id, bs.indexOf(b)]), [['History', 0], ['p1', 1], ['FNanchor_1', 1], ['Page_7', 1], ['Footnote_1', 2]]);
+  });
+
+  test('a contents title keeps the text of a link in its heading (only images are left out)', () => {
+    const { toc } = chunkBlocks(blocks('<h2><a href="#c1">Chapter</a> One <img src="x.png" width="10" height="10"></h2><p id="c1">Text.</p>'));
+    assert.equal(toc[0].title, 'Chapter One');
+  });
+
+  test('linkDocs + chunkBlocks: a place in the book becomes at: [chunk, block]; what is not dropped stays a link', () => {
+    const a = htmlToBlocks(`<h1>A</h1><p><a href="#a2">down</a> <a href="B#b1">there</a> <a href="B">to B</a>
+      <a href="#nope">nowhere</a> <a href="Elsewhere">away</a> <a href="Gone">gone</a></p><p id="a2">Here.</p>`, { docPath: 'C/A' });
+    const b = htmlToBlocks(`<h1>B</h1><p>${'word '.repeat(50)}</p><p id="b1">The place.</p>`, { docPath: 'C/B' });
+    const top = { t: 'h', l: 2, r: [['Part B', 0]] };
+    linkDocs([{ path: 'C/A', blocks: a.blocks, ids: a.ids }, { path: 'C/B', blocks: b.blocks, ids: b.ids, top }], { keep: (path) => path === 'C/Elsewhere' });
+    const { chunks, where } = chunkBlocks([...a.blocks, top, ...b.blocks], { targetChars: 40 });
+    const runs = chunks[0].blocks[1].r;
+    const link = (text) => runs.find((r) => r[0] === text)?.[2];
+    const block = ([c, i]) => chunks[c].blocks[i];
+    assert.equal(text(block(link('down').at)), 'Here.');
+    assert.equal(text(block(link('there').at)), 'The place.');
+    assert.ok(link('there').at[0] > 0, 'in a later chunk');
+    assert.equal(block(link('to B').at), top, 'a document leads to its top block');
+    assert.deepEqual(link('away'), { href: 'C/Elsewhere' }, 'kept: resolved when followed');
+    assert.ok(!runs.some((r) => /nowhere|gone/.test(r[0]) && r.length > 2), 'a place not there, a document not kept: no link');
+    assert.ok(runs.some((r) => r.length === 2 && r[0].includes(' nowhere ')), 'their text merged with the plain text around it');
+    assert.deepEqual(where.get(top), link('to B').at);
+    assert.deepEqual(validate(chunks.flatMap((c) => c.blocks)), []);
+  });
+
+  test('placeLinks: a link to a block that was dropped (a missing image) goes, its text stays', () => {
+    const d = htmlToBlocks('<p>See <a href="#pic">the picture</a>.</p><p id="pic"><img src="gone.png"></p>', { docPath: 'C/d' });
+    linkDocs([{ path: 'C/d', blocks: d.blocks, ids: d.ids }]);
+    const [p] = d.blocks;
+    placeLinks([p], () => undefined);
+    assert.deepEqual(p.r, [['See the picture.', 0]]);
   });
 });

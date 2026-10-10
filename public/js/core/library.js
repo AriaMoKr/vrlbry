@@ -10,7 +10,7 @@
  * archives, so the HTTP layer can send cached bytes without re-serializing.
  */
 import { parseEpub } from './content/epub.js';
-import { blockChars, chunkBlocks, htmlToBlocks, imageSize } from './content/html.js';
+import { blockChars, chunkBlocks, htmlToBlocks, imageSize, isImageRun, linkDocs, linkTarget, placeLinks } from './content/html.js';
 import { platform } from './platform.js';
 import { LRUCache } from './util/lru.js';
 import * as wikipedia from './wikipedia.js';
@@ -154,6 +154,11 @@ export function parseIndexScript(data) {
   const value = JSON.parse(text.slice(start, end + 1));
   if (!Array.isArray(value)) throw new Error('index is not an array');
   return value;
+}
+
+/** The few entities an attribute value written by mwoffliner may hold. */
+function decodeEntities(s) {
+  return s.replace(/&(amp|quot|apos|#39);/g, (m, e) => ({ amp: '&', quot: '"', apos: "'", '#39': "'" })[e]);
 }
 
 /** Decodes HTML bytes: BOM, then a declared charset, else UTF-8. */
@@ -488,6 +493,72 @@ export class ArchiveLibrary {
   }
 
   /**
+   * Where a link that is resolved when followed (`href`, §3.5) leads: a Wikipedia article (its
+   * volume and chunk), a Wikisource work (and the part). ZIM redirects and mwoffliner's redirects
+   * to a section (a tiny page whose <meta http-equiv="refresh"> names it) are followed. Null when
+   * it leads to nothing on the shelves (a file, a page that is not an article, another library).
+   * @param {string} bookId the book the link is in
+   * @param {string} href an archive path, with '#id' for a place in it
+   * @returns {Promise<{ book: string, c: number, b?: number, f?: string } | null>} f: the id of
+   *   the place in chunk c (the reader looks for the block that has it)
+   */
+  async resolveLink(bookId, href) {
+    await this.books();
+    if (typeof href !== 'string' || !href || href[0] === '#' || !this._byId.has(String(bookId))) return null;
+    const hash = href.indexOf('#');
+    let path = hash < 0 ? href : href.slice(0, hash);
+    let f = hash < 0 ? '' : href.slice(hash + 1);
+    const withF = (to) => (f ? { ...to, f } : to);
+    if (this.kind === 'wikipedia') {
+      const idx = this._wikipedia;
+      if (!idx) return null;
+      for (let hops = 0; hops < 4; hops++) {
+        const entry = await this._linkEntry(path);
+        if (!entry) return null;
+        const position = await wikipedia.positionOf(this.archive, idx, entry);
+        if (position >= 0) return withF({ book: `v${Math.floor(position / idx.volumeSize) + 1}`, c: position % idx.volumeSize });
+        const to = await this._refreshTarget(entry);
+        if (!to) return null;
+        const h = to.indexOf('#');
+        path = h < 0 ? to : to.slice(0, h);
+        if (h >= 0) f = to.slice(h + 1);
+      }
+      return null;
+    }
+    if (this.kind === 'wikisource') {
+      const entry = await this._linkEntry(path);
+      if (!entry) return null;
+      this._workByUrl ??= new Map([...this._byId.values()].filter((r) => r.kind === 'wikisource').map((r) => [r.url, r.book.id]));
+      // The work is the page itself or the nearest page above it: a work's parts are its subpages.
+      for (let url = entry.url; url; url = url.slice(0, Math.max(0, url.lastIndexOf('/')))) {
+        const id = this._workByUrl.get(url);
+        if (!id) continue;
+        if (url === entry.url) return withF({ book: id, c: 0, b: 0 });
+        const at = (await this.content(id))?.parts?.get(entry.path);
+        return at ? withF({ book: id, c: at[0], b: at[1] }) : { book: id, c: 0, b: 0 };
+      }
+    }
+    return null;
+  }
+
+  /** The entry a link's path names, past ZIM redirects; null when there is none. */
+  async _linkEntry(path) {
+    const entry = await this.archive.findPath(path).catch(() => null);
+    return entry && this.archive.resolveRedirect(entry).catch(() => null);
+  }
+
+  /** Where a page that only redirects (<meta http-equiv="refresh">) sends its reader, or null. */
+  async _refreshTarget(entry) {
+    if (!/html/i.test(entry.mime ?? '')) return null;
+    const head = await this.archive.getContentHead(entry, 2048).catch(() => null);
+    if (!head) return null;
+    const html = platform.utf8(head.data);
+    const meta = /<meta\b[^>]*http-equiv\s*=\s*["']?refresh[^>]*>/i.exec(html);
+    const url = meta && /content\s*=\s*["']\s*\d*\s*;\s*url\s*=\s*['"]?([^'">]+)/i.exec(meta[0]);
+    return url ? linkTarget(decodeEntities(url[1].trim()), entry.path) : null;
+  }
+
+  /**
    * Every article title of a Wikipedia in title order, with the volume size (§2.5): what a static
    * build (tools/build-pages.mjs) needs to search articles in the browser. Null for other libraries
    * and while indexing.
@@ -809,8 +880,14 @@ export class ArchiveLibrary {
     const content = await this.archive.getContent(entry);
     if (!content) throw new LibraryError(`book ${rec.book.id}: article ${entry.path} has no content`);
     const title = (entry.title || entry.url).replace(/\s+/g, ' ').trim();
-    const blocks = [{ t: 'h', l: 1, r: [[title, 0]] }, ...htmlToBlocks(decodeHtml(content.data), { docPath: content.entry.path }).blocks];
+    const doc = htmlToBlocks(decodeHtml(content.data), { docPath: content.entry.path });
+    const blocks = [{ t: 'h', l: 1, r: [[title, 0]] }, ...doc.blocks];
+    // Links within the article lead to its blocks; those to other articles are resolved when
+    // followed (resolveLink: a lookup each, too many to do for every link as it is converted).
+    linkDocs([{ path: content.entry.path, blocks: doc.blocks, ids: doc.ids, top: blocks[0] }], { keep: true });
     await this._fixImages(blocks, { lookup: (p, opts) => this._zimImage(p, opts), fallback: null, url: (p) => zimUrl(this.id, p), trustSized: !this._checkImages });
+    const where = new Map(blocks.map((b, i) => [b, [n, i]]));
+    placeLinks(blocks, (b) => where.get(b));
     const chars = blocks.reduce((s, b) => s + blockChars(b), 0);
     const chunk = new Chunk(n, meta.chunks[n].start, chars, blocks);
     this._conversions++;
@@ -1178,6 +1255,7 @@ export class ArchiveLibrary {
     const { book } = rec;
     let blocks;
     let source;
+    let docs = null; // a Wikisource work's parts: where links from other works lead (resolveLink)
     const images = (f) => progress(0.1 + 0.9 * f);
     const epubRes = (p) => `/api/libraries/${encodeURIComponent(this.id)}/books/${encodeURIComponent(book.id)}/res/${encodePath(p)}`;
     if (rec.kind === 'wikisource') {
@@ -1185,13 +1263,18 @@ export class ArchiveLibrary {
       const { parts, truncated, total } = await collectWork(this.archive, rec.url, { expectedParts: rec.parts });
       if (!parts.length) throw new LibraryError(`book ${book.id}: the work's pages are missing from the archive`);
       blocks = [];
+      docs = [];
       for (const part of parts) {
         const title = part.depth === 0 ? book.title : partTitle(part.url);
-        blocks.push({ t: 'h', l: Math.min(3, part.depth + 1), r: [[title, 0]] });
-        const out = htmlToBlocks(part.html, { docPath: part.path }).blocks;
+        const top = { t: 'h', l: Math.min(3, part.depth + 1), r: [[title, 0]] };
+        blocks.push(top);
+        const { blocks: out, ids } = htmlToBlocks(part.html, { docPath: part.path });
         for (const b of out) blocks.push(b);
+        docs.push({ path: part.path, blocks: out, ids, top });
         part.html = null;
       }
+      // Links to other works are followed through resolveLink.
+      linkDocs(docs, { keep: true });
       if (truncated) {
         blocks.push({ t: 'hr' }, { t: 'p', a: 'c', r: [[`This edition includes the first ${parts.length} of ${total} parts of the work.`, 1]] });
       }
@@ -1208,7 +1291,9 @@ export class ArchiveLibrary {
       const content = await this.archive.getContent(rec.html);
       if (!content) throw new LibraryError(`book ${book.id}: HTML entry has no content`);
       // Relative links resolve against the entry that actually holds the HTML (after redirects).
-      ({ blocks } = htmlToBlocks(decodeHtml(content.data), { docPath: content.entry.path }));
+      const doc = htmlToBlocks(decodeHtml(content.data), { docPath: content.entry.path });
+      ({ blocks } = doc);
+      linkDocs([{ path: content.entry.path, blocks, ids: doc.ids }]); // links within the book only
       source = 'html';
       images(0);
       await this._fixImages(blocks, {
@@ -1224,10 +1309,13 @@ export class ArchiveLibrary {
     } else if (rec.epub) {
       const epub = await this._epub(rec);
       blocks = [];
+      const epubDocs = [];
       for (const doc of epub.docs) {
-        const out = htmlToBlocks(doc.html, { docPath: doc.path }).blocks;
+        const { blocks: out, ids } = htmlToBlocks(doc.html, { docPath: doc.path });
         for (const b of out) blocks.push(b);
+        epubDocs.push({ path: doc.path, blocks: out, ids });
       }
+      linkDocs(epubDocs); // links within the book only
       source = 'epub';
       images(0);
       await this._fixImages(blocks, {
@@ -1244,8 +1332,10 @@ export class ArchiveLibrary {
       throw new LibraryError(`book ${book.id} has no readable content in this archive`);
     }
 
-    const { chunks, toc, totalChars, tocTruncated } = chunkBlocks(blocks);
+    const { chunks, toc, totalChars, tocTruncated, where } = chunkBlocks(blocks);
     blocks = null;
+    // A work's parts by path: where a link from another work to one of them leads.
+    const parts = docs ? new Map(docs.map((d) => [d.path, where.get(d.top)]).filter(([, at]) => at)) : null;
     const out = chunks.map((c, i) => new Chunk(i, c.start, c.chars, c.blocks));
     chunks.length = 0;
     const meta = {
@@ -1263,8 +1353,9 @@ export class ArchiveLibrary {
     };
     let bytes = 1024 + JSON.stringify(meta).length;
     for (const c of out) bytes += Math.ceil(c.json.length * (1 + GZIP_RESERVE)) + 128;
+    if (parts) for (const p of parts.keys()) bytes += 2 * p.length + 64;
     this._conversions++;
-    return { meta, chunks: out, bytes };
+    return { meta, chunks: out, bytes, ...(parts ? { parts } : {}) };
   }
 
   /**
@@ -1309,9 +1400,9 @@ export class ArchiveLibrary {
       const b = blocks[i];
       if (b.t === 'img') imgs.push(i);
       else if (b.r) {
-        for (const run of b.r) if (run.length > 2) inline.push(run);
+        for (const run of b.r) if (isImageRun(run)) inline.push(run);
       } else if (b.c) {
-        for (const cell of b.c) for (const run of cell) if (run.length > 2) inline.push(run);
+        for (const cell of b.c) for (const run of cell) if (isImageRun(run)) inline.push(run);
       }
     }
     if (!imgs.length && !inline.length) return onProgress(1);
@@ -1367,10 +1458,10 @@ export class ArchiveLibrary {
       const { path: p, info } = await resolve(blk.src, !(blk.w && blk.h));
       if (!info.ok) {
         if (blk.alt) {
-          const para = { t: 'p', r: [[blk.alt, 1]] };
-          if (blk.q) para.q = blk.q;
-          if (blk.id) para.id = blk.id;
-          blocks[i] = para;
+          // The same object, now a paragraph: links that lead to it keep it (placeLinks).
+          const { alt, q, id } = blk;
+          for (const k of Object.keys(blk)) delete blk[k];
+          Object.assign(blk, { t: 'p', r: [[alt, 1]] }, q ? { q } : {}, id ? { id } : {});
         } else {
           drop.add(i);
         }
@@ -1390,7 +1481,7 @@ export class ArchiveLibrary {
       if (info.ok) {
         img.src = url(p);
       } else {
-        // Missing: its alt text in italics, as for block images.
+        // Missing: its alt text in italics, as for block images (a link it was in goes with it).
         run.length = 2;
         run[0] = img.alt || '';
         run[1] |= 1;

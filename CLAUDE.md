@@ -87,6 +87,7 @@ client: api.js ─► rooms.js (what to shelve) ─► World/Bookshelves ─► 
   - `"\n"` inside a run is a hard line break. Optional fields are omitted when they hold their default value.
   - The library layer rewrites image `src` from archive paths to client URLs: `/zim/<lib>/<ns>/<url>`, with each path segment percent-encoded. It also fills in missing image width/height by sniffing the image header bytes.
   - The converter strips scraper-injected nav (`span.zim_*`), page markers (`.pagenum`) and MediaWiki/mwoffliner chrome (`MW_CHROME_CLASSES` / `MW_CHROME_IDS` in `content/html.js`).
+  - **Links** are runs too: `[text, bits, link]`, the link object holding `at: [c, b]` (a place in the same book: references, sections, Gutenberg contents and footnotes, a Wikisource work's parts; tied to their blocks by `linkDocs` and placed by `chunkBlocks`), `href` (an archive path, resolved when followed: `ArchiveLibrary.resolveLink`, the `…/books/:id/link?to=` route, the worker's `link`) or `to: { book, c, b?, f? }` (resolved; the static build turns every `href` into one). An image run in a link carries those fields beside `src`, so tell image runs by `src` (`isImageRun`), never by length. `htmlToBlocks` records every element id (`ids`), not only each block's first; Parsoid's `mw…` ids are skipped so a section heading's `id` is its anchor ("History"). Following: `interaction.followLink` (another volume or work is swapped in) and a back trail (`_trail`; "↩ Back", B/Y, Backspace).
 
 ### Client (`public/js/`)
 

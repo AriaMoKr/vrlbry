@@ -57,6 +57,8 @@ const asFile = (file) => new File([fs.readFileSync(file)], path.basename(file));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 /** Article searches compared for a Wikipedia: a title prefix, a title key ("the"), another name (a redirect), nothing. */
 const SEARCHES = ['ap', 'beatles', 'yellow', 'zz'];
+/** Links resolved for a Wikipedia (resolveLink): an article, ZIM redirects, redirects to a section (also after a redirect), nothing. */
+const LINKS = ['C/Banana', 'C/Beatles', 'C/Apples', 'C/Apple_story', 'C/Zebra_stripes', 'C/Nope'];
 
 /** Waits while `indexing()` reports a Wikipedia's index being built (a test archive: milliseconds). */
 async function indexed(indexing) {
@@ -73,7 +75,10 @@ async function serverAnswers(file, limit = Infinity) {
   try {
     await indexed(async () => (await lib.info()).indexing);
     const out = { info: await lib.info(), books: await lib.books(), byBook: {} };
-    if (out.info.kind === 'wikipedia') out.search = await Promise.all(SEARCHES.map((q) => lib.searchArticles(q, 8)));
+    if (out.info.kind === 'wikipedia') {
+      out.search = await Promise.all(SEARCHES.map((q) => lib.searchArticles(q, 8)));
+      out.links = await Promise.all(LINKS.map((href) => lib.resolveLink(out.books[0].id, href)));
+    }
     for (const book of out.books.slice(0, limit)) {
       const { meta } = await lib.content(book.id).catch((err) => ({ meta: { error: err.message } }));
       const chunks = [];
@@ -93,7 +98,10 @@ async function localAnswers(local, id, limit = Infinity) {
   await indexed(async () => (await local.call('catalog')).value.libraries.find((l) => l.id === id).indexing);
   const { value: catalog } = await local.call('catalog');
   const out = { info: catalog.libraries.find((l) => l.id === id), books: (await local.call('books', { lib: id })).value, byBook: {} };
-  if (out.info.kind === 'wikipedia') out.search = await Promise.all(SEARCHES.map((q) => local.call('articles', { lib: id, q, limit: 8 }).then((r) => r.value)));
+  if (out.info.kind === 'wikipedia') {
+    out.search = await Promise.all(SEARCHES.map((q) => local.call('articles', { lib: id, q, limit: 8 }).then((r) => r.value)));
+    out.links = await Promise.all(LINKS.map((href) => local.call('link', { lib: id, book: out.books[0].id, href }).then((r) => r.value)));
+  }
   for (const book of out.books.slice(0, limit)) {
     const meta = await local.call('meta', { lib: id, book: book.id }).then((r) => r.value, (err) => ({ error: err.message }));
     const chunks = [];
@@ -142,6 +150,15 @@ async function sameAnswers(file, { limit, store = null, onIndexing = null, via =
   if (server.search) {
     assert.deepEqual(fromFile.search, server.search, 'article search');
     assert.ok(server.search[0].some((a) => a.title === 'apple') && server.search[1].some((a) => a.title === 'The Beatles') && server.search[2].some((a) => a.title === 'Banana') && !server.search[3].length, JSON.stringify(server.search));
+  }
+  if (server.links) {
+    assert.deepEqual(fromFile.links, server.links, 'links');
+    const toc = server.byBook.v1?.meta.toc ?? []; // one volume: an article's chunk is its place in it
+    const c = (title) => toc.find((e) => e.title === title).c;
+    assert.deepEqual(server.links, [
+      { book: 'v1', c: c('Banana') }, { book: 'v1', c: c('The Beatles') }, { book: 'v1', c: c('apple'), f: 'History' },
+      { book: 'v1', c: c('apple'), f: 'History' }, { book: 'v1', c: c('Zebra'), f: 'History' }, null,
+    ]);
   }
   assert.ok(Object.values(server.byBook).some((b) => b.chunks.length), 'some text was compared');
   return { local, id: opened.id, server };

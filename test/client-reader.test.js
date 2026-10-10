@@ -122,4 +122,41 @@ describe('reader', () => {
     assert.equal(r.meta.chunks[2].start, 5000 + chars(CHUNKS[1]));
     assert.equal(r.meta.totalChars, 10000 + chars(CHUNKS[1]));
   });
+
+  it('finds the link under a point of a page shown (linkAt) and a place by its id (blockOfId)', async () => {
+    const ln = { href: 'C/Insect' };
+    const blocks = [
+      { t: 'h', l: 1, r: [['Ants', 0]] },
+      { t: 'p', r: [['Ants are ', 0], ['social insects', 0, ln], [' that live in colonies.', 0]] },
+      { t: 'h', l: 2, r: [['Colonies', 0]], id: 'Colonies' },
+      { t: 'h', l: 2, r: [['Life cycle', 0]], id: 'note-1' },
+    ];
+    globalThis.fetch = async (url) => ({
+      ok: true,
+      json: async () => structuredClone(/\/chunks\//.test(url) ? { index: 0, blocks }
+        : { id: 'linked', title: 'Links', chunks: [{ start: 0, chars: 70, blocks: blocks.length }], totalChars: 70, toc: [] }),
+    });
+    const r = new BookReader({ libId: 'lib', book: { id: 'linked', title: 'Links' }, layoutStepMs: 0 });
+    const L = await (await r._layout(0)).complete();
+    r._remember(0, L); // as render() does for a page shown
+    const ref = { c: 0, p: 0 };
+    const M = r.metrics;
+    const [{ y: by, box }] = L.pages[0].boxes.filter(({ box: b }) => b.items.some((i) => i.ln));
+    const item = box.items.find((i) => i.ln);
+    const x = M.marginX + item.x + item.w / 2;
+    const y = M.top + by + item.y - 0.3 * M.size;
+    const found = r.linkAt(ref, x, y);
+    assert.deepEqual(found.link, ln);
+    assert.equal(found.rects.length, 1, 'one line');
+    const [rect] = found.rects;
+    assert.ok(rect.x <= x && x <= rect.x + rect.w && rect.y <= y && y <= rect.y + rect.h, JSON.stringify(rect));
+    assert.deepEqual(r.linkAt(ref, M.marginX + item.x + item.w + 0.2 * M.size, y)?.link, ln, 'a little beside it still takes it');
+    assert.equal(r.linkAt(ref, M.marginX + 2, y), null, 'the plain words before it');
+    assert.equal(r.linkAt(ref, x, y + 4 * M.lineHeight), null, 'lines below');
+    assert.equal(r.linkAt('ex', x, y), null);
+    assert.equal(r.linkAt({ c: 0, p: 5 }, x, y)?.link.href, 'C/Insect', 'a page past the end is the last');
+    assert.equal(await r.blockOfId(0, 'Colonies'), 2);
+    assert.equal(await r.blockOfId(0, 'Life_cycle'), 3, 'a heading by its text, as MediaWiki names sections');
+    assert.equal(await r.blockOfId(0, 'nowhere'), null);
+  });
 });

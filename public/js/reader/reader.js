@@ -10,10 +10,13 @@ import { perf } from '../perf.js';
 import { makeMetrics, ChunkLayout, getMeasurer, FONTS, blockChars } from './layout.js';
 
 export const THEMES = {
-  paper: { paper: '#f6efdf', ink: '#231d16', light: '#8a7a62', rule: '#b9a78a', grain: 0.045, vignette: 'rgba(120,90,40,0.16)', img: 1 },
-  sepia: { paper: '#ecdcbc', ink: '#3b2a17', light: '#8c714b', rule: '#a68a5f', grain: 0.06, vignette: 'rgba(110,70,20,0.22)', img: 0.95 },
-  night: { paper: '#24221f', ink: '#d9d0c0', light: '#8d8473', rule: '#5f574b', grain: 0.05, vignette: 'rgba(0,0,0,0.35)', img: 0.82 },
+  paper: { paper: '#f6efdf', ink: '#231d16', light: '#8a7a62', rule: '#b9a78a', link: '#24508c', grain: 0.045, vignette: 'rgba(120,90,40,0.16)', img: 1 },
+  sepia: { paper: '#ecdcbc', ink: '#3b2a17', light: '#8c714b', rule: '#a68a5f', link: '#2c4c7c', grain: 0.06, vignette: 'rgba(110,70,20,0.22)', img: 0.95 },
+  night: { paper: '#24221f', ink: '#d9d0c0', light: '#8d8473', rule: '#5f574b', link: '#93b4dc', grain: 0.05, vignette: 'rgba(0,0,0,0.35)', img: 0.82 },
 };
+
+/** How far from a link a tap still takes it, in ems (a laser in VR is not exact). */
+const LINK_REACH = 0.35;
 
 const LAYOUT_CACHE = 16;    // chunk layouts kept per reader (Webster's has ~800 chunks)
 const IMAGE_TIMEOUT = 8000;
@@ -346,6 +349,86 @@ export class BookReader {
     return this.refForAnchor({ c: entry.c, b: entry.b });
   }
 
+  /**
+   * The link at (x, y) in page pixels of a page shown (its layout is known), or null: the link
+   * object of the run (SPEC §3.5: `at`, `to` or `href`) and, for a highlight, the rectangles of
+   * its words on the page, one per line. The nearest link within LINK_REACH of the point wins.
+   * @returns {{ link: object, rects: Array<{ x: number, y: number, w: number, h: number }> } | null}
+   */
+  linkAt(ref, x, y) {
+    if (!ref || ref === 'ex') return null;
+    const page = this._knownPage(this._clampRef(ref));
+    if (!page) return null;
+    const M = this.metrics;
+    const reach = LINK_REACH * M.size;
+    const px = x - M.marginX;
+    const py = y - M.top;
+    // An item's rectangle: an image's own; text's advance, from a little above the capitals to
+    // below the descenders.
+    const rectOf = (it, by) => {
+      if (it.k === 'img') return { x: it.x, y: by + it.y, w: it.w, h: it.h };
+      const k = (M.lineHeight * fontPx(it.font, M.size)) / M.size;
+      return { x: it.x, y: by + it.y - 0.8 * k, w: it.w, h: 1.05 * k };
+    };
+    let best = null;
+    let bestD = Infinity;
+    for (const { y: by, box } of page.boxes) {
+      if (py < by - reach - M.lineHeight || py > by + box.h + reach + M.lineHeight) continue;
+      for (const it of box.items) {
+        if (!it.ln) continue;
+        const r = rectOf(it, by);
+        const dx = Math.max(0, r.x - px, px - (r.x + r.w));
+        const dy = Math.max(0, r.y - py, py - (r.y + r.h));
+        if (dx <= reach && dy <= reach && dx + dy < bestD) {
+          bestD = dx + dy;
+          best = it.ln;
+        }
+      }
+    }
+    if (!best) return null;
+    // Its words, joined along each line (a justified line draws them one by one).
+    const rects = [];
+    for (const { y: by, box } of page.boxes) {
+      let line = null;
+      for (const it of box.items) {
+        if (it.ln !== best) continue;
+        const r = rectOf(it, by);
+        if (line && Math.abs(line.y - r.y) < 0.5 * M.lineHeight) {
+          const right = Math.max(line.x + line.w, r.x + r.w);
+          line.y = Math.min(line.y, r.y);
+          line.x = Math.min(line.x, r.x);
+          line.w = right - line.x;
+          line.h = Math.max(line.h, r.h);
+        } else {
+          line = r;
+          rects.push(line);
+        }
+      }
+    }
+    for (const r of rects) {
+      r.x += M.marginX;
+      r.y += M.top;
+    }
+    return { link: best, rects };
+  }
+
+  /**
+   * The block of chunk c that has the id `id` (a place a link names: a section, a note), or
+   * null. A block's `id` is its first; a heading is also found by its text ("History" for
+   * #History), as MediaWiki names sections.
+   */
+  async blockOfId(c, id) {
+    if (!id) return null;
+    await this.load();
+    const blocks = await getChunk(this.libId, this.book.id, Math.max(0, Math.min(this.chunkCount - 1, c | 0)));
+    let i = blocks.findIndex((b) => b.id === id);
+    if (i < 0) {
+      const name = id.replace(/_/g, ' ');
+      i = blocks.findIndex((b) => b.t === 'h' && (b.r || []).map((r) => r[0]).join('').trim() === name);
+    }
+    return i < 0 ? null : i;
+  }
+
   /** Page at a fraction (0..1) of the book's characters. */
   async refForProgress(fraction) {
     const meta = await this.load();
@@ -506,8 +589,10 @@ export class BookReader {
             g.font = it.font;
             font = it.font;
           }
+          if (it.ln) g.fillStyle = t.link;
           g.fillText(it.text, it.x, y + it.y);
           if (it.u) g.fillRect(it.x, y + it.y + 3 * M.k, it.u, Math.max(1, 1.2 * M.k));
+          if (it.ln) g.fillStyle = t.ink;
         } else if (it.k === 'rule') {
           g.fillStyle = t.rule;
           g.fillRect(it.x, y + it.y - it.lw / 2, it.w, it.lw);
@@ -584,6 +669,12 @@ export class BookReader {
     this._cancelLayouts();
     forgetBook(this.libId, this.book.id);
   }
+}
+
+/** The size in px a canvas font string names ("italic 27.6px …"), else `fallback`. */
+function fontPx(font, fallback) {
+  const m = /([\d.]+)px/.exec(font);
+  return m ? +m[1] : fallback;
 }
 
 function ellipsize(g, text, max) {

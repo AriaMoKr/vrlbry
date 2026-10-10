@@ -187,6 +187,27 @@ describe('reader layout', () => {
     assert.ok(cell.h < 60 * k && cell.h <= M.lineHeight);
   });
 
+  it('gives a link\'s draw items its link and advance (text and images); drawn apart from plain text', () => {
+    const ln = { href: 'C/Insect' };
+    const flag = { src: '/f.png', w: 16, h: 12, at: [0, 3] };
+    const blocks = [
+      { t: 'p', a: 'c', r: [['Ants are ', 0], ['social insects', 0, ln], [' and ', 0], ['\uFFFC', 0, flag], [' more.', 0]] },
+      { t: 'p', r: [[`${words(30)} `, 0], ['a linked phrase in a justified paragraph', 0, ln], [` ${words(30)}`, 0]] },
+    ];
+    const [page] = layoutChunk(blocks, M, fake);
+    checkPages([page], blocks);
+    const first = page.boxes[0].box.items; // a centred line: plain and link text in separate items
+    const link = first.find((i) => i.k === 't' && i.ln);
+    assert.equal(link.ln, ln);
+    assert.equal(link.text.trim(), 'social insects');
+    assert.equal(link.w, fake.width(link.text, link.font), 'its advance, for hitting it');
+    assert.ok(first.some((i) => i.k === 't' && !i.ln && i.text.startsWith('Ants are')));
+    assert.equal(first.find((i) => i.k === 'img').ln, flag, 'a linked image');
+    const linked = page.boxes.slice(1).flatMap(({ box }) => box.items).filter((i) => i.ln === ln);
+    assert.equal(linked.map((i) => i.text.trim()).join(' '), 'a linked phrase in a justified paragraph', 'every word of a justified link');
+    assert.ok(linked.every((i) => i.w > 0));
+  });
+
   it('is deterministic and scales with fontScale', () => {
     const blocks = Array.from({ length: 40 }, (_, i) => p(words(100 + i)));
     const a = layoutChunk(blocks, M, fake).map((pg) => pg.firstBlock + ':' + pg.boxes.length);

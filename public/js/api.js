@@ -153,6 +153,20 @@ export function getBookMeta(libId, bookId, { onProgress } = {}) {
   return metaCache.get(key);
 }
 
+/**
+ * Where a link of a book leads, when its chunk left it to be resolved when followed (`href`,
+ * SPEC §3.5): { book, c, b?, f? } (f: the id of the place in chunk c), or null when it leads to
+ * nothing in the library. A static build resolved its links when it was built.
+ */
+export async function resolveLink(libId, bookId, href) {
+  if (local.isLocal(libId)) return local.link(libId, bookId, href);
+  if (staticSite) return null;
+  const res = await fetch(api(`api/libraries/${enc(libId)}/books/${enc(bookId)}/link?to=${enc(href)}`));
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`link ${href}: ${res.status} ${res.statusText}`);
+  return (await res.json()).to;
+}
+
 /** Blocks of chunk `n`. Cached; concurrent calls share one request. */
 export function getChunk(libId, bookId, n) {
   const key = `${libId}\n${bookId}\n${n}`;

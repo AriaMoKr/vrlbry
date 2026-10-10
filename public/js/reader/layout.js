@@ -148,9 +148,14 @@ function smallCapsFlagged(f) {
 // Tokens: words (one or more styled pieces), breakable spaces, hard breaks
 
 /**
- * @typedef {{ text: string, f: object, w: number }} Piece
+ * @typedef {{ text: string, f: object, w: number, ln?: object }} Piece ln: the link it lies in
  * @typedef {{ k: 'w', pieces: Piece[], w: number } | { k: 's', w: number } | { k: 'br' }} Token
  */
+
+/** A run's link (its third element, when that holds `at`, `to` or `href`: SPEC §3.5), or null. */
+export function runLink(x) {
+  return x && (x.at !== undefined || x.to !== undefined || x.href !== undefined) ? x : null;
+}
 
 /** Inline image sizes are CSS px at this font size (SPEC §3.5); they scale with the text. */
 const INLINE_REF_PX = 16;
@@ -161,7 +166,7 @@ function imagePiece(img, f, basePx, maxH) {
   if (img.h * k > maxH) k = maxH / img.h;
   const w = Math.max(1, img.w * k);
   const h = Math.max(1, img.h * k);
-  return { text: '', f, w, img: { src: img.src, alt: img.alt || '', inv: !!img.inv, w, h, va: (img.va || 0) * k } };
+  return { text: '', f, w, ln: runLink(img), img: { src: img.src, alt: img.alt || '', inv: !!img.inv, w, h, va: (img.va || 0) * k } };
 }
 
 /** Shrinks an image piece to `w` wide. */
@@ -171,7 +176,7 @@ function shrinkImage(p, w) {
   p.img = { ...p.img, w, h: p.img.h * k, va: p.img.va * k };
 }
 
-function pushPieces(pieces, text, f, m) {
+function pushPieces(pieces, text, f, m, ln = null) {
   if (!text) return;
   if (f.sc) {
     // Split into runs of lowercase (→ small capitals) and everything else.
@@ -181,19 +186,19 @@ function pushPieces(pieces, text, f, m) {
       if (mm[1]) {
         const sf = smallCapsFont(f);
         const t = mm[1].toUpperCase();
-        pieces.push({ text: t, f: sf, w: m.width(t, sf.font) });
+        pieces.push({ text: t, f: sf, w: m.width(t, sf.font), ln });
       } else {
-        pieces.push({ text: mm[2], f, w: m.width(mm[2], f.font) });
+        pieces.push({ text: mm[2], f, w: m.width(mm[2], f.font), ln });
       }
     }
     return;
   }
   const last = pieces[pieces.length - 1];
-  if (last && last.f === f && !last.img) {
+  if (last && last.f === f && !last.img && last.ln === ln) {
     last.text += text;
     last.w = m.width(last.text, f.font);
   } else {
-    pieces.push({ text, f, w: m.width(text, f.font) });
+    pieces.push({ text, f, w: m.width(text, f.font), ln });
   }
 }
 
@@ -213,13 +218,14 @@ function tokenize(runs, basePx, bold, mono, m, imgMaxH = Infinity) {
     tokens.push({ k: 'w', pieces, w });
     pieces = [];
   };
-  for (const [text, bits, img] of runs) {
+  for (const [text, bits, x] of runs) {
     if (!text) continue;
     let f = fontFor(bits, basePx, bold, mono);
-    if (img) {
-      pieces.push(imagePiece(img, f, basePx, imgMaxH));
+    if (x?.src !== undefined) { // an image run
+      pieces.push(imagePiece(x, f, basePx, imgMaxH));
       continue;
     }
+    const ln = runLink(x);
     if (bits & STYLE.SMALLCAPS) f = smallCapsFlagged(f);
     const parts = text.split(/(\n| +)/);
     for (const part of parts) {
@@ -233,7 +239,7 @@ function tokenize(runs, basePx, bold, mono, m, imgMaxH = Infinity) {
         if (prev && prev.k === 's') continue;
         tokens.push({ k: 's', w: m.width(' ', f.font) });
       } else {
-        pushPieces(pieces, part, f, m);
+        pushPieces(pieces, part, f, m, ln);
       }
     }
   }
@@ -279,8 +285,8 @@ function splitWord(word, avail, m) {
         curW = 0;
       }
       const last = cur[cur.length - 1];
-      if (last && last.f === p.f && !last.img) last.text += ch;
-      else cur.push({ text: ch, f: p.f, w: 0 });
+      if (last && last.f === p.f && !last.img && last.ln === p.ln) last.text += ch;
+      else cur.push({ text: ch, f: p.f, w: 0, ln: p.ln });
       curW += w;
     }
   }
@@ -385,14 +391,15 @@ function lineItems(line, x0, avail, align, justify, baseline) {
   let x = x0;
   if (align === 'c') x = x0 + Math.max(0, (avail - line.w) / 2);
   else if (align === 'r') x = x0 + Math.max(0, avail - line.w);
-  // Merge consecutive same-font pieces into one fillText when not justifying (fewer draw calls).
+  // Merge consecutive same-font pieces into one fillText when not justifying (fewer draw calls);
+  // a link's text is drawn apart (in its colour) and knows its link (`ln`).
   let run = null;
-  const emit = (text, f, w) => {
-    if (!extra && run && run.f === f) {
+  const emit = (text, f, w, ln) => {
+    if (!extra && run && run.f === f && run.ln === ln) {
       run.text += text;
       run.w += w;
     } else {
-      run = { k: 't', x, y: baseline + f.dy, text, f, w };
+      run = { k: 't', x, y: baseline + f.dy, text, f, w, ln };
       items.push(run);
     }
     x += w;
@@ -415,15 +422,25 @@ function lineItems(line, x0, avail, align, justify, baseline) {
       if (p.img) {
         // Bottom at the baseline, moved by its vertical-align (positive raises).
         const im = p.img;
-        items.push({ k: 'img', x, y: baseline - im.va - im.h, w: im.w, h: im.h, src: im.src, alt: im.alt, inv: im.inv });
+        const item = { k: 'img', x, y: baseline - im.va - im.h, w: im.w, h: im.h, src: im.src, alt: im.alt, inv: im.inv };
+        if (p.ln) item.ln = p.ln;
+        items.push(item);
         x += p.w;
         run = null;
       } else {
-        emit(p.text, p.f, p.w);
+        emit(p.text, p.f, p.w, p.ln ?? null);
       }
     }
   }
-  return items.map((it) => (it.k === 'img' ? it : { k: 't', x: it.x, y: it.y, text: it.text, font: it.f.font, u: it.f.u ? it.w : 0 }));
+  return items.map((it) => {
+    if (it.k === 'img') return it;
+    const out = { k: 't', x: it.x, y: it.y, text: it.text, font: it.f.font, u: it.f.u ? it.w : 0 };
+    if (it.ln) {
+      out.ln = it.ln;
+      out.w = it.w;
+    }
+    return out;
+  });
 }
 
 /**

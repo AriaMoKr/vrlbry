@@ -97,8 +97,35 @@
   - *After the merge* (2026-10-10): work goes on `main` directly; the standalone and cloud sites
     are parked (they served their purpose and may be used later), each still deploying from its
     own branch if pushed.
-- **Wikipedia: follow links** (later). Tapping a link in an article goes to that article, taking
-  its volume off the shelf if needed. The reader cannot follow links today.
+- **Links in books** (done 2026-10-10, SPEC §3.5). Tapping a link follows it: a Wikipedia's
+  references and sections, Gutenberg's contents and footnotes and a Wikisource work's parts
+  within the book (resolved as it is converted), a Wikipedia's other articles and a Wikisource's
+  other works when followed (the library's `resolveLink`, the link route; a static build
+  resolves them all beforehand). Another volume or work is swapped in (put back, taken out,
+  opened at the place); "↩ Back", B/Y and Backspace go back along the links followed. Measured
+  on the PC (dev server, Simple English): Einstein's 224 links resolve in 0.5 ms each; following
+  one into another volume takes 3.6 s, most of it the put back / take out animations; within a
+  book a link is a page turn (0.7 s). Wikipedia 100's static build resolved 1,485 links in its
+  9 s. Not yet tried on a Quest. Later:
+  - *Faster swaps:* following a link into another volume flies the book to its shelf and the
+    other out (~3 s); a quicker exchange (the old volume vanishing onto its shelf, the new one
+    arriving at once) may suit following many links.
+  - *Fewer lookups over the network:* a link to another article costs a URL lookup and a title
+    search (each a binary search: ~20 reads, ~2-6 s on Kiwix's mirror when nothing is cached).
+    A link's `title` (mwoffliner writes it) could go straight to the title search.
+  - *Other books' links:* Gutenberg links to other Gutenberg books, generic ZIMs' links between
+    their articles, and EPUB links out of the book are dropped (in-book ones work).
+  - *Long-press for where a link goes:* in VR a tooltip with the target's title before following.
+- **Reset stored data** (asked 2026-10-10). A way to start afresh: clear what the page keeps in
+  this browser (settings, reading positions, recently read, the saved scene, remembered web
+  addresses and file handles in localStorage and IndexedDB, the indexes and the block cache), from
+  the help dialog and the kiosk, with a confirmation, and a choice of what to keep (e.g. keep the
+  indexes, which take long to build). The three sites share one origin's storage (sites are
+  flavours): a reset clears it for all three, so it should say so.
+- **The kiosk opens on its Kiwix tab on a first visit** (asked 2026-10-10). On a new or fresh load
+  (nothing saved) the kiosk shows Kiwix's library first: what a new visitor most likely wants
+  (the card already lists it first). Today it opens on Shelves & settings (`_kioskTab =
+  'shelves'`); a returning visitor's last tab could be remembered instead.
 - **Garbage collection pauses** are now the main source of dropped frames on a Quest 3. The
   atlas stalls are fixed (run 2026-10-05 03:37: walking the hall 9.1 % → 0.1 % dropped, an
   ordinary room 5.4 % → 1.8 %, no drop before an atlas arrived, down from 343 of 406), and of

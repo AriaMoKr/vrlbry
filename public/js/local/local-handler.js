@@ -166,6 +166,11 @@ export function createLocalLibraries({
       return { value: await lib(id).searchArticles(q, limit) };
     },
 
+    /** Where a link of a book leads (resolveLink): as the server's route; null when nowhere. */
+    async link({ lib: id, book, href }) {
+      return { value: await lib(id).resolveLink(book, href) };
+    },
+
     async meta({ lib: id, book }, { onProgress } = {}) {
       const l = lib(id);
       if (!(await l.book(book))) throw new LocalError(`unknown book: ${book}`);
