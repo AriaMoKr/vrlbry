@@ -16,7 +16,7 @@ import { KINDS as KIWIX_KINDS, indexLabel, sizeText } from './local/kiwix.js';
 import { letterOf, SORT_MODES, inTitleOrder, thumbIndex } from './util/books.js';
 import { PAGE_PX, READ } from './config.js';
 import {
-  ALL_PLACE, capNote, collectionsFor, currentPlace, facetsOf, genreLabel, groupPlaces, isFaceted, normRoom, placeBookCount, placeFor, roomLabel, sameRoom, unitOf, ROOM_CAP,
+  ALL_PLACE, capNote, collectionsFor, currentPlace, facetsOf, genreLabel, groupPlaces, isFaceted, normRoom, pagesOf, placeBookCount, placeFor, roomLabel, sameRoom, unitOf, ROOM_CAP,
 } from './rooms.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
@@ -517,10 +517,12 @@ export class Interaction {
     const room = normRoom(this.settings.rooms?.[place.id]) || { genre: null, letter: null };
     const { genres, letters } = facetsOf(books, room);
     const total = genres.reduce((n, g) => n + (!room.genre || g.name === room.genre ? g.count : 0), 0);
-    const filtered = !!(room.genre || room.letter);
+    const pages = pagesOf(total);
+    const page = Math.min(room.page ?? 0, pages - 1);
+    const filtered = !!(room.genre || room.letter || page);
     p.add({
       type: 'text', x: pad, y: y + 6, w: W - 2 * pad - (filtered ? 230 : 0), h: 34, size: 24, color: UI.text, maxLines: 1,
-      text: `Now: ${roomLabel(room)} · ${total.toLocaleString()} works${capNote(place, total)}`,
+      text: `Now: ${roomLabel(room)} · ${total.toLocaleString()} works${capNote(place, total, page)}`,
     });
     if (filtered) {
       p.add({
@@ -529,6 +531,24 @@ export class Interaction {
       });
     }
     y += 54;
+    // A room holding more than the shelves take: its pages of ROOM_CAP (by popularity for Gutenberg).
+    if (pages > 1) {
+      const n = ROOM_CAP.toLocaleString();
+      const bw = 250;
+      p.add({
+        id: 'room-prev', type: 'button', x: pad, y, w: bw, h: 46, label: `◀ Previous ${n}`, size: 21,
+        disabled: page === 0, onClick: () => this.turnPage(place.id, -1),
+      });
+      p.add({
+        type: 'text', x: pad + bw + 10, y: y + 8, w: W - 2 * pad - 2 * bw - 20, h: 30, size: 21, color: UI.muted, maxLines: 1, align: 'center',
+        text: `Page ${page + 1} of ${pages}`,
+      });
+      p.add({
+        id: 'room-next', type: 'button', x: W - pad - bw, y, w: bw, h: 46, label: `Next ${n} ▶`, size: 21,
+        disabled: page >= pages - 1, onClick: () => this.turnPage(place.id, 1),
+      });
+      y += 54;
+    }
     p.add({ type: 'text', x: pad, y, w: W - 2 * pad, h: 30, text: 'Genre · tap again to remove', size: 21, color: UI.muted, maxLines: 1 });
     y += 34;
     // Every genre in a list, named (Gutenberg's LCC classes: genreLabel), largest first: 40 for
@@ -714,7 +734,14 @@ export class Interaction {
   toggleFilter(libId, key, value) {
     const room = normRoom(this.settings.rooms?.[libId]) || { genre: null, letter: null };
     room[key] = room[key] === value ? null : value;
+    delete room.page; // another room: from its first page
     return this.setRoom(libId, room);
+  }
+
+  /** Shelves the next (`delta` 1) or previous (-1) page of a large library's room. */
+  turnPage(libId, delta) {
+    const room = normRoom(this.settings.rooms?.[libId]) || { genre: null, letter: null };
+    return this.setRoom(libId, normRoom({ ...room, page: Math.max(0, (room.page ?? 0) + delta) }) ?? room);
   }
 
   /** Makes sure a book is on the shelves, switching library / room if needed. */

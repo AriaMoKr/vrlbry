@@ -8,8 +8,19 @@
 
 import { letterOf, sortBooks } from './util/books.js';
 
-/** Most books a room shelves at once (~26 bookcases). */
-export const ROOM_CAP = 3000;
+/**
+ * Most books a room shelves at once (~26 bookcases; more are shelved a page at a time). The page
+ * address's `?roomcap=<n>` (500-30,000) sets another, for measuring bigger rooms on a headset.
+ */
+export const ROOM_CAP = (() => {
+  let n = NaN;
+  try {
+    n = Number(new URLSearchParams(globalThis.location?.search ?? '').get('roomcap'));
+  } catch {
+    // no page address (Node)
+  }
+  return Number.isInteger(n) && n >= 500 && n <= 30000 ? n : 3000;
+})();
 /**
  * The place that shelves every library whole in one hall — no filters, no cap (an experiment:
  * ~18,000 books is ~160 bookcases, past the Quest's comfortable draw-call budget).
@@ -136,7 +147,9 @@ export function normRoom(room) {
   if (!room) return null;
   if (room.type === 'genre') return { genre: room.value, letter: null };
   if (room.type === 'letter') return { genre: null, letter: room.value };
-  return { genre: room.genre ?? null, letter: room.letter ?? null };
+  // `page`: which ROOM_CAP of a room holding more are shelved (shelfCollections), kept only past the first.
+  const page = Number.isInteger(room.page) && room.page > 0 ? room.page : 0;
+  return { genre: room.genre ?? null, letter: room.letter ?? null, ...(page ? { page } : {}) };
 }
 
 /**
@@ -192,11 +205,20 @@ export function roomFor(book, books) {
  */
 export const capsByPopularity = (library) => library?.kind === 'gutenberg';
 
-/** What a room's count says when it holds more than are shelved: " (the 3,000 most read)", " (first 3,000)", or ''. */
-export function capNote(library, total) {
+/**
+ * What a room's count says when it holds more than are shelved: " (the 3,000 most read)" or
+ * " (first 3,000)" on its first page, " (most read 3,001–6,000)" or " (3,001–6,000)" past it, or ''.
+ */
+export function capNote(library, total, page = 0) {
   if (total <= ROOM_CAP) return '';
-  return capsByPopularity(library) ? ` (the ${ROOM_CAP.toLocaleString()} most read)` : ` (first ${ROOM_CAP.toLocaleString()})`;
+  const popular = capsByPopularity(library);
+  if (!page) return popular ? ` (the ${ROOM_CAP.toLocaleString()} most read)` : ` (first ${ROOM_CAP.toLocaleString()})`;
+  const range = `${(page * ROOM_CAP + 1).toLocaleString()}–${Math.min(total, (page + 1) * ROOM_CAP).toLocaleString()}`;
+  return popular ? ` (most read ${range})` : ` (${range})`;
 }
+
+/** How many pages of ROOM_CAP a room of `total` books has (1 when it fits). */
+export const pagesOf = (total) => Math.max(1, Math.ceil(total / ROOM_CAP));
 
 /** Human label of a room. */
 export function roomLabel(room) {
@@ -208,7 +230,7 @@ export function roomLabel(room) {
 export function sameRoom(a, b) {
   const x = normRoom(a);
   const y = normRoom(b);
-  return !!x && !!y && x.genre === y.genre && x.letter === y.letter;
+  return !!x && !!y && x.genre === y.genre && x.letter === y.letter && (x.page ?? 0) === (y.page ?? 0);
 }
 
 /**
@@ -250,7 +272,7 @@ export function collectionsFor(libraries, booksByLib, settings) {
   return shelfCollections([lib], booksByLib, settings.rooms, settings.sort).map((c) => ({
     ...c,
     subtitle: c.room
-      ? `${roomLabel(c.room)} · ${c.total.toLocaleString()} works${capNote(lib, c.total)}`
+      ? `${roomLabel(c.room)} · ${c.total.toLocaleString()} works${capNote(lib, c.total, c.page)}`
       : lib.kind === 'wikipedia' ? volumesSubtitle(lib, c.total) : undefined,
   }));
 }
@@ -289,12 +311,18 @@ export function shelfCollections(libraries, booksByLib, rooms, sort) {
     if (room) rooms[library.id] = room;
     // Filter the library's (cached) sorted order rather than sorting the room on every switch.
     const matching = room ? sortBooks(all, sort).filter((b) => inRoom(b, room)) : [];
-    let books = matching.slice(0, ROOM_CAP);
+    // A room holding more than ROOM_CAP is shelved a page at a time: a Gutenberg ZIM's by
+    // popularity (its most read, then the next…: the cached popularity order), shelved in the
+    // chosen order; another's in the chosen order itself.
+    const pages = pagesOf(matching.length);
+    const page = Math.min(room?.page ?? 0, pages - 1);
+    if (room && (room.page ?? 0) !== page) rooms[library.id] = room = normRoom({ ...room, page });
+    const from = page * ROOM_CAP;
+    let books = matching.slice(from, from + ROOM_CAP);
     if (matching.length > ROOM_CAP && capsByPopularity(library) && sort !== 'popularity') {
-      // The most read of the room (the cached popularity order), shelved in the chosen order.
-      const top = new Set(sortBooks(all, 'popularity').filter((b) => inRoom(b, room)).slice(0, ROOM_CAP));
-      books = matching.filter((b) => top.has(b));
+      const band = new Set(sortBooks(all, 'popularity').filter((b) => inRoom(b, room)).slice(from, from + ROOM_CAP));
+      books = matching.filter((b) => band.has(b));
     }
-    return { library, room, total: matching.length, capped: matching.length > ROOM_CAP, books };
+    return { library, room, total: matching.length, capped: matching.length > ROOM_CAP, page, pages, books };
   });
 }

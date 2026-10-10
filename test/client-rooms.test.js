@@ -4,7 +4,7 @@ import { describe, it } from 'node:test';
 import { EXAMPLE_ZIM } from '../public/js/local/local.js';
 import {
   ROOM_CAP, ALL_PLACE, DEMO_PLACE, DEMO_LIBRARIES, LOCAL_PLACE, groupPlaces, isDemoLibrary, isLocalLibrary, placeBookCount, isFaceted, facetsOf, inRoom, defaultRoom, roomFor, roomLabel, sameRoom, normRoom, shelfCollections, collectionsFor,
-  genreLabel, LCC_NAMES, capNote,
+  genreLabel, LCC_NAMES, capNote, pagesOf,
   currentPlace, placeFor,
 } from '../public/js/rooms.js';
 
@@ -293,5 +293,42 @@ describe('rooms: a capped Gutenberg room shelves its most read books', () => {
     assert.equal(capNote(big, N), ' (the 3,000 most read)');
     assert.equal(capNote(generic, N), ' (first 3,000)');
     assert.equal(capNote(big, ROOM_CAP), '');
+  });
+
+  it('shelves a room a page at a time: the next most read, and so on', () => {
+    const shelve = (room, sort = 'title') => {
+      const rooms = { big: room };
+      const [c] = shelfCollections([big], { big: pgBig }, rooms, sort);
+      return { ...c, saved: rooms.big };
+    };
+    assert.equal(pagesOf(N), 3);
+    const pages = [0, 1, 2].map((page) => shelve({ genre: null, letter: null, ...(page ? { page } : {}) }));
+    assert.deepEqual(pages.map((c) => [c.page, c.pages, c.books.length]), [[0, 3, 3000], [1, 3, 3000], [2, 3, 1000]]);
+    for (const [i, c] of pages.entries()) {
+      const ranks = c.books.map((b) => b.rank);
+      assert.ok(Math.min(...ranks) === i * ROOM_CAP + 1 && Math.max(...ranks) === Math.min(N, (i + 1) * ROOM_CAP), `page ${i}: ranks ${i * ROOM_CAP + 1}-`);
+      assert.deepEqual(c.books.map((b) => b.title), [...c.books.map((b) => b.title)].sort(), 'in title order');
+    }
+    assert.equal(new Set(pages.flatMap((c) => c.books)).size, N, 'every book on one page');
+    // Past the last page (the room shrank): its last, and saved so.
+    const past = shelve({ genre: 'PS', letter: null, page: 5 });
+    assert.equal(past.page, 1);
+    assert.deepEqual(past.saved, { genre: 'PS', letter: null, page: 1 });
+    // By popularity: the same bands, in that order.
+    assert.deepEqual(shelve({ genre: null, letter: null, page: 1 }, 'popularity').books.map((b) => b.rank), Array.from({ length: ROOM_CAP }, (_, i) => ROOM_CAP + i + 1));
+    // The note says which page.
+    assert.equal(capNote(big, N, 1), ' (most read 3,001–6,000)');
+    assert.equal(capNote(big, N, 2), ' (most read 6,001–7,000)');
+    assert.equal(capNote({ kind: 'generic' }, N, 1), ' (3,001–6,000)');
+    assert.equal(collectionsFor([big], { big: pgBig }, { place: 'big', sort: 'title', rooms: { big: { genre: null, letter: null, page: 2 } } })[0].subtitle,
+      'All books · 7,000 works (most read 6,001–7,000)');
+  });
+
+  it('keeps a page only past the first, and tells rooms apart by it', () => {
+    assert.deepEqual(normRoom({ genre: 'PS', letter: null, page: 0 }), { genre: 'PS', letter: null });
+    assert.deepEqual(normRoom({ genre: 'PS', letter: null, page: 2 }), { genre: 'PS', letter: null, page: 2 });
+    assert.deepEqual(normRoom({ genre: 'PS', page: -1 }), { genre: 'PS', letter: null });
+    assert.equal(sameRoom({ genre: 'PS', letter: null }, { genre: 'PS', letter: null, page: 1 }), false);
+    assert.equal(sameRoom({ genre: 'PS', letter: null, page: 0 }, { genre: 'PS', letter: null }), true);
   });
 });
