@@ -65,6 +65,19 @@
     the app opened Golf from there and read Tiger Woods with its picture). Git's 100 MB limit
     does not apply: the files never enter the repo. Pages documents 1 GB per site, 100 GB a month
     of bandwidth and a 10-minute deploy timeout, no limit per file.
+  - *A cold CDN cache costs seconds per big file* (tested the same day: Pages is served by Fastly,
+    whose `x-cache`, `age` and `x-served-by` headers say which city's cache answered and whether
+    it had the file). The first request for a file in each city (San Jose, Los Angeles, Burbank
+    from here; the servers of a city share one cache) waits while Fastly fetches the whole file
+    from GitHub, even for an 80-byte range: a 138 MB ZIM 2.1-3.8 s, a 318 MB one 4.4 s, a small
+    file under 0.1 s. Not tied to the deploy: 4 s after it 3.8 s, 15 min after 2.1 and 3.0 s, 45
+    min after 2.7 s. Afterwards that city's copy stays: past its 10 minutes (`max-age=600`) it is
+    only revalidated (~0.09 s), never fetched whole again (none evicted within the hour
+    watched). So warming the cache after a deploy would not help: requests from the workflow's
+    runner warm only the cities near it, and each city pays one miss per file per deploy. What
+    would: smaller files. A ZIM shipped in parts of 8-16 MB (libzim's split ZIMs, `.zimaa`,
+    `.zimab`…; the HTTP source reading across them) would make any miss ~0.25 s; Golf whole
+    makes the app's first read of it wait ~3 s in a city that has not had it.
 - **Wikipedia: follow links** (later). Tapping a link in an article goes to that article, taking
   its volume off the shelf if needed. The reader cannot follow links today.
 - **Garbage collection pauses** are now the main source of dropped frames on a Quest 3. The
