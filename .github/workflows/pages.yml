@@ -51,8 +51,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 345
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -60,7 +60,7 @@ jobs:
       - run: npm test
       # The demo set, cached until the list changes: pre-rendered ones in .demo/render, the ZIMs
       # shipped as files in .demo/files (a line's second word "file").
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: .demo
           key: demo-set-${{ hashFiles('tools/demo-set.txt') }}
@@ -80,7 +80,7 @@ jobs:
           ZIM_PROXY: ${{ vars.ZIM_PROXY }}
         run: npm run build:pages -- --zims .demo/render --zim-files .demo/files ${ZIM_PROXY:+--zim-proxy "$ZIM_PROXY"}
       # Prebuilt indexes: the cache of earlier runs, the release's assets, and (by hand) new builds.
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@v6
         with:
           path: .indexes
           key: indexes-${{ github.run_id }}
@@ -101,7 +101,7 @@ jobs:
         continue-on-error: true
         run: node tools/build-indexes.mjs --out .indexes --prune
       - if: inputs.prebuilt_indexes && !cancelled()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: .indexes
           key: indexes-${{ github.run_id }}
@@ -109,9 +109,10 @@ jobs:
         run: |
           node tools/build-indexes.mjs --out .indexes --ship dist --budget-mb 950
           du -sh dist
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: dist
+          include-hidden-files: true
 
   deploy:
     needs: build
@@ -121,4 +122,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
