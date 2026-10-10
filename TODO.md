@@ -480,7 +480,11 @@
            ("PS · 11.2k"), 18 of the 40. Now the first room is all books, a Gutenberg room over
            the cap shelves its 3,000 most read in the chosen order (the default sort is by
            title, so "the first 3,000" were "$1,000 a Plate" and on), and the kiosk lists every
-           genre by name (SPEC §5, rooms). Left for later: the items under steps 6 and 7 (a more
+           genre by name (SPEC §5, rooms). On the Quest (live site): English Gutenberg opens on
+           all books, its 3,000 most read (by popularity Frankenstein, Moby Dick, Romeo and
+           Juliet first; by title the same books from "1000 Mythological Characters"), frames
+           at 90 Hz; switching to title order took 2.1 s, choosing American literature from the
+           list 1.9 s (its 3,000 most read of 11,188). Left for later: the items under steps 6 and 7 (a more
            compact index, other languages, keeping popular reads at the edge, CORS on the
            mirrors, then following Kiwix's redirect).
     - *Keep files across reloads (done 2026-10-08):* where the browser gives file handles (the
