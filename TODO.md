@@ -257,7 +257,7 @@
            request, so every answer's total size and Last-Modified must match the first's.
            Retries with backoff, at most 6 requests in flight, and a block size per archive
            (`blockBytes`). Tested against a local server (`test/http-source.test.js`).
-        2. *Measured on the PC (2026-10-10; the Quest still to do, its adb was disconnected):*
+        2. *Measured on the PC and a Quest 3 (2026-10-10):*
            Node and the built-in browser, from mirror.download.kiwix.org, with the local
            library's settings and the indexes built here: Gutenberg LCC-P (37 MB), Chemistry
            mini (25 MB), the top 1M (49 GB). A round trip took 0.3–0.8 s and one answer came
@@ -297,9 +297,21 @@
              book in 1.4 s; Chemistry opens in 3.3 s, a search takes 4.0 s, a volume 2.3 s, an
              article 1.2 s; the top 1M opens in 5.5 s, Albert Einstein is found in 9.7 s, his
              volume opens in 2.3 s and the article in 1.0 s (from 39 s + 65 s).
-           - *Chrome caches the mirror's range answers* (no Cache-Control, so heuristic
-             freshness from Last-Modified): a second visit opened LCC-P in 0.1 s. Check the
-             Quest Browser before building step 4.
+           - *On a Quest 3* (Quest Browser 152, over Wi-Fi, driven over adb and DevTools, cold):
+             about the same as the PC's browser, so the network sets the pace, not the headset.
+             LCC-P opens in 5.7 s, a book in 1.0 s; Chemistry opens in 2.1 s, searches in
+             3.4 s, a volume 1.4 s, an article 0.7 s; the top 1M opens in 6.3 s, finds Albert
+             Einstein in 9.9 s, his volume in 2.2 s, the article in 0.7 s. With the settings of
+             files (64 KB blocks, image checks) the top 1M's search took 15.9 s and the article
+             54.7 s.
+           - *The browser's HTTP cache* keeps the mirror's range answers (it sends Last-Modified
+             and no Cache-Control: heuristic freshness), Chrome and Quest Browser alike, but
+             once it holds a URL it serializes range requests on it: 8 at once took 1.3 s
+             instead of 0.17 s (in turn, 160 ms each). With it the Quest's second visit searched
+             the top 1M in 18.5 s, without it (`no-store`) 9.9 s but every open from the network
+             again. Now a request made while others run asks for `no-store` and one alone uses
+             the cache: second visit on the Quest, LCC-P opens in 0.2 s, Chemistry in 0.1 s,
+             the top 1M in 1.2 s (search 8.6 s, article 0.2 s).
            - *Still slow:* the search (33 reads on Chemistry, 110 on the top 1M: a binary
              search is a round trip per step, and each redirect is placed in title order by
              another). Step 6's indexes could carry what makes it free (titles, the redirects'
@@ -312,8 +324,10 @@
            server without CORS or ranges. Works with no cache, index or proxy at all.
         4. A persistent block cache (optional): fetched blocks kept in IndexedDB by the ZIM's
            UUID and block, within a budget, oldest out first, so a library or book read once
-           costs no network again (browsers do not reliably keep 206 answers). Read-through:
-           a miss, quota error or no IndexedDB just reads from the source.
+           costs no network again. Read-through: a miss, quota error or no IndexedDB just reads
+           from the source. Step 2 found that the browser's cache already serves reads made one
+           at a time (opens, binary searches) on a second visit, but not reads made together
+           (a search's and a volume's), which it would only queue: this would cover those.
         5. A Kiwix library to choose from (optional): the ZIMs the app reads well (Gutenberg,
            Wikipedia, Wikisource) from OPDS, filtered or curated into JSON in the repo, in the
            overlay and on the kiosk in VR (no file picker there). A URL can still be typed,

@@ -5,6 +5,11 @@
 // Only the `Range` header is sent: Kiwix's mirror allows no other in a CORS request (not
 // `If-Range`), so a file replaced mid-session (a new edition at the same URL) is caught after the
 // fact instead: every answer's total size (Content-Range) and Last-Modified must match the first.
+//
+// A browser keeps range answers in its HTTP cache, but once it holds a URL it serializes range
+// requests on it: 8 reads at once took 1.3 s instead of 0.17 s (Chrome and Quest Browser, the
+// Kiwix mirror). So a request made while others run bypasses the cache (`no-store`); one on its
+// own (an open, a binary search's step) uses it, and the next visit is served from it.
 
 /** Thrown for what an HTTP source cannot do: no ranges, a changed file, a failing server. */
 export class HttpSourceError extends Error {
@@ -142,6 +147,8 @@ export class HttpSource {
         res = await this._fetch(this.url, {
           headers: { Range: `bytes=${position}-${position + length - 1}` },
           signal: timeout.signal,
+          // Others running (this one counts too): past the browser's cache, which would queue it.
+          ...(this._running > 1 ? { cache: 'no-store' } : {}),
         });
       } catch (err) {
         if (this._closed) throw new HttpSourceError(`${this.name}: closed`, { cause: err });

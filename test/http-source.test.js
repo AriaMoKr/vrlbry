@@ -133,6 +133,27 @@ describe('ZIMs over HTTP (HttpSource)', () => {
     }
   });
 
+  it('uses the browser cache for a read on its own, not for reads made together (it would queue them)', async () => {
+    const file = writeGutenbergZim(path.join(tmp, 'g7.zim')).filePath;
+    const { url } = serve(file);
+    const modes = [];
+    const recording = (u, init) => {
+      modes.push(init?.cache ?? 'default');
+      return fetch(u, init);
+    };
+    const src = await HttpSource.open(url, { fetch: recording });
+    await src.read(0, 10);
+    await src.read(100, 10);
+    assert.deepEqual(modes, ['default', 'default', 'default'], 'the probe and two reads one after another');
+    modes.length = 0;
+    await Promise.all([0, 1, 2, 3].map((k) => src.read(k * 1000, 10)));
+    assert.deepEqual(modes, ['no-store', 'no-store', 'no-store', 'no-store']);
+    modes.length = 0;
+    await src.read(5000, 10);
+    assert.deepEqual(modes, ['default'], 'alone again');
+    await src.close();
+  });
+
   it('finds the size with a HEAD when Content-Range cannot be read', async () => {
     const file = writeGutenbergZim(path.join(tmp, 'g2.zim')).filePath;
     const { url } = serve(file, { mode: 'no-content-range' });

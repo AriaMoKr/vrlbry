@@ -326,7 +326,12 @@ otherwise the file changed on the server (a new edition at the same URL) and the
 browser's limit per host over HTTP/1.1); network errors, timeouts (`timeoutMs`, 30 s) and
 408/425/429/5xx are tried again (`retries`, 3, waiting 0.5, 1, 2 s); a CORS refusal looks
 like a network error to a page, so the final message says it may be one. `close()` aborts the
-requests and rejects the queued reads. `stats` counts reads, bytes and retries. Pass options
+requests and rejects the queued reads. A browser keeps range answers in its HTTP cache (the
+mirror sends Last-Modified and no Cache-Control), but once it holds a URL it serializes range
+requests on it: 8 at once took 1.3 s instead of 0.17 s. So a request made while others of the
+source run asks for `cache: 'no-store'`, and one on its own uses the cache: a second visit
+opens from it (the top 1M in 1.2 s on a Quest) while searches keep their reads at once.
+`stats` counts reads, bytes and retries. Pass options
 as `ZimArchive.open(url, { http: { … } })`. A URL needs nothing else: no proxy, no cached
 index, no block store (those are optional speed-ups, TODO milestone 3).
 
