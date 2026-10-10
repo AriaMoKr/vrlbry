@@ -3,8 +3,8 @@
 // so the vendor modules are named by relative URL (/vendor/ on the server and on Pages).
 //
 // Messages in: { id, method, args }. Out: { id, value } or { id, error }, { id, progress } (a
-// fraction, at most every PROGRESS_MS, for an open or a book's meta), { indexing: { id, stage,
-// progress } } as a library's index build moves on ({ id, done } once ready, `error` with stage
+// fraction, at most every PROGRESS_MS, for an open or a book's meta), { indexing: { id, file,
+// stage, progress } } as a library's index build moves on ({ id, file, done } once ready, `error` with stage
 // 'failed'), { changed } when a library's catalogue changed on its own (its index finished),
 // and { log } lines.
 
@@ -44,13 +44,13 @@ const libraries = createLocalLibraries({
   warn,
   store,
   onChange: () => self.postMessage({ changed: true }), // an index finished: the page refreshes its catalogue
-  onIndexing: (id, info) => {
+  onIndexing: (id, info, file) => {
     const last = indexingSent.get(id);
     const now = performance.now();
     if (info && last && last.stage === info.stage && now - last.at < INDEXING_MS) return;
     indexingSent.set(id, { at: now, stage: info?.stage ?? null });
     if (!info) indexingSent.delete(id);
-    self.postMessage({ indexing: { id, ...(info ?? { done: true }) } });
+    self.postMessage({ indexing: { id, file, ...(info ?? { done: true }) } });
   },
 });
 

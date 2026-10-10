@@ -29,8 +29,8 @@ export class LocalError extends Error {}
  *   store: where derived indexes are kept (idb-store.js; the server's shape, server/cache-store.js),
  *   or null: a Wikipedia's index is built every time and kept in memory only; onChange: called
  *   when a library's catalogue changes on its own (its index finished): the generation is new;
- *   onIndexing(id, info): a library's index build moved on ({ stage, progress }, 'failed' with
- *   `error`, or null once ready)
+ *   onIndexing(id, info, fileName): a library's index build moved on ({ stage, progress },
+ *   'failed' with `error`, or null once ready); fileName names it before the open answers
  */
 export function createLocalLibraries({ log = () => {}, warn = log, store = null, onChange = null, onIndexing = null } = {}) {
   const libs = new Map(); // id → ArchiveLibrary
@@ -83,7 +83,7 @@ export function createLocalLibraries({ log = () => {}, warn = log, store = null,
           generation++;
           onChange?.();
         },
-        onIndexing: (info) => onIndexing?.(id, info),
+        onIndexing: (info) => onIndexing?.(id, info, file.name || 'archive.zim'),
       });
       libs.set(id, opened);
       generation++;

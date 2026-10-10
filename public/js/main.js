@@ -215,8 +215,12 @@ async function start() {
   // Folder rescans: the server bumps `generation` when ZIM files are added or removed; poll it and
   // re-shelve (the rebuild waits until no book is open).
   let refreshing = false;
+  let refreshAgain = false; // a refresh was asked for while one was being applied
   async function applyCatalog(next, { manual = false } = {}) {
-    if (refreshing) return;
+    if (refreshing) { // one is being applied: fetch and apply the newest once it is done
+      refreshAgain = true;
+      return;
+    }
     refreshing = true;
     try {
       const oldById = new Map(libraries.map((l) => [l.id, l]));
@@ -247,6 +251,12 @@ async function start() {
       if (manual) overlay.showToast(`Rescan failed: ${err.message}`, 'error');
     } finally {
       refreshing = false;
+      // A refresh asked for meanwhile (a local library's index finished) runs now, rather than
+      // waiting for the next poll, which a hidden page never runs.
+      if (refreshAgain) {
+        refreshAgain = false;
+        setTimeout(refreshCatalog, 0);
+      }
     }
   }
   async function rescanNow() {
@@ -293,6 +303,14 @@ async function start() {
           fraction = f;
           status.progress(f);
         },
+        // Its title for its indexing toast, as soon as this one file is open.
+        onOpened: (r) => {
+          const t = r.id && indexingToasts.get(r.id);
+          if (t && r.title && t.title !== r.title) {
+            t.title = r.title;
+            tellIndexing(t);
+          }
+        },
       });
     } finally {
       clearInterval(timer);
@@ -301,7 +319,14 @@ async function start() {
     for (const r of results) {
       if (r.error) overlay.showToast(r.error, 'error', 9000);
     }
-    for (const r of results) if (r.id && r.indexing) showIndexing(r.id, r.title, r.indexing);
+    // A toast for each build still under way. Not from the open's own snapshot alone: files open
+    // one after another, and a small file's build often ends while the next ones open (its
+    // toast then never heard from the worker again and stood at 0 % for good).
+    for (const r of results) {
+      if (!r.id || !r.indexing) continue;
+      const seen = indexingSeen.get(r.id);
+      if (seen !== 'done') showIndexing(r.id, r.title, seen ?? r.indexing);
+    }
     // Remembered (their handles kept), to be reopened after a reload: the ones that opened.
     const keep = picked.filter((p, i) => p.handle && results[i]?.id).map((p) => p.handle);
     if (keep.length) rememberFiles(keep);
@@ -346,6 +371,7 @@ async function start() {
   // one takes minutes on a headset): the stage, the time so far and about how long is left, with
   // a bar, until the index is ready (the worker says: local.onIndexing) or the build fails.
   const indexingToasts = new Map(); // lib id → { toast, t0, title, info }
+  const indexingSeen = new Map(); // lib id → what the worker last said: { stage, progress }, or 'done' (ready or failed)
   function showIndexing(id, title, info) {
     let t = indexingToasts.get(id);
     if (!info || info.done || info.stage === 'failed') {
@@ -371,8 +397,11 @@ async function start() {
     if (!waiting) t.toast.progress(t.info.progress);
   }
   setInterval(() => { for (const t of indexingToasts.values()) tellIndexing(t); }, 1000);
-  localLibrary.onIndexing(({ id, ...info }) => {
-    showIndexing(id, indexingToasts.get(id)?.title ?? libraries.find((l) => l.id === id)?.title ?? id, info);
+  localLibrary.onIndexing(({ id, file, ...info }) => {
+    indexingSeen.set(id, info.done || info.stage === 'failed' ? 'done' : info);
+    // Before its open answers, a build is named by its file.
+    const title = indexingToasts.get(id)?.title ?? libraries.find((l) => l.id === id)?.title ?? (file ? file.replace(/\.zim$/i, '') : id);
+    showIndexing(id, title, info);
   });
   // A new version of the site (a deploy, or edited client files) means this page runs old code, and
   // new data may need the new code: a page left open across a deploy once took a new ZIM into the
@@ -408,7 +437,10 @@ async function start() {
     return outdated;
   }
   async function refreshCatalog() {
-    if (refreshing) return;
+    if (refreshing) {
+      refreshAgain = true;
+      return;
+    }
     try {
       if (await isOutdated()) return;
       const c = await getCatalog();

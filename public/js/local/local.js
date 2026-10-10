@@ -73,12 +73,13 @@ function call(method, args = {}, { onProgress } = {}) {
 /**
  * Opens ZIM files (File objects from a picker or a drop), one after the other.
  * @param {Iterable<File>} files
- * @param {{ onFile?: (file: File, i: number) => void, onProgress?: (fraction: number) => void }} [opts]
+ * @param {{ onFile?: (file: File, i: number) => void, onProgress?: (fraction: number) => void,
+ *   onOpened?: (result: object) => void }} [opts]
  *   onFile: called as each file starts; onProgress: how far all of them are (each file's share by
- *   how much of its catalogue is built)
+ *   how much of its catalogue is built); onOpened: each file's result as soon as it is open
  * @returns {Promise<Array<{ name: string, id?: string, title?: string, kind?: string, books?: number, error?: string }>>}
  */
-export async function openFiles(files, { onFile, onProgress } = {}) {
+export async function openFiles(files, { onFile, onProgress, onOpened } = {}) {
   const list = [...files];
   const results = [];
   for (const [i, file] of list.entries()) {
@@ -86,6 +87,7 @@ export async function openFiles(files, { onFile, onProgress } = {}) {
     onProgress?.(i / list.length);
     try {
       results.push({ name: file.name, ...(await call('open', { file }, { onProgress: onProgress && ((f) => onProgress((i + f) / list.length)) })) });
+      onOpened?.(results.at(-1));
       opened++;
     } catch (err) {
       results.push({ name: file.name, error: err.message });
@@ -105,7 +107,7 @@ export function onChange(fn) {
 }
 
 /**
- * Calls fn({ id, stage, progress, error? } | { id, done }) as a local library's index build
+ * Calls fn({ id, file, stage, progress, error? } | { id, file, done }) as a local library's index build
  * moves on (a Wikipedia or Wikisource file: 'queued', then the stages of §2.4/§2.5, 'failed'
  * with `error`), for a progress indicator; `done` once the index is ready (onChange follows).
  */
