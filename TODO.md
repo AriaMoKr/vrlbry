@@ -225,7 +225,19 @@
         and on the Quest the file opens in 3.0 s. So a 4.5 GB Gutenberg ZIM now opens in 3 s
         and a book of 362 pictures in 4 s, from a minute and half a minute this morning.
     - *Milestone 3: remote ZIMs* from Kiwix's mirror over HTTP range reads (a byte source like
-      `BlobSource`), from a curated list.
+      `BlobSource`), from a curated list. On branch `vrlbry-cloud` (repo AriaMoKr/vrlbry-cloud,
+      site https://ariamokr.github.io/vrlbry-cloud/), started 2026-10-10. *Mirrors (checked
+      2026-10-10, the top 1M's first 80 bytes):* Kiwix's MirrorBrain lists seven, each holding
+      a different subset (Gutenberg LCC-P on 5, the full English Wikipedia on 6, the top 1M on
+      all 7): mirror.download.kiwix.org (Kiwix's own, France), ftp.nluug.nl (NL),
+      wi.mirror.driftle.ss and ny.mirror.driftle.ss (US), dumps.wikimedia.org (US),
+      ftpmirror.your.org (US), mirror-sites-in.mblibrary.info. All seven answer range reads
+      (206, `Content-Range`), but only mirror.download.kiwix.org sends CORS headers (`*`, `Range`
+      allowed, `Content-Range` exposed): from a page in a browser the other six, and
+      download.kiwix.org's redirect, are blocked. Its first read took 731 ms from California.
+      Using the others would need a CORS proxy (a small worker forwarding range requests), or
+      their operators adding CORS (a few lines of nginx). The big editions' prebuilt indexes
+      (`indexes/<name>`, `local/prebuilt.js`) belong here too.
     - *Keep files across reloads (done 2026-10-08):* where the browser gives file handles (the
       File System Access API: desktop Chrome/Edge, and Quest Browser has it too) they are kept
       in IndexedDB and the card offers "Last time: … Reopen" (permission asked again within the

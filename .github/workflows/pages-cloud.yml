@@ -1,19 +1,21 @@
-# Publishes the vrlbry-standalone branch (AriaMoKr/vrlbry-standalone) to GitHub Pages,
-# https://ariamokr.github.io/vrlbry-standalone/: the static site (tools/build-pages.mjs) where
-# visitors open their own ZIM files in the browser (the local library, SPEC §2.6). On every push to
-# the branch, the app alone (~4 MB, a minute or two). Run it by hand (Actions → Pages (standalone)
-# → Run workflow) with "demo indexes" ticked to also ship the demo set's Wikipedia indexes (a few
-# MB: a visitor who opens one of those files skips its index build), or with "demo set" ticked to
-# pre-render the ZIMs of tools/demo-set.txt, like the main site (~605 MB, ~10 min).
+# Publishes the vrlbry-cloud branch (AriaMoKr/vrlbry-cloud: milestone 3, ZIMs read straight from
+# Kiwix's mirror) to GitHub Pages, https://ariamokr.github.io/vrlbry-cloud/: the static site
+# (tools/build-pages.mjs) where visitors open their own ZIM files in the browser (the local
+# library, SPEC §2.6). On every push to the branch, the app alone (~4 MB, a minute or two). Run it
+# by hand (Actions → Pages (cloud) → Run workflow) with "demo indexes" ticked to also ship the
+# demo set's Wikipedia indexes (a few MB: a visitor who opens one of those files skips its index
+# build), or with "demo set" ticked to pre-render the ZIMs of tools/demo-set.txt, like the main
+# site (~605 MB, ~10 min).
 #
 # One-time setup in the repository: Settings → Pages → Build and deployment → Source: GitHub
 # Actions. (The main site, https://ariamokr.github.io/vrlbry/, deploys from main of
-# AriaMoKr/vrlbry with .github/workflows/pages.yml, which this branch does not have.)
-name: Pages (standalone)
+# AriaMoKr/vrlbry with pages.yml, and https://ariamokr.github.io/vrlbry-standalone/ from
+# vrlbry-standalone with pages-standalone.yml; this branch has neither.)
+name: Pages (cloud)
 
 on:
   push:
-    branches: [vrlbry-standalone]
+    branches: [vrlbry-cloud]
   workflow_dispatch:
     inputs:
       demo_indexes:
