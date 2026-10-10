@@ -1422,7 +1422,9 @@ States: `browse` → `inspect` → `opening` → `read` (and back), plus `busy` 
   VR the browser's own controls are out of reach, and a reload ends the session); at its foot,
   small and right-aligned, "Updated <date, time>" from `GET /api/version`, fetched once at load,
   so it tells which version the page is running. Tabs: *Shelves & settings*, *Rooms* (when there
-  is more than one library or the current one is browsed by rooms) and *Search*:
+  is more than one library or the current one is browsed by rooms), *Search* and *Kiwix* (§2.6,
+  Kiwix's library). The page opens on *Kiwix*: more to read is what a new visitor most likely
+  wants (a tab chosen before Kiwix's library is ready, or restored with a scene, stays):
   - *Shelves & settings*: library summary, sort toggle Title/Author/Popularity (rebuilds shelves),
     A–Z letter grid over the shelved books (teleports to the first book with that letter via
     `shelves.locate` and highlights it for 4 s), "Surprise me" (random book), "Recently read"

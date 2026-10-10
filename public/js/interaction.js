@@ -134,6 +134,7 @@ export class Interaction {
     const p = new Panel({ width: 1.0, height: 1.0, pxPerMeter: 1000 });
     this.kiosk = p;
     this._kioskTab = 'shelves';
+    this._kioskTabPicked = false; // a tab was chosen (or restored): Kiwix's arrival no longer moves it
     this._search = { q: '', results: [], pending: false, token: 0, timer: 0 };
     p.mesh.name = 'kiosk';
     this.scene.add(p.mesh);
@@ -191,6 +192,7 @@ export class Interaction {
         active: this._kioskTab === id,
         onClick: () => {
           this._kioskTab = id;
+          this._kioskTabPicked = true;
           this._search.focus = id === 'search';
           this._fillKiosk();
         },
@@ -223,6 +225,8 @@ export class Interaction {
   setKiwix(kiwix, onOpenUrl) {
     this.kiwix = kiwix;
     this.onOpenUrl = onOpenUrl;
+    // The kiosk opens on Kiwix's library: more to read is what a new visitor most likely wants.
+    if (!this._kioskTabPicked) this._kioskTab = 'kiwix';
     this._fillKiosk();
   }
 
@@ -260,7 +264,10 @@ export class Interaction {
   async restoreUi(ui) {
     const k = ui?.kiosk;
     if (k) {
-      if (k.tab) this._kioskTab = k.tab;
+      if (k.tab) {
+        this._kioskTab = k.tab;
+        this._kioskTabPicked = true;
+      }
       const st = this._search;
       clearTimeout(st.timer);
       st.focus = false; // a restored scene does not take the keyboard

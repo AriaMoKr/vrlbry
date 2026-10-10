@@ -120,12 +120,11 @@
   this browser (settings, reading positions, recently read, the saved scene, remembered web
   addresses and file handles in localStorage and IndexedDB, the indexes and the block cache), from
   the help dialog and the kiosk, with a confirmation, and a choice of what to keep (e.g. keep the
-  indexes, which take long to build). The three sites share one origin's storage (sites are
-  flavours): a reset clears it for all three, so it should say so.
-- **The kiosk opens on its Kiwix tab on a first visit** (asked 2026-10-10). On a new or fresh load
-  (nothing saved) the kiosk shows Kiwix's library first: what a new visitor most likely wants
-  (the card already lists it first). Today it opens on Shelves & settings (`_kioskTab =
-  'shelves'`); a returning visitor's last tab could be remembered instead.
+  indexes, which take long to build). (The parked standalone and cloud sites share the origin's
+  storage; they need no special care: they may be made private.)
+- **The kiosk opens on its Kiwix tab** (done 2026-10-10): the page starts on Kiwix's library,
+  more to read being what a new visitor most likely wants. Possible later: remember a returning
+  visitor's last tab.
 - **Garbage collection pauses** are now the main source of dropped frames on a Quest 3. The
   atlas stalls are fixed (run 2026-10-05 03:37: walking the hall 9.1 % → 0.1 % dropped, an
   ordinary room 5.4 % → 1.8 %, no drop before an atlas arrived, down from 343 of 406), and of
