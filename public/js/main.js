@@ -11,6 +11,7 @@ import { audio } from './audio.js';
 import { load, save } from './util/storage.js';
 import { progressText } from './util/progress.js';
 import { handleStore, pickFiles, reopen, supportsHandles } from './local/handles.js';
+import { onKiwixMirror, zimUrl } from './local/zim-url.js';
 import { PLAYER, XR_FRAME_RATE } from './config.js';
 import { collectionsFor, LOCAL_PLACE } from './rooms.js';
 import { perf } from './perf.js';
@@ -97,9 +98,13 @@ async function start() {
   await new Promise((r) => setTimeout(r, 0)); // let the overlay paint before the heavy build
   // Online (a static build), a first visit opens the demo set when the site has it.
   if (catalog.static && !load('settings', {}).place) settings.place = 'demo';
+  // The place saved last time: one of the libraries read from the web is not open yet (they are
+  // reopened below), so the first build falls back, and openLocalFiles puts it back afterwards.
+  const savedPlace = settings.place;
   const world = new World({ renderer, scene });
   if (catalog.static) world.emptyText = ['No books here yet', 'This online version has no libraries yet'];
   await world.build(collectionsFor(libraries, booksByLib, settings), { sort: settings.sort });
+  const startPlace = settings.place; // what the first build shelved (savedPlace, or its fallback)
 
   const controls = new Controls({ renderer, camera, rig, scene, world, domElement: renderer.domElement });
   controls.smoothMove = settings.smoothMove;
@@ -272,9 +277,12 @@ async function start() {
   interaction.onRescan = rescanNow;
 
   // ZIM files opened in this browser (step 2: the local library, local/local.js), from the file
-  // picker, a drop or __vrlbry.openZim: shelved like the server's as soon as they are open.
-  async function openLocalFiles(files, fileHandles = []) {
-    const picked = [...files].map((file, i) => ({ file, handle: fileHandles[i] ?? null })).filter(({ file }) => /\.zim$/i.test(file.name ?? '') || !file.name);
+  // picker, a drop or __vrlbry.openZim, or from web addresses (strings, as zim-url.js makes them:
+  // openUrls): shelved like the server's as soon as they are open. `reopening`: the web addresses
+  // remembered from last time, opened as the page starts (the place is then put back, not moved).
+  async function openLocalFiles(files, fileHandles = [], { reopening = false } = {}) {
+    const picked = [...files].map((file, i) => ({ file, handle: fileHandles[i] ?? null }))
+      .filter(({ file }) => typeof file === 'string' || /\.zim$/i.test(file.name ?? '') || !file.name);
     const zims = picked.map((p) => p.file);
     if (!zims.length) {
       overlay.showToast('Only .zim files can be opened.', 'error');
@@ -283,7 +291,7 @@ async function start() {
     // In the status box until every file is open (a big file on a Quest takes a while), with the
     // seconds so far and, from the worker's progress, about how long is left, and with several
     // files a Stop that opens no more; then the catalogue's "New library" toast follows.
-    const name = (f) => f.name || 'the ZIM file';
+    const name = localLibrary.sourceName;
     const job = {
       label: zims.length === 1 ? name(zims[0]) : `${zims.length} ZIM files`,
       t0: performance.now(), fraction: null, stoppable: zims.length > 1, stopping: false,
@@ -319,7 +327,18 @@ async function start() {
       renderStatus();
     }
     for (const r of results) {
-      if (r.error) overlay.showToast(r.error, 'error', 9000);
+      if (!r.error) continue;
+      // Kiwix's other mirrors send no CORS headers: the same file on its own mirror can be read.
+      const mirror = r.url && /CORS/.test(r.error) ? onKiwixMirror(r.url) : null;
+      const hint = mirror ? ` Kiwix's own mirror lets pages read its files: ${mirror}` : '';
+      overlay.showToast(`${reopening ? 'Not reopened: ' : ''}${r.error}.${hint}`, 'error', mirror ? 15000 : 9000);
+    }
+    // Web addresses that opened are remembered and reopen with the page; one that did not reopen
+    // stays remembered (the network may be down) and is offered on the "Last time" line.
+    rememberUrls(results.filter((r) => r.id && r.url));
+    if (reopening) {
+      notReopened = results.filter((r) => r.error && r.url).map((r) => ({ url: r.url, name: r.name }));
+      showRemembered();
     }
     const skipped = results.filter((r) => r.skipped).length;
     if (skipped) overlay.showToast(`Stopped: ${skipped} file${skipped === 1 ? '' : 's'} not opened.`, 'info', 5000);
@@ -337,9 +356,13 @@ async function start() {
     const added = results.filter((r) => r.id);
     if (added.length) {
       // Shelve the new library, or the files opened here together when there are several: the
-      // catalogue's rebuild goes to that room.
+      // catalogue's rebuild goes to that room. Reopened as the page starts, the place saved last
+      // time comes back instead (unless the person has gone elsewhere meanwhile).
       if (interaction.state === 'browse') {
-        settings.place = added.length > 1 ? LOCAL_PLACE.id : added[0].id;
+        const back = reopening && savedPlace !== startPlace && settings.place === startPlace
+          && (savedPlace === LOCAL_PLACE.id ? added.length > 1 : added.some((r) => r.id === savedPlace));
+        if (back) settings.place = savedPlace;
+        else if (!reopening) settings.place = added.length > 1 ? LOCAL_PLACE.id : added[0].id;
         save('settings', settings);
       }
       await applyCatalog(await getCatalog());
@@ -347,31 +370,73 @@ async function start() {
     return results;
   }
   overlay.onOpenFiles(openLocalFiles);
+  // ZIMs from the web (milestone 3: Kiwix's mirror), typed or pasted in the card, a dropped link or
+  // __vrlbry.openUrl: read where they are, a few kilobytes at a time. Each address goes through
+  // zim-url.js (Kiwix's download links become its mirror's, which lets a page read them).
+  async function openUrls(inputs) {
+    const urls = [];
+    for (const input of inputs) {
+      const r = zimUrl(input);
+      if (r.error) overlay.showToast(r.error, 'error', 8000);
+      else if (libraries.some((l) => l.url === r.url) || urls.includes(r.url)) overlay.showToast(`${r.name} is already open.`, 'info', 5000);
+      else urls.push(r.url);
+    }
+    return urls.length ? openLocalFiles(urls) : [];
+  }
+  overlay.onOpenUrl((input) => openUrls([input]));
+  // The web addresses opened here, reopened with the page (no permission needed, unlike files):
+  // [{ url, name }] in localStorage, in the order first opened; a library's × forgets its own.
+  const remembered = () => {
+    const list = load('zimUrls', []);
+    return Array.isArray(list) ? list.filter((r) => typeof r?.url === 'string') : [];
+  };
+  let notReopened = []; // remembered addresses that did not open this time: on the "Last time" line
+  function rememberUrls(opened) {
+    if (!opened.length) return;
+    const list = remembered();
+    for (const r of opened) if (!list.some((k) => k.url === r.url)) list.push({ url: r.url, name: r.name });
+    save('zimUrls', list);
+  }
+  function forgetUrls(urls) {
+    save('zimUrls', remembered().filter((r) => !urls.includes(r.url)));
+    notReopened = notReopened.filter((r) => !urls.includes(r.url));
+  }
   // Files opened once can be reopened after a reload where the browser gives file handles (the
   // File System Access API: desktop Chrome and Edge, Quest Browser): the picker then goes through
   // it, the handles are kept (local/handles.js), and the card offers "Last time: … Reopen".
   const fileHandles = supportsHandles() ? handleStore() : null;
-  function rememberFiles(handles) {
-    fileHandles?.remember(handles).then(() => fileHandles.list()).then((entries) => overlay.setRemembered(entries.map((e) => e.name))).catch(() => {});
+  // The "Last time" line: files whose handles are kept, and web addresses that did not reopen.
+  async function showRemembered() {
+    const files = fileHandles ? await fileHandles.list().catch(() => []) : [];
+    overlay.setRemembered([...files.map((e) => e.name), ...notReopened.map((r) => r.name)]);
   }
-  if (fileHandles) {
-    overlay.onPickFiles(pickFiles);
-    overlay.onReopen(async () => {
+  function rememberFiles(handles) {
+    fileHandles?.remember(handles).then(showRemembered).catch(() => {});
+  }
+  if (fileHandles) overlay.onPickFiles(pickFiles);
+  overlay.onReopen(async () => {
+    const urls = notReopened.map((r) => r.url);
+    notReopened = [];
+    let files = [];
+    let handles = [];
+    if (fileHandles) {
       const entries = await fileHandles.list().catch(() => []);
-      const { files, handles, failed } = await reopen(entries);
+      let failed;
+      ({ files, handles, failed } = await reopen(entries));
       for (const name of failed) {
         overlay.showToast(`${name} could not be opened again: pick it afresh.`, 'error', 7000);
         fileHandles.forget(name).catch(() => {});
       }
-      overlay.setRemembered([]);
-      if (files.length) await openLocalFiles(files, handles);
-    });
-    overlay.onForget(() => {
-      fileHandles.forgetAll().catch(() => {});
-      overlay.setRemembered([]);
-    });
-    fileHandles.list().then((entries) => overlay.setRemembered(entries.map((e) => e.name))).catch(() => {});
-  }
+    }
+    overlay.setRemembered([]);
+    if (files.length || urls.length) await openLocalFiles([...files, ...urls], handles, { reopening: !files.length });
+  });
+  overlay.onForget(() => {
+    fileHandles?.forgetAll().catch(() => {});
+    forgetUrls(notReopened.map((r) => r.url));
+    overlay.setRemembered([]);
+  });
+  showRemembered();
   // What the local library is doing, in one status box at the page's foot (overlay.setStatus):
   // files being opened (its head line, bar and Stop), and the index builds of Wikipedia and
   // Wikisource files (a big one takes minutes on a headset), a row each behind a toggle with its
@@ -438,20 +503,27 @@ async function start() {
     const title = builds.get(id)?.title ?? libraries.find((l) => l.id === id)?.title ?? (file ? file.replace(/\.zim$/i, '') : id);
     trackIndexing(id, title, info, file);
   });
-  // A row's ×: stop that build and close the file (and forget it for "Reopen").
-  overlay.onIndexingCancel(async (id) => {
-    const b = builds.get(id);
+  // A status row's × or a local library's × in the card: close it (stopping its index build, if
+  // one runs), and forget it for "Reopen" or, read from the web, for the next page load.
+  async function closeLocal(id) {
+    const lib = libraries.find((l) => l.id === id);
+    const file = builds.get(id)?.file ?? lib?.file;
     cancelled.add(id);
     indexingSeen.set(id, 'done');
     builds.delete(id);
     renderStatus();
     await localLibrary.close(id).catch(() => {});
-    if (b?.file && fileHandles) {
-      await fileHandles.forget(b.file).catch(() => {});
-      fileHandles.list().then((entries) => overlay.setRemembered(entries.map((e) => e.name))).catch(() => {});
-    }
+    if (lib?.url) forgetUrls([lib.url]);
+    else if (file && fileHandles) await fileHandles.forget(file).catch(() => {});
+    showRemembered();
     await refreshCatalog();
-  });
+  }
+  overlay.onIndexingCancel(closeLocal);
+  overlay.onCloseLibrary(closeLocal);
+  // The web addresses opened before reopen now, in the background (the status box says so); the
+  // place saved last time comes back once its library is open (openLocalFiles).
+  const reopenUrls = remembered().map((r) => r.url);
+  if (reopenUrls.length) openLocalFiles(reopenUrls, [], { reopening: true }).catch((err) => console.warn('[vrlbry] reopening', err));
   // A new version of the site (a deploy, or edited client files) means this page runs old code, and
   // new data may need the new code: a page left open across a deploy once took a new ZIM into the
   // catalogue but not into the Demo set, whose list was in the old rooms.js. So once the version
@@ -554,6 +626,8 @@ async function start() {
     reproduce: (report) => restoreScene(window.__vrlbry, report),
     /** Opens ZIM files in the browser's local library (a File, Blob or a list): as the file picker does. */
     openZim: (files) => openLocalFiles(files instanceof Blob ? [files] : [...files]),
+    /** Opens a ZIM from a web address (or a list), as the card's address field does. */
+    openUrl: (urls) => openUrls(typeof urls === 'string' ? [urls] : [...urls]),
   };
   // ?perf: record frame timing and events for tools/quest-perf.mjs (window.__vrlbry.perf).
   if (params.has('perf')) {
@@ -570,8 +644,8 @@ async function start() {
     overlay.showToast('Recording performance (?perf)', 'info', 4000);
   }
   overlay.setLoading(null);
-  if (!libraries.length) {
-    overlay.showToast(catalog.static ? 'This online version has no books of its own: open your ZIM files here (Open ZIM files…), or run vrlbry yourself.'
+  if (!libraries.length && !reopenUrls.length) { // (web addresses opened before are reopening)
+    overlay.showToast(catalog.static ? 'This online version has no books of its own: open a ZIM file or a ZIM\'s web address here, or run vrlbry yourself.'
       : 'No .zim files found in the server folder.', catalog.static ? 'info' : 'error', 8000);
   }
 }

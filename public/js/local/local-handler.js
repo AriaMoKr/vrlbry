@@ -1,5 +1,6 @@
 // The local library: ZIM files someone opened in the browser (step 2, SPEC §2.6), read with the
-// shared core over File.slice. worker.js runs this in a Web Worker; Node tests call it directly.
+// shared core over File.slice, or from a web address over range requests (milestone 3: Kiwix's
+// mirror). worker.js runs this in a Web Worker; Node tests call it directly.
 // Each method answers one request of local.js: { value, transfer } with the buffers to move.
 //
 // Library ids start with '~' (libraryIdFor never makes one), so they cannot clash with a server's.
@@ -9,6 +10,8 @@
 import { ArchiveLibrary, createContentCache, libraryIdFor } from '../core/library.js';
 import { IndexQueue } from '../core/util/index-queue.js';
 import { ZimArchive } from '../core/zim/reader.js';
+import { HttpSourceError } from '../core/zim/http-source.js';
+import { fileNameOf } from './zim-url.js';
 
 /** Converted books kept for all local libraries: a headset has far less memory than a PC. */
 const CONTENT_CACHE_BYTES = 64 * 1024 * 1024;
@@ -18,6 +21,26 @@ const CLUSTER_CACHE_BYTES = 32 * 1024 * 1024;
 const BLOCK_CACHE_BYTES = 16 * 1024 * 1024;
 /** Uncompressed clusters up to this big are read whole (ZimArchive wholeClusterBytes): a read costs the same however big. */
 const WHOLE_CLUSTER_BYTES = 4 * 1024 * 1024;
+/** How a File is read: a read costs about the same however big (~65 ms on a Quest). */
+const FILE_ARCHIVE = {
+  clusterCacheBytes: CLUSTER_CACHE_BYTES, blockCacheBytes: BLOCK_CACHE_BYTES, wholeClusterBytes: WHOLE_CLUSTER_BYTES,
+  wholeCompressedBytes: WHOLE_CLUSTER_BYTES, // a compressed cluster in one read, not two
+};
+/**
+ * How a web address is read, as measured from Kiwix's mirror (TODO, milestone 3 step 2): a round
+ * trip costs 0.2-0.8 s and bytes cost time too, so small blocks (lookups touch scattered entries:
+ * 8 KB was fastest), pictures one by one (a 4 MB cluster read whole took seconds), and a
+ * compressed cluster in one read.
+ */
+const URL_ARCHIVE = {
+  clusterCacheBytes: CLUSTER_CACHE_BYTES, blockCacheBytes: BLOCK_CACHE_BYTES, blockBytes: 8 * 1024,
+  wholeClusterBytes: 0, wholeCompressedBytes: WHOLE_CLUSTER_BYTES,
+};
+/**
+ * The biggest Wikipedia or Wikisource read from the web whose index is built here when none is
+ * found (in the store or the site's indexes/): building reads most of the file.
+ */
+const URL_INDEX_BUILD_BYTES = 256 * 1024 * 1024;
 
 export const LOCAL_PREFIX = '~';
 
@@ -25,15 +48,20 @@ export const LOCAL_PREFIX = '~';
 export class LocalError extends Error {}
 
 /**
- * @param {{ log?: (msg: string) => void, warn?: (msg: string) => void, store?: object|null, onChange?: () => void }} [opts]
+ * @param {{ log?: (msg: string) => void, warn?: (msg: string) => void, store?: object|null, onChange?: () => void,
+ *   urlIndexBuildBytes?: number }} [opts]
  *   store: where derived indexes are kept (idb-store.js; the server's shape, server/cache-store.js),
  *   or null: a Wikipedia's index is built every time and kept in memory only; onChange: called
  *   when a library's catalogue changes on its own (its index finished): the generation is new;
  *   onIndexing(id, info, fileName): a library's index build moved on ({ stage, progress },
- *   'failed' with `error`, or null once ready); fileName names it before the open answers
+ *   'failed' with `error`, or null once ready); fileName names it before the open answers;
+ *   urlIndexBuildBytes: URL_INDEX_BUILD_BYTES (for tests)
  */
-export function createLocalLibraries({ log = () => {}, warn = log, store = null, onChange = null, onIndexing = null } = {}) {
+export function createLocalLibraries({
+  log = () => {}, warn = log, store = null, onChange = null, onIndexing = null, urlIndexBuildBytes = URL_INDEX_BUILD_BYTES,
+} = {}) {
   const libs = new Map(); // id → ArchiveLibrary
+  const urls = new Map(); // id → the web address of a library read from one
   const contentCache = createContentCache(CONTENT_CACHE_BYTES);
   // Index builds one at a time, the smallest first, whatever their size: they share the worker's
   // one thread, so at once each only ended later (six files opened together all waited for the
@@ -64,17 +92,24 @@ export function createLocalLibraries({ log = () => {}, warn = log, store = null,
   };
 
   const methods = {
-    /** Opens a File (or Blob): { id, title }. Wikipedia and Wikisource need the server for now. */
-    async open({ file }, { onProgress } = {}) {
+    /**
+     * Opens a File (or Blob), or a ZIM at a web address (`url`, as zim-url.js makes it: the server
+     * must allow range requests and, from another site, CORS): { id, title, kind, books, indexing,
+     * url? }. A Wikipedia's or Wikisource's index is built in the background when none is found,
+     * but from the web only up to URL_INDEX_BUILD_BYTES (it would read most of the file).
+     */
+    async open({ file, url }, { onProgress } = {}) {
       const t0 = performance.now();
+      const remote = typeof url === 'string';
+      const name = (remote ? fileNameOf(url) : file.name) || 'archive.zim';
       // Opened once: the library takes the archive over.
-      const archive = await ZimArchive.open(file, {
-        clusterCacheBytes: CLUSTER_CACHE_BYTES, blockCacheBytes: BLOCK_CACHE_BYTES, wholeClusterBytes: WHOLE_CLUSTER_BYTES,
-        wholeCompressedBytes: WHOLE_CLUSTER_BYTES, // a compressed cluster in one read, not two
-      }).catch((err) => {
-        throw new LocalError(`${file.name}: not a readable ZIM file (${err.message})`);
+      const archive = await ZimArchive.open(remote ? url : file, remote ? URL_ARCHIVE : FILE_ARCHIVE).catch((err) => {
+        // A server's refusal says what it is (no ranges, not found, unreachable or CORS).
+        const refusal = err instanceof HttpSourceError ? err : err.cause instanceof HttpSourceError ? err.cause : null;
+        if (refusal) throw new LocalError(refusal.message);
+        throw new LocalError(`${name}: not a readable ZIM file (${err.message})`);
       });
-      const base = LOCAL_PREFIX + libraryIdFor(file.name || 'archive.zim');
+      const base = LOCAL_PREFIX + libraryIdFor(name);
       let id = base;
       for (let n = 2; libs.has(id); n++) id = `${base}-${n}`;
       // Sizes estimated, not read: on a Quest they cost a read per cluster of books (8 s of the
@@ -83,24 +118,31 @@ export function createLocalLibraries({ log = () => {}, warn = log, store = null,
       // has no books until then: info().indexing says how far it is.
       const opened = await ArchiveLibrary.open(archive, {
         id, log, warn, contentCache, onProgress, estimateSizes: true, store, indexQueue,
+        // From the web: a sized image is not looked up (each lookup costs round trips), and an
+        // index is built only for a small archive.
+        ...(remote ? { checkImages: false, maxIndexBuildBytes: urlIndexBuildBytes } : {}),
         onChange: () => {
           generation++;
           onChange?.();
         },
-        onIndexing: (info) => onIndexing?.(id, info, file.name || 'archive.zim'),
+        onIndexing: (info) => onIndexing?.(id, info, name),
       });
       libs.set(id, opened);
+      if (remote) urls.set(id, url);
       generation++;
       const info = await opened.info();
       const took = `${((performance.now() - t0) / 1000).toFixed(1)} s`;
-      log(info.indexing ? `${file.name}: ${opened.kind} library, indexing (${info.indexing.stage}) after ${took}`
-        : `${file.name}: ${opened.kind} library, ${info.bookCount} book(s), opened in ${took}`);
-      return { value: { id, title: info.title, kind: opened.kind, books: info.bookCount, indexing: info.indexing } };
+      log(info.indexing ? `${name}: ${opened.kind} library, indexing (${info.indexing.stage}) after ${took}`
+        : `${name}: ${opened.kind} library, ${info.bookCount} book(s), opened in ${took}`);
+      return { value: { id, title: info.title, kind: opened.kind, books: info.bookCount, indexing: info.indexing, ...(remote ? { url } : {}) } };
     },
 
-    /** The catalogue: { generation, libraries: [info] } in the order they were opened. */
+    /** The catalogue: { generation, libraries: [info, with `url` when read from the web] } in the order they were opened. */
     async catalog() {
-      const libraries = await Promise.all([...libs.values()].map((l) => l.info()));
+      const libraries = await Promise.all([...libs].map(async ([id, l]) => {
+        const info = await l.info();
+        return urls.has(id) ? { ...info, url: urls.get(id) } : info;
+      }));
       return { value: { generation, libraries } };
     },
 
@@ -151,6 +193,7 @@ export function createLocalLibraries({ log = () => {}, warn = log, store = null,
       const l = libs.get(id);
       if (l) {
         libs.delete(id);
+        urls.delete(id);
         generation++;
         await l.close();
       }

@@ -1,7 +1,10 @@
 // The page's side of the local library: ZIM files opened in this browser (step 2, SPEC §2.6),
-// read by worker.js with the shared core. api.js sends the requests for libraries whose id starts
-// with '~' here, and asks here for their images (imageSource). The worker starts with the first
-// file; until then nothing is loaded. Opened files last until the page is reloaded.
+// from this device or from a web address (milestone 3), read by worker.js with the shared core.
+// api.js sends the requests for libraries whose id starts with '~' here, and asks here for their
+// images (imageSource). The worker starts with the first file; until then nothing is loaded.
+// Opened files last until the page is reloaded (main.js reopens web addresses then).
+
+import { fileNameOf } from './zim-url.js';
 
 let worker = null;
 let seq = 0;
@@ -70,16 +73,20 @@ function call(method, args = {}, { onProgress } = {}) {
   });
 }
 
+/** The name of what openFiles opens: a File's, or the file name a web address ends with. */
+export const sourceName = (source) => (typeof source === 'string' ? fileNameOf(source) : source?.name) || 'the ZIM file';
+
 /**
- * Opens ZIM files (File objects from a picker or a drop), one after the other.
- * @param {Iterable<File>} files
+ * Opens ZIM files (File objects from a picker or a drop, or web addresses as zim-url.js makes
+ * them), one after the other.
+ * @param {Iterable<File|string>} files
  * @param {{ onFile?: (file: File, i: number) => void, onProgress?: (fraction: number) => void,
  *   onOpened?: (result: object) => void, stopped?: () => boolean }} [opts]
  *   onFile: called as each file starts; onProgress: how far all of them are (each file's share by
  *   how much of its catalogue is built); onOpened: each file's result as soon as it is open;
  *   stopped: checked before each file: true opens no more (those left get `skipped: true`).
  *   Several files' index builds wait until all are open, then go smallest first.
- * @returns {Promise<Array<{ name: string, id?: string, title?: string, kind?: string, books?: number, error?: string }>>}
+ * @returns {Promise<Array<{ name: string, id?: string, title?: string, kind?: string, books?: number, url?: string, error?: string, skipped?: true }>>}
  */
 export async function openFiles(files, { onFile, onProgress, onOpened, stopped = () => false } = {}) {
   const list = [...files];
@@ -88,18 +95,20 @@ export async function openFiles(files, { onFile, onProgress, onOpened, stopped =
   if (batch) await call('hold');
   try {
     for (const [i, file] of list.entries()) {
+      const name = sourceName(file);
       if (stopped()) {
-        results.push({ name: file.name, skipped: true });
+        results.push({ name, skipped: true });
         continue;
       }
       onFile?.(file, i);
       onProgress?.(i / list.length);
       try {
-        results.push({ name: file.name, ...(await call('open', { file }, { onProgress: onProgress && ((f) => onProgress((i + f) / list.length)) })) });
+        const what = typeof file === 'string' ? { url: file } : { file };
+        results.push({ name, ...(await call('open', what, { onProgress: onProgress && ((f) => onProgress((i + f) / list.length)) })) });
         onOpened?.(results.at(-1));
         opened++;
       } catch (err) {
-        results.push({ name: file.name, error: err.message });
+        results.push({ name, error: err.message, ...(typeof file === 'string' ? { url: file } : {}) });
       }
     }
   } finally {

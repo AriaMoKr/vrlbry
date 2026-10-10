@@ -185,10 +185,19 @@ Pages → Source: *GitHub Actions*. The demo set makes a site of about 605 MB in
 "Open ZIM files…" under the library list (or dropping `.zim` files on the page) reads ZIMs from
 your own device in the browser, in the online version as well as beside a server's libraries:
 nothing is uploaded, and only the parts of the file a page needs are read, so even very large
-files open quickly. Gutenberg ZIMs and other non-Wikipedia ZIMs work this way; Wikipedia and
-Wikisource ZIMs still need the server (they are indexed first). The files stay open until the
-page is reloaded. On a Quest, open them before entering VR. Reading Kiwix's ZIMs straight from
-the internet is planned (see the [TODO list](TODO.md)).
+files open quickly. A Wikipedia or Wikisource ZIM is indexed in the browser the first time (a
+big one takes minutes on a headset) and the index is kept. The files stay open until the page
+is reloaded; where the browser allows it (desktop Chrome and Edge, Quest Browser) the card
+offers to reopen them. On a Quest, open them before entering VR.
+
+A ZIM can also be read straight from the web, without downloading it: paste its address into
+the field under the button (or drop its link on the page), or read the example from the card.
+Kiwix's download links work: they are turned into the same file on Kiwix's own mirror,
+`mirror.download.kiwix.org`, the one that lets a web page read its files (its other mirrors do
+not). Only what is shown is fetched, a few kilobytes at a time: opening a Gutenberg ZIM takes a
+few seconds, the 49 GB top-million Wikipedia about six. Web addresses reopen by themselves when
+the page loads; a library's × closes it. A Wikipedia or Wikisource from the web needs a
+prebuilt index unless it is small (building one reads most of the file).
 
 ## Measuring performance on a Quest
 

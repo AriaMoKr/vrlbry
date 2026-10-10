@@ -226,6 +226,31 @@ whole. It works on GitHub Pages (no server) and beside a server's own libraries.
   --indexes <folder>` builds the indexes of a folder's Wikipedia and Wikisource ZIMs into
   `indexes/` (the standalone workflow's "demo indexes" does it for the demo set); the big
   editions' indexes (the top 1M's is 10.7 MB) are for the planned remote-ZIM repo to publish.
+- **From the web** (milestone 3): a ZIM's web address, typed or pasted into the card's field
+  under the Open button, a link dropped on the page (`text/uri-list`), the example's "read it
+  online" button, or `__vrlbry.openUrl(url)`. `local/zim-url.js` `zimUrl` makes the address one
+  the page can read: `https://` added when no scheme is typed, Kiwix's download links
+  (`download.kiwix.org`, `lb.download.kiwix.org`, and the catalogue's `.meta4` / `.torrent` /
+  `.sha256` / `.md5` side files) turned into the same file on `mirror.download.kiwix.org`, the
+  only Kiwix mirror that sends CORS headers; it refuses what is not a `.zim` address and, from an
+  https page, an http one (mixed content; this machine's excepted). The worker opens it with an
+  `HttpSource` (§3.1) as it opens a File, with what step 2 of the milestone measured best:
+  `blockBytes` 8 KB, no whole uncompressed clusters, `wholeCompressedBytes` 4 MB,
+  `checkImages: false` and `maxIndexBuildBytes` 256 MB (§3.6); same ids, catalogue, indexing
+  and status box. Its catalogue entry carries `url`, and the card shows "from <host>". A
+  server's refusal is the open's error: "HTTP 404 (not found)", "the server does not serve parts
+  of the file", or, unreachable, "cannot reach the server (…); if it is another site, it may not
+  allow this page to read it (CORS)", to which an address on another Kiwix mirror adds the same
+  file's address on Kiwix's own. An address already open is not opened twice. The addresses
+  that opened are kept in localStorage (`zimUrls`: `[{ url, name }]`) and reopen as the page
+  starts, in the background (no permission is needed, unlike files); the place saved last time
+  comes back once its library is open, unless the person has gone elsewhere meanwhile (the
+  first build fell back from it). One that does not reopen stays remembered (the network may be
+  down): "Not reopened: …", and the card's "Last time" line offers it with the kept files
+  (Reopen, Forget). Nothing else is required: no proxy, no block store, no prebuilt index for a
+  Gutenberg ZIM or a small Wikipedia.
+- **Closing:** a local library's × in the card's list closes it (stopping its index build) and
+  forgets it: its file handle, or its web address (so it does not reopen).
 - **Ids:** `~` + `libraryIdFor(file name)` (then `-2`, `-3` … for the same name twice):
   `libraryIdFor` never makes a `~`, so they cannot clash with a server's; `~` is URL-safe.
 - **Requests:** `local/local.js` (page) ↔ `local/local-handler.js` (worker) by `postMessage`:
@@ -343,7 +368,10 @@ costs a round trip whatever its size, so a remote archive may want bigger blocks
 however small (on a Quest 3 ~65 ms alone, ~11 ms each when 8 or more run at once, a 4 MB read
 87 ms), so the number of reads is what counts: opening a 4.5 GB Gutenberg ZIM made 3,200
 dirent reads over 1.7 MB of directory. Scans (`entries()`) read in batches and bypass it; so
-do big reads. With `wholeClusterBytes` (0 by default; the local library sets 4 MB) an
+do big reads. A scan's first batch is 512 entries and each next one twice as big, up to 8,192:
+one that stops early (a redirect search) reads little, and a whole directory's few batches cost
+a few round trips each (over the network the Chemistry mini's 58,000 entries took 38 s in
+batches of 512, 15 s growing). With `wholeClusterBytes` (0 by default; the local library sets 4 MB) an
 uncompressed cluster up to that big is read whole into the cluster cache once a second blob of
 it is wanted (a book's pictures usually share a few clusters; the first blob is read on its
 own, so a book with one picture per cluster reads no more than before), never for a size alone
@@ -576,7 +604,11 @@ archive when an article is converted: each lookup is a binary search, ~6 round t
 network (Albert Einstein's 38 images: 39 s of the top 1M's article), and mwoffliner's images are
 all there. A missing one then shows as the reader's placeholder instead of its alt text.
 Gutenberg books (whose image paths may need their fallback) and EPUBs are checked as before.
-Chunks keep their JSON as bytes (`Uint8Array`, a Buffer on Node), with `gzip()` and `etag`
+With `maxIndexBuildBytes` (the local library's web addresses: 256 MB) a Wikipedia or Wikisource
+whose index is found nowhere (the store, the site's `indexes/`) is indexed only up to that size:
+over the network a build reads most of the file (12.7 GB for the top 1M). A bigger one gets
+`indexing: { stage: 'failed', error }` at once, saying why (no index, its size, download it
+instead), once, and has no books. Chunks keep their JSON as bytes (`Uint8Array`, a Buffer on Node), with `gzip()` and `etag`
 from the platform (the server's).
 
 ```js

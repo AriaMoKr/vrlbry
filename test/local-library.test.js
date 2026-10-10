@@ -2,7 +2,8 @@
 // with the browser's platform (fzstd, fflate, plain Uint8Arrays) in a worker (local-handler.js).
 // Each archive is read twice, by the core on Node's platform from the file (as the server reads
 // it) and by the local library's handler from a File on the browser's platform, and every answer
-// must be the same: catalogue, books, reading metadata, chunks, images.
+// must be the same: catalogue, books, reading metadata, chunks, images. Read from a web address
+// (milestone 3: range requests, as from Kiwix's mirror) too.
 
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -24,6 +25,7 @@ import { memoryStore, withPrebuilt } from '../public/js/local/prebuilt.js';
 import { fileStore } from '../server/cache-store.js';
 import { png, writeGenericZim, writeGutenbergZim, writeOldGutenbergZim, writeWikipediaZim, writeWikisourceZim } from './helpers/zim-fixtures.js';
 import { writeZim } from './helpers/zimwriter.js';
+import { startRangeServer } from './helpers/range-server.js';
 
 const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const REAL_ZIM = path.join(REPO, 'gutenberg_en_lcc-pe_2026-03.zim');
@@ -32,9 +34,14 @@ const browser = { ...defaults, ...browserPlatform({ zstdDecompress, unzlibSync, 
 const utf8 = new TextDecoder();
 
 let tmp;
-before(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vrlbry-local-')); });
-after(() => {
+let web; // a server of range requests, for ZIMs opened from a web address
+before(async () => {
+  tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vrlbry-local-'));
+  web = await startRangeServer();
+});
+after(async () => {
   provide(nodePlatform);
+  await web.close();
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 
@@ -98,14 +105,24 @@ async function localAnswers(local, id, limit = Infinity) {
 /** Answers with the local library's id ('~x') written as the server's ('x'). */
 const asServer = (answers, id) => JSON.parse(JSON.stringify(answers).split(`~${id}`).join(id));
 
-async function sameAnswers(file, { limit, store = null, onIndexing = null } = {}) {
+/**
+ * Opens `file` in the local library, from a File or (via 'url') from a web address, and compares
+ * every answer with the server's.
+ */
+async function sameAnswers(file, { limit, store = null, onIndexing = null, via = 'file' } = {}) {
   const id = path.basename(file).replace(/\.zim$/i, '');
   const server = await serverAnswers(file, limit);
   const local = createLocalLibraries({ store, onIndexing });
   provide(browser);
-  const opened = (await local.call('open', { file: asFile(file) })).value;
+  const url = via === 'url' ? web.serve(file).url : null;
+  const opened = (await local.call('open', url ? { url } : { file: asFile(file) })).value;
   assert.equal(opened.id, `~${id}`);
+  assert.equal(opened.url, url ?? undefined, 'a web address is given back');
   const fromFile = asServer(await localAnswers(local, opened.id, limit), id);
+  if (url) {
+    assert.equal(fromFile.info.url, url, 'the catalogue entry says where it is read from');
+    delete fromFile.info.url;
+  }
   assert.deepEqual(fromFile.info, server.info, 'catalogue entry');
   // The browser estimates sizes rather than reading them (for the thickness on the shelf, which
   // grows with the logarithm): within an order of magnitude of what the server reads.
@@ -307,6 +324,54 @@ describe('local library (ZIM files read in the browser)', () => {
     assert.equal(back.books, 2);
     assert.equal((await local.call('catalog')).value.libraries.find((l) => l.id === id).kind, 'wikisource');
     store.close();
+  });
+
+  it('answers like the server for ZIMs read from a web address (range requests)', async () => {
+    const before = web.requests.length;
+    for (const write of [writeGutenbergZim, writeOldGutenbergZim, writeGenericZim, writeWikipediaZim, writeWikisourceZim]) {
+      const file = write(path.join(tmp, `web-${write.name.replace(/^write|Zim$/g, '').toLowerCase()}.zim`)).filePath;
+      await sameAnswers(file, { via: 'url' });
+    }
+    const asked = web.requests.slice(before);
+    assert.ok(asked.length >= 10, `read over HTTP, a probe and reads for each: ${asked.length} requests`);
+    assert.ok(asked.every((r) => r.method === 'GET' && /^bytes=\d+-\d+$/.test(r.range)), 'only range requests');
+  });
+
+  it('says why a web address cannot be read: not found, no ranges, not a ZIM', async () => {
+    provide(browser);
+    const local = createLocalLibraries();
+    await assert.rejects(local.call('open', { url: `${web.base}/zim/gone.zim` }), /gone\.zim: HTTP 404 \(not found\)/);
+    const file = writeGutenbergZim(path.join(tmp, 'whole.zim')).filePath;
+    await assert.rejects(local.call('open', { url: web.serve(file, { mode: 'no-ranges' }).url }), /whole\.zim: the server does not serve parts of the file/);
+    const junk = path.join(tmp, 'junk-web.zim');
+    fs.writeFileSync(junk, 'not a zim file at all, really, not at all');
+    await assert.rejects(local.call('open', { url: web.serve(junk).url }), /junk-web\.zim: not a readable ZIM file/);
+    assert.deepEqual((await local.call('catalog')).value.libraries, []);
+  });
+
+  it('builds a remote Wikipedia\'s index only when it is small, and says why not', async () => {
+    const file = writeWikipediaZim(path.join(tmp, 'web-big.zim')).filePath;
+    const { url } = web.serve(file);
+    const said = [];
+    provide(browser);
+    // A limit under the file's size: no build, and the library says why.
+    const local = createLocalLibraries({ urlIndexBuildBytes: 1000, onIndexing: (id, info) => said.push(info) });
+    const opened = (await local.call('open', { url })).value;
+    assert.equal(opened.indexing.stage, 'failed');
+    assert.match(opened.indexing.error, /no index was found for it.*download the file and open it from this device/);
+    assert.deepEqual((await local.call('books', { lib: opened.id })).value, []);
+    assert.equal(said.filter((i) => i?.stage === 'failed').length, 1, 'said once');
+    assert.ok(!said.some((i) => i && i.stage !== 'failed'), 'no build started');
+    // With the index in the store (or the site's indexes/), the limit does not matter.
+    const store = memoryStore();
+    const built = createLocalLibraries({ store });
+    const first = (await built.call('open', { file: asFile(file) })).value;
+    await indexed(async () => (await built.call('catalog')).value.libraries.find((l) => l.id === first.id).indexing);
+    const again = createLocalLibraries({ store, urlIndexBuildBytes: 1000 });
+    const back = (await again.call('open', { url })).value;
+    assert.equal(back.indexing, null);
+    assert.ok(back.books > 0);
+    assert.equal((await again.call('articles', { lib: back.id, q: 'ap', limit: 3 })).value[0].title, 'apple');
   });
 
   it('rejects what is not a ZIM file, and keeps ids apart', async () => {

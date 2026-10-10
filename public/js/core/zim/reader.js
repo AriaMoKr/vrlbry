@@ -46,8 +46,14 @@ const PTR_PAGE_SIZE = 1 << PTR_PAGE_BITS;
 /** First guess for a directory entry's size; long URLs/titles trigger a bigger re-read. */
 const DIRENT_GUESS = 512;
 const DIRENT_MAX = 1 << 20;
-/** entries(): number of directory entries fetched per batch. */
+/**
+ * entries(): directory entries fetched in the first batch; each next one is twice as big, up to
+ * ITER_BATCH_MAX. A scan that stops early (a redirect search looks at up to 400) reads little; a
+ * whole directory's (an index build) takes few reads: over the network each batch costs about two
+ * round trips, and in batches of 512 the Chemistry mini's 58,000 entries took 38 s.
+ */
 const ITER_BATCH = 512;
+const ITER_BATCH_MAX = 8192;
 /** entries(): dirents closer together than this are fetched with one read. */
 const ITER_SPAN = 256 * 1024;
 /**
@@ -744,8 +750,8 @@ export class ZimArchive {
   async *entries(start = 0, end = this.entryCount) {
     const from = Math.max(0, Math.floor(start));
     const to = Math.min(this.entryCount, Math.floor(end));
-    for (let i = from; i < to; i += ITER_BATCH) {
-      const batch = await this._readEntryBatch(i, Math.min(to, i + ITER_BATCH));
+    for (let i = from, n = ITER_BATCH; i < to; i += n, n = Math.min(ITER_BATCH_MAX, n * 2)) {
+      const batch = await this._readEntryBatch(i, Math.min(to, i + n));
       for (const entry of batch) yield entry;
     }
   }

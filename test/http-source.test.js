@@ -4,7 +4,6 @@
 
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
@@ -12,67 +11,26 @@ import '../server/platform-node.js';
 import { ArchiveLibrary } from '../public/js/core/library.js';
 import { HttpSource, HttpSourceError } from '../public/js/core/zim/http-source.js';
 import { ZimArchive } from '../public/js/core/zim/reader.js';
+import { startRangeServer } from './helpers/range-server.js';
 import { writeGutenbergZim, writeWikipediaZim } from './helpers/zim-fixtures.js';
 
 let tmp;
 let server;
 let base;
-/** What the server does: per path, { file, mode, failures, lastModified }. */
-const routes = new Map();
-const requests = [];
+let requests;
+/** Serves a file at a new path: { url, route } (helpers/range-server.js). */
+const serve = (file, opts) => server.serve(file, opts);
 
 before(async () => {
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vrlbry-http-'));
-  server = http.createServer((req, res) => {
-    const route = routes.get(new URL(req.url, 'http://x').pathname);
-    requests.push({ method: req.method, url: req.url, range: req.headers.range ?? null });
-    if (!route) {
-      res.writeHead(404);
-      return res.end();
-    }
-    if (route.failures > 0) { // a server busy for a while
-      route.failures--;
-      res.writeHead(503);
-      return res.end();
-    }
-    const data = fs.readFileSync(route.file);
-    const headers = { 'Last-Modified': route.lastModified, 'Accept-Ranges': 'bytes' };
-    if (req.method === 'HEAD') {
-      res.writeHead(200, { ...headers, 'Content-Length': data.length });
-      return res.end();
-    }
-    const m = /^bytes=(\d+)-(\d+)$/.exec(req.headers.range ?? '');
-    if (!m || route.mode === 'no-ranges') {
-      res.writeHead(200, { ...headers, 'Content-Length': data.length });
-      return res.end(data);
-    }
-    const start = Number(m[1]);
-    const end = Math.min(data.length - 1, Number(m[2]));
-    const part = data.subarray(start, end + 1);
-    res.writeHead(206, {
-      ...headers,
-      'Content-Length': part.length,
-      // 'no-content-range': as a page sees a server that does not expose the header (CORS)
-      ...(route.mode === 'no-content-range' ? {} : { 'Content-Range': `bytes ${start}-${end}/${data.length}` }),
-    });
-    res.end(part);
-  });
-  await new Promise((r) => server.listen(0, '127.0.0.1', r));
-  base = `http://127.0.0.1:${server.address().port}`;
+  server = await startRangeServer();
+  ({ base, requests } = server);
 });
 
 after(async () => {
-  await new Promise((r) => server.close(r));
+  await server.close();
   fs.rmSync(tmp, { recursive: true, force: true });
 });
-
-let n = 0;
-/** Serves a file at a new path: its URL. */
-function serve(file, opts = {}) {
-  const p = `/zim/${++n}/${path.basename(file)}`;
-  routes.set(p, { file, mode: 'ranges', failures: 0, lastModified: 'Sat, 10 Oct 2026 00:00:00 GMT', ...opts });
-  return { url: base + p, route: routes.get(p) };
-}
 
 describe('ZIMs over HTTP (HttpSource)', () => {
   it('reads an archive through range requests as from the file', async () => {

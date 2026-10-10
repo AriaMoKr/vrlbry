@@ -316,12 +316,20 @@
              search is a round trip per step, and each redirect is placed in title order by
              another). Step 6's indexes could carry what makes it free (titles, the redirects'
              positions), at the cost of their size.
-        3. Open by URL in the local library: the worker opens an HTTP source as it opens a
-           File (same ids, catalogue, indexing), with step 2's settings for URLs (`blockBytes`
-           8 KB, `wholeClusterBytes` 0, `wholeCompressedBytes` 4 MB, `checkImages: false`);
-           URLs need no permission, so remote libraries
-           can reopen themselves after a reload; `__vrlbry.openUrl(url)`; a clear message for a
-           server without CORS or ranges. Works with no cache, index or proxy at all.
+        3. *Done (2026-10-10):* open by web address in the local library (SPEC §2.6 "From the
+           web"): the card's address field, a dropped link, the example's "read it online",
+           `__vrlbry.openUrl`. Kiwix's download links become its mirror's (`local/zim-url.js`);
+           the worker opens an HTTP source as a File, with step 2's settings for URLs. The
+           addresses that opened reopen as the page starts and the room saved last time comes
+           back (in the browser: two libraries reopened in about a second); one that does not
+           stays on the "Last time" line. A local library's × closes and forgets it. A server
+           without CORS, ranges or the file is named in the error, and another Kiwix mirror's
+           address gets the same file's on Kiwix's own. A remote Wikipedia or Wikisource with
+           no index is indexed only up to 256 MB (`maxIndexBuildBytes`: building reads most of
+           the file). Scans now read growing batches (512 up to 8,192 entries): the Chemistry
+           mini's index over the network took 27 s instead of 47. Needs nothing else: no cache,
+           index or proxy. Not yet: opening a web address in VR (the kiosk has no address
+           entry; step 5's list is for that).
         4. A persistent block cache (optional): fetched blocks kept in IndexedDB by the ZIM's
            UUID and block, within a budget, oldest out first, so a library or book read once
            costs no network again. Read-through: a miss, quota error or no IndexedDB just reads

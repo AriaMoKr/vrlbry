@@ -189,6 +189,11 @@ function decodeHtml(buf) {
 }
 
 /** Runs `fn` over `items` with at most `limit` calls in flight. */
+/** "49.4 GB", "256 MB": a size for messages. */
+function byteSize(bytes) {
+  return bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.max(1, Math.round(bytes / 1e6))} MB`;
+}
+
 async function mapLimit(items, limit, fn) {
   let next = 0;
   const worker = async () => {
@@ -264,6 +269,7 @@ export class ArchiveLibrary {
     this._estimateSizes = false; // open()'s estimateSizes (_blobSizes)
     this._checkImages = true; // open()'s checkImages (_fixImages' trustSized)
     this._onIndexing = null; // open()'s onIndexing (_setIndexing)
+    this._maxIndexBuildBytes = null; // open()'s maxIndexBuildBytes (_startIndexing)
     this._epubCache = new LRUCache({ maxBytes: EPUB_CACHE_BYTES, sizeOf: (e) => e.bytes });
     this._epubInflight = new Map();
     this._imageInfo = new LRUCache({ maxEntries: 100000 }); // archive path → { ok, w, h }
@@ -318,6 +324,7 @@ export class ArchiveLibrary {
     estimateSizes = false, // books' sizes estimated from the cluster pointers, not read (_blobSizes)
     onIndexing, // (info) whenever info().indexing changes: { stage, progress }, or null once the index is ready
     checkImages = true, // false: a Wikipedia's or Wikisource's image whose size the HTML gives is not looked up (_fixImages)
+    maxIndexBuildBytes = null, // an index found nowhere is built only for an archive up to this big (_startIndexing)
   } = {}) {
     // An open ZimArchive is taken over (closed with the library): the local library opens the
     // file once, for the metadata that decides whether to go on, and keeps its block cache.
@@ -331,6 +338,7 @@ export class ArchiveLibrary {
       lib._estimateSizes = estimateSizes;
       lib._checkImages = checkImages;
       lib._onIndexing = onIndexing ?? null;
+      lib._maxIndexBuildBytes = maxIndexBuildBytes;
       try {
         await lib.books(); // catalog now: `kind` is final and errors surface at scan time
       } finally {
@@ -653,6 +661,18 @@ export class ArchiveLibrary {
     if (this._indexTask) return;
     const queue = this._indexQueue;
     const bytes = this.archive.fileSize;
+    // Over the network (the local library's remote ZIMs) a build reads most of the file: past
+    // maxIndexBuildBytes it is not started, and the library stays without books, saying why.
+    const limit = this._maxIndexBuildBytes;
+    if (limit != null && bytes > limit) {
+      if (this._indexing?.stage !== 'failed') { // said once
+        const error = `no index was found for it, and building one here would read most of its ${byteSize(bytes)}`
+          + ` (this builds up to ${byteSize(limit)}): download the file and open it from this device instead`;
+        this._warn(`${this.file}: ${what} not indexed: ${error}`);
+        this._setIndexing({ stage: 'failed', progress: 0, error });
+      }
+      return;
+    }
     this._setIndexing({ stage: 'queued', progress: 0 });
     if (queue?.queues(bytes)) this._log(`${this.file}: waiting to index ${what} (big archives one at a time, smallest first)…`);
     let t0;

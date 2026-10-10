@@ -159,3 +159,14 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
   .ov-results { position: absolute; bottom: 48px; width: 100%; }
   .ov-hint { display: none; }
 }
+
+/* A ZIM's web address (milestone 3), the example read online, and a local library's × */
+.ov-url { display: flex; gap: 6px; margin-top: 8px; }
+.ov-url-input { flex: 1; min-width: 0; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--text); font-size: 13px; }
+.ov-url-input:focus { outline: none; border-color: var(--accent); }
+.ov-url button { padding: 5px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--accent); }
+.ov-url button:hover { border-color: var(--accent); }
+.ov-try-btn { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; text-decoration: underline; cursor: pointer; }
+.ov-lib-body { flex: 1; min-width: 0; }
+.ov-lib-close { flex: none; width: 24px; height: 24px; padding: 0; border-radius: 6px; border: 1px solid transparent; background: none; color: var(--muted); font-size: 16px; line-height: 1; }
+.ov-lib-close:hover { border-color: var(--line); color: var(--text); }

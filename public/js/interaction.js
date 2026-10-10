@@ -194,7 +194,7 @@ export class Interaction {
     if (this.controls.presenting && !this._outdated) {
       p.add({
         id: 'own-zims', type: 'text', x: pad, y: p.h - 40, w: W - 2 * pad - 270, h: 28, size: 20, color: UI.muted, maxLines: 1,
-        text: 'Your own ZIM files: exit VR, then “Open ZIM files…” on the page',
+        text: 'More ZIMs: exit VR, then open a file or a web address on the page',
       });
     }
     if (this._version || this._outdated) {
