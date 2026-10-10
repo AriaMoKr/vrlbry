@@ -309,15 +309,32 @@ the server has always used. With no store an index is built on every open and ke
 
 ### 3.1 `core/zim/reader.js`
 
-`ZimArchive.open(input)` takes a file path (opened by `platform.openFile`: Node only), a `Blob`
-or `File` (`BlobSource`), or any byte source `{ name, size, read(position, length), close() }`
-whose `read` resolves with `length` bytes, fewer only at the end. `filePath` is the path or
-the file's name, for messages.
+`ZimArchive.open(input)` takes a file path (opened by `platform.openFile`: Node only), an
+http(s) URL (`HttpSource`, below), a `Blob` or `File` (`BlobSource`), or any byte source
+`{ name, size, read(position, length), close() }` whose `read` resolves with `length` bytes,
+fewer only at the end. `filePath` is the path or the file's name, for messages.
 
-Every read under 64 KB (dirents and URL pointers for lookups, a binary search reading one
-dirent per step; cluster heads and offset tables; small blobs) comes from a cache of aligned
-64 KB blocks (`blockCacheBytes`, 8 MB by default; the local library gives each file 16 MB,
-§2.6), each block read once while cached. On a `File` in a browser a read costs about the same
+**HTTP sources** (`core/zim/http-source.js`, milestone 3: ZIMs read straight from Kiwix's
+mirror, never downloaded whole): every read is a GET with a `Range` header and nothing else
+(Kiwix's mirror, the only one that allows CORS, allows no other request header, not
+`If-Range`). Opening reads bytes 0–79: a server answering 200 (no ranges) or 404 is refused
+with an `HttpSourceError` (`status`) saying so; the size comes from `Content-Range`, or a
+HEAD's `Content-Length` when a page may not read the former. Every later answer must be a 206
+starting at the position asked for, with the same total size and `Last-Modified` as the first:
+otherwise the file changed on the server (a new edition at the same URL) and the read fails
+("open it again"), never mixing two editions. At most `maxInFlight` requests at once (6, a
+browser's limit per host over HTTP/1.1); network errors, timeouts (`timeoutMs`, 30 s) and
+408/425/429/5xx are tried again (`retries`, 3, waiting 0.5, 1, 2 s); a CORS refusal looks
+like a network error to a page, so the final message says it may be one. `close()` aborts the
+requests and rejects the queued reads. `stats` counts reads, bytes and retries. Pass options
+as `ZimArchive.open(url, { http: { … } })`. A URL needs nothing else: no proxy, no cached
+index, no block store (those are optional speed-ups, TODO milestone 3).
+
+Every read under `blockBytes` (64 KB by default; dirents and URL pointers for lookups, a
+binary search reading one dirent per step; cluster heads and offset tables; small blobs) comes
+from a cache of aligned blocks of that size (`blockCacheBytes`, 8 MB by default; the local
+library gives each file 16 MB, §2.6), each block read once while cached. Over a network a read
+costs a round trip whatever its size, so a remote archive may want bigger blocks. On a `File` in a browser a read costs about the same
 however small (on a Quest 3 ~65 ms alone, ~11 ms each when 8 or more run at once, a 4 MB read
 87 ms), so the number of reads is what counts: opening a 4.5 GB Gutenberg ZIM made 3,200
 dirent reads over 1.7 MB of directory. Scans (`entries()`) read in batches and bypass it; so
@@ -331,7 +348,7 @@ own, so a book with one picture per cluster reads no more than before), never fo
 export class ZimError extends Error {}
 export class ZimArchive {
   /** Opens and validates a ZIM file. Reads header, MIME list, pointer lists (lazily or eagerly). */
-  static async open(input, { clusterCacheBytes = 256 * 1024 * 1024, direntCacheEntries = 50000, blockCacheBytes = 8 * 1024 * 1024, wholeClusterBytes = 0 } = {}): Promise<ZimArchive>
+  static async open(input, { clusterCacheBytes = 256 * 1024 * 1024, direntCacheEntries = 50000, blockCacheBytes = 8 * 1024 * 1024, blockBytes = 65536, wholeClusterBytes = 0, http = {} } = {}): Promise<ZimArchive>
   async close()
   filePath: string
   header: { major, minor, uuid /* 32-char hex */, entryCount, clusterCount, mainPage /* index|null */,

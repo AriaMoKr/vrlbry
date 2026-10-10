@@ -11,6 +11,7 @@ import { platform } from '../platform.js';
 import { allOnes64, bytesEqual, compareBytes, u16, u32, u64 as u64Raw } from '../util/bytes.js';
 import { LRUCache } from '../util/lru.js';
 import { BlobSource } from './blob-source.js';
+import { HttpSource } from './http-source.js';
 import { xzDecompress } from './xz.js';
 
 /** Any problem with the ZIM file itself (bad magic, truncation, corrupt structures, ranges). */
@@ -197,6 +198,7 @@ export class ZimArchive {
     this._blocks = new LRUCache({ maxBytes: opts.blockCacheBytes, sizeOf: (b) => b.length + 32 }); // block number → bytes
     this._blocksInflight = new Map();
     this._wholeClusterBytes = opts.wholeClusterBytes;
+    this._blockBytes = opts.blockBytes ?? READ_BLOCK; // the block cache's block size (_readBlocks)
     this._blobsWanted = new LRUCache({ maxEntries: 4096 }); // cluster → blobs asked of it so far (_readWhole)
     this._tailWindow = opts.tailWindowBytes;
     this._dirents = new LRUCache({ maxEntries: opts.direntCacheEntries });
@@ -213,18 +215,22 @@ export class ZimArchive {
    * Opens and validates a ZIM file: reads the header, the MIME list and the cluster pointer list
    * (URL pointers are paged in lazily, so opening is fast even for huge archives).
    * @param {string|Blob|{ name: string, size: number, read: (position: number, length: number) => Promise<Uint8Array>, close?: () => Promise<void> }} input
-   *   a file path (the platform opens it: Node only), a Blob or File, or a byte source whose
-   *   read() resolves with `length` bytes, fewer only at the end
+   *   a file path (the platform opens it: Node only), an http(s) URL (HttpSource: range
+   *   requests), a Blob or File, or a byte source whose read() resolves with `length` bytes,
+   *   fewer only at the end
    * @param {object} [opts]
    * @param {number} [opts.clusterCacheBytes=268435456] budget for decompressed clusters
    * @param {number} [opts.direntCacheEntries=50000] number of parsed directory entries to cache
    * @param {number} [opts.blockCacheBytes=8388608] budget for the block cache (_readBlocks), which
-   *   serves every read under 64 KB: dirents, URL pointers, cluster heads, small blobs; 0 reads
-   *   each from the source
+   *   serves every read under `blockBytes`: dirents, URL pointers, cluster heads, small blobs; 0
+   *   reads each from the source
+   * @param {number} [opts.blockBytes=65536] the block cache's block size: what one small read
+   *   costs in bytes (bigger over a network, where a read costs a round trip whatever its size)
    * @param {number} [opts.wholeClusterBytes=0] an uncompressed cluster up to this big is read whole
    *   into the cluster cache when a blob of it is wanted (_readWhole), not blob by blob
    * @param {number} [opts.tailWindowBytes=4194304] first read size for a compressed cluster whose
    *   end is not exactly known (advanced; mainly for tests)
+   * @param {object} [opts.http] options for an URL's HttpSource (fetch, maxInFlight, retries, timeoutMs)
    * @returns {Promise<ZimArchive>}
    * @throws {ZimError} for files that are not ZIM files, truncated or structurally invalid
    */
@@ -232,20 +238,23 @@ export class ZimArchive {
     clusterCacheBytes = 256 * 1024 * 1024,
     direntCacheEntries = 50000,
     blockCacheBytes = BLOCK_CACHE_BYTES,
+    blockBytes = READ_BLOCK,
     wholeClusterBytes = 0,
     tailWindowBytes = TAIL_WINDOW,
+    http = {},
   } = {}) {
     const name = typeof input === 'string' ? input : input?.name || 'archive';
     let source;
     try {
-      if (typeof input === 'string') source = await platform.openFile(input);
+      if (typeof input === 'string' && /^https?:\/\//i.test(input)) source = await HttpSource.open(input, http);
+      else if (typeof input === 'string') source = await platform.openFile(input);
       else if (typeof Blob !== 'undefined' && input instanceof Blob) source = new BlobSource(input);
       else source = input;
     } catch (err) {
       throw new ZimError(`cannot open ${name}: ${err.message}`, { cause: err });
     }
     try {
-      const zim = new ZimArchive(source, { clusterCacheBytes, direntCacheEntries, blockCacheBytes, wholeClusterBytes, tailWindowBytes });
+      const zim = new ZimArchive(source, { clusterCacheBytes, direntCacheEntries, blockCacheBytes, blockBytes, wholeClusterBytes, tailWindowBytes });
       await zim._init();
       return zim;
     } catch (err) {
@@ -362,11 +371,11 @@ export class ZimArchive {
 
   /**
    * Reads exactly `length` bytes at `position` (throws ZimError at end of file). A read under
-   * READ_BLOCK bytes comes from the block cache (_readBlocks), a bigger one from the source.
+   * `blockBytes` (64 KB by default) comes from the block cache (_readBlocks), a bigger one from the source.
    */
   async _read(position, length) {
     if (this._closed) throw new ZimError(`${this.filePath}: archive is closed`);
-    if (length < READ_BLOCK && this._blocks.maxBytes > 0) return this._readBlocks(position, length);
+    if (length < this._blockBytes && this._blocks.maxBytes > 0) return this._readBlocks(position, length);
     return this._readRaw(position, length);
   }
 
@@ -380,7 +389,7 @@ export class ZimArchive {
   }
 
   /**
-   * A small read served from the block cache: aligned READ_BLOCK-byte blocks, each read once
+   * A small read served from the block cache: aligned `blockBytes`-byte blocks, each read once
    * while cached (blockCacheBytes). On a File in a browser a read costs about the same however
    * small (on a Quest 3 ~65 ms alone, ~11 ms each when 8 or more run at once; a 4 MB read only
    * 87 ms), so what counts is how many reads are made: a lookup is a binary search reading one
@@ -389,12 +398,12 @@ export class ZimArchive {
    * two or three. The bytes returned are the cache's: do not modify them.
    */
   async _readBlocks(position, length) {
-    const first = Math.floor(position / READ_BLOCK);
-    const last = Math.floor((position + length - 1) / READ_BLOCK);
+    const first = Math.floor(position / this._blockBytes);
+    const last = Math.floor((position + length - 1) / this._blockBytes);
     const short = () => new ZimError(`${this.filePath}: unexpected end of file reading ${length} bytes at ${position}`);
     if (first === last) {
       const block = await this._block(first);
-      const from = position - first * READ_BLOCK;
+      const from = position - first * this._blockBytes;
       if (from + length > block.length) throw short();
       return block.subarray(from, from + length);
     }
@@ -402,7 +411,7 @@ export class ZimArchive {
     let filled = 0;
     for (let b = first; b <= last; b++) {
       const block = await this._block(b);
-      const from = b === first ? position - first * READ_BLOCK : 0;
+      const from = b === first ? position - first * this._blockBytes : 0;
       const n = Math.min(block.length - from, length - filled);
       if (n <= 0) throw short();
       out.set(block.subarray(from, from + n), filled);
@@ -419,8 +428,8 @@ export class ZimArchive {
     let pending = this._blocksInflight.get(b);
     if (!pending) {
       pending = (async () => {
-        const start = b * READ_BLOCK;
-        const block = await this._readRaw(start, Math.min(READ_BLOCK, this.fileSize - start));
+        const start = b * this._blockBytes;
+        const block = await this._readRaw(start, Math.min(this._blockBytes, this.fileSize - start));
         this._blocks.set(b, block);
         return block;
       })();
@@ -825,7 +834,7 @@ export class ZimArchive {
       const data = await this._read(start, end - start);
       // A small read is a view of a cached block (_readBlocks): copied, as callers may keep or
       // modify the data.
-      return end - start < READ_BLOCK ? platform.copy(data) : data;
+      return end - start < this._blockBytes ? platform.copy(data) : data;
     }
     cluster ??= await this._loadCluster(clusterIndex, info);
     const [start, end] = this._blobRange(cluster, clusterIndex, blob);

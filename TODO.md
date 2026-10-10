@@ -250,11 +250,13 @@
         to building, `memoryStore` stands in for IndexedDB), each has a test with it missing or
         failing, and SPEC says which layers are optional.
       - *Plan:*
-        1. An HTTP byte source (`{ name, size, read, close }` over `fetch` with `Range`, beside
-           `BlobSource`): the size from the first `Content-Range`; refuse a server that ignores
-           `Range` (a 200 would stream the whole file); pin the edition with `If-Range` (ETag
-           or Last-Modified); retries with backoff; a cap on requests in flight. Tested against
-           a local server with and without ranges.
+        1. *Done (2026-10-10):* an HTTP byte source (`core/zim/http-source.js`, beside
+           `BlobSource`; `ZimArchive.open(url)`): the size from the first `Content-Range` (or a
+           HEAD); a server that ignores `Range` is refused (a 200 would stream the whole file).
+           The edition is checked, not pinned: the mirror allows no `If-Range` in a CORS
+           request, so every answer's total size and Last-Modified must match the first's.
+           Retries with backoff, at most 6 requests in flight, and a block size per archive
+           (`blockBytes`). Tested against a local server (`test/http-source.test.js`).
         2. Measure on the PC and a Quest: reads and time to open a Gutenberg ZIM, a Wikipedia
            mini and the top 1M (with a prebuilt index), and to the first page. Decides the
            block size over HTTP (64 KB suits files; at ~0.6 s a read, 256 KB–1 MB likely
