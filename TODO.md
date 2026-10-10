@@ -70,7 +70,7 @@
     358 MB. The site's files now open at once (`openFiles`' `concurrency`, `openEach`: one batch,
     the hall rebuilt once): on the Quest (deployed at 15fbe0e) the app up at 1.5 s, Mathematics
     open at 5.0 s, Physics 5.3 s, Golf 5.8 s: all seven at 5.8 s instead of 9.7; Quantum mechanics
-    read in 1.0 s; 90 Hz. To do: ZIM files split into parts (cold CDN misses).
+    read in 1.0 s; 90 Hz.
   - *GitHub Pages serves files over 100 MB* when a workflow deploys them (tested 2026-10-10 with a
     throwaway repo, pages-size-test: Golf's 138 MB and Wikipedia 100's 318 MB ZIMs, downloaded
     into the Pages artifact: whole sizes, range requests at both ends, the same bytes as Kiwix's;
@@ -89,10 +89,14 @@
     min after 2.7 s. Afterwards that city's copy stays: past its 10 minutes (`max-age=600`) it is
     only revalidated (~0.09 s), never fetched whole again (none evicted within the hour
     watched). So warming the cache after a deploy would not help: requests from the workflow's
-    runner warm only the cities near it, and each city pays one miss per file per deploy. What
-    would: smaller files. A ZIM shipped in parts of 8-16 MB (libzim's split ZIMs, `.zimaa`,
-    `.zimab`…; the HTTP source reading across them) would make any miss ~0.25 s; Golf whole
-    makes the app's first read of it wait ~3 s in a city that has not had it.
+    runner warm only the cities near it, and each city pays one miss per file per deploy (Golf:
+    the app's first read of it waits ~3 s in a city that has not had it). Splitting the shipped
+    ZIMs into parts would shorten that, but *decided* (2026-10-10): ZIM files stay exactly as
+    Kiwix publishes them, the same size and hash (useful for caching across sites later);
+    pre-rendering is the only transformation.
+  - *After the merge* (2026-10-10): work goes on `main` directly; the standalone and cloud sites
+    are parked (they served their purpose and may be used later), each still deploying from its
+    own branch if pushed.
 - **Wikipedia: follow links** (later). Tapping a link in an article goes to that article, taking
   its volume off the shelf if needed. The reader cannot follow links today.
 - **Garbage collection pauses** are now the main source of dropped frames on a Quest 3. The
