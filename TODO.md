@@ -41,6 +41,30 @@
   9.67 M articles, included ~2.2 M Category and ~90,000 Portal pages, which are now left out
   (~7.3 M articles expected, ~7,300 volumes, ~70 bookcases). Next: open it in the app, and try
   its room on the Quest.
+- **Merging back into the main site** (planned, 2026-10-10). The three Pages sites are flavours of
+  one app; most of standalone's and cloud's features go back to main. Each site stays
+  self-contained: none loads files from another (same origin or not), so any one can be removed
+  without touching the others. Main keeps a demo set on the site itself, readable without Kiwix's
+  mirrors or the proxy, and some prebuilt indexes, within GitHub Pages' 1 GB per site.
+  - *The demo set measured* (pre-rendered as main's workflow does: 606 MB in 175,713 files, the
+    app 4 MB): Golf (maxi) 216 MB pre-rendered against a 138 MB ZIM; Medicine 121 against 155;
+    Mathematics 117 (81 MB of formula pictures) against 56; Physics 59 against 54; Wikipedia 100
+    49 against 318 (the ZIM keeps every picture size); Gutenberg LCC-P 22 against 37; Chemistry
+    19 against 24. Their indexes would be ~1-2 MB in all.
+  - *Planned mix:* ZIM files for Golf, Mathematics and Physics (248 MB, read from the site itself
+    by the local library: Pages answers range requests), pre-rendered Medicine, Wikipedia 100,
+    LCC-P and Chemistry (210 MB): ~460 MB for the demo set, ~87,000 files instead of 175,700;
+    with today's five big indexes (90 MB) ~550 MB in all. The pre-rendered half works without the
+    worker; the files are the path an Android or Quest APK would use. To do: a demo-set list
+    saying which form each ZIM takes, a build that pre-renders some and copies the others with
+    their indexes, the first visit opening the files (the Demo set place accepting their `~`
+    ids), and the first visit timed on a Quest.
+  - *GitHub Pages serves files over 100 MB* when a workflow deploys them (tested 2026-10-10 with a
+    throwaway repo, pages-size-test: Golf's 138 MB and Wikipedia 100's 318 MB ZIMs, downloaded
+    into the Pages artifact: whole sizes, range requests at both ends, the same bytes as Kiwix's;
+    the app opened Golf from there and read Tiger Woods with its picture). Git's 100 MB limit
+    does not apply: the files never enter the repo. Pages documents 1 GB per site, 100 GB a month
+    of bandwidth and a 10-minute deploy timeout, no limit per file.
 - **Wikipedia: follow links** (later). Tapping a link in an article goes to that article, taking
   its volume off the shelf if needed. The reader cannot follow links today.
 - **Garbage collection pauses** are now the main source of dropped frames on a Quest 3. The
