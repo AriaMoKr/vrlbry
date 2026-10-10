@@ -16,7 +16,7 @@ import { KINDS as KIWIX_KINDS, indexLabel, sizeText } from './local/kiwix.js';
 import { letterOf, SORT_MODES, inTitleOrder, thumbIndex } from './util/books.js';
 import { PAGE_PX, READ } from './config.js';
 import {
-  ALL_PLACE, collectionsFor, currentPlace, facetsOf, groupPlaces, isFaceted, normRoom, placeBookCount, placeFor, roomLabel, sameRoom, unitOf, ROOM_CAP,
+  ALL_PLACE, capNote, collectionsFor, currentPlace, facetsOf, genreLabel, groupPlaces, isFaceted, normRoom, placeBookCount, placeFor, roomLabel, sameRoom, unitOf, ROOM_CAP,
 } from './rooms.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
@@ -153,6 +153,8 @@ export class Interaction {
     const W = p.w;
     const pad = 36;
     const placesScroll = p.get('places')?.scroll; // kept across refills (indexing progress, rescans)
+    // The genre list's scroll, kept across refills of the same place's Rooms tab (_fillRoomsTab).
+    this._genresScroll = p.get('room-genres') ? { place: this._genresListFor, scroll: p.get('room-genres').scroll } : null;
     p.clear();
     p.add({ type: 'text', x: pad, y: 26, w: W - 2 * pad, h: 54, text: 'Catalogue', size: 46, weight: '600', serif: true, color: UI.accent });
     let right = W - pad;
@@ -518,7 +520,7 @@ export class Interaction {
     const filtered = !!(room.genre || room.letter);
     p.add({
       type: 'text', x: pad, y: y + 6, w: W - 2 * pad - (filtered ? 230 : 0), h: 34, size: 24, color: UI.text, maxLines: 1,
-      text: `Now: ${roomLabel(room)} · ${total.toLocaleString()} works${total > ROOM_CAP ? ` (first ${ROOM_CAP.toLocaleString()})` : ''}`,
+      text: `Now: ${roomLabel(room)} · ${total.toLocaleString()} works${capNote(place, total)}`,
     });
     if (filtered) {
       p.add({
@@ -529,22 +531,28 @@ export class Interaction {
     y += 54;
     p.add({ type: 'text', x: pad, y, w: W - 2 * pad, h: 30, text: 'Genre · tap again to remove', size: 21, color: UI.muted, maxLines: 1 });
     y += 34;
-    const cols = 3;
-    const gw = (W - 2 * pad - (cols - 1) * 10) / cols;
-    const rowsLeft = Math.max(2, Math.floor((p.h - y - 150) / 54));
-    const shown = genres.slice(0, cols * rowsLeft);
-    shown.forEach((g, i) => {
-      const r = Math.floor(i / cols);
-      const c = i % cols;
-      const active = room.genre === g.name;
-      p.add({
-        id: `room-g-${i}`, type: 'button', x: pad + c * (gw + 10), y: y + r * 54, w: gw, h: 48,
-        label: `${g.name} · ${g.count > 999 ? (g.count / 1000).toFixed(1) + 'k' : g.count}`, size: 21,
-        active, disabled: !active && !g.count,
-        onClick: () => this.toggleFilter(place.id, 'genre', g.name),
-      });
+    // Every genre in a list, named (Gutenberg's LCC classes: genreLabel), largest first: 40 for
+    // English Gutenberg, which a grid of buttons could neither show all of nor name.
+    const genreRowH = 48;
+    const genreRows = Math.max(3, Math.floor((p.h - y - 200) / genreRowH)); // below it: the letters (~146 px) and the footer
+    const activeAt = genres.findIndex((g) => g.name === room.genre);
+    const genresScroll = this._genresScroll;
+    const keepGenres = genresScroll && genresScroll.place === place.id;
+    this._genresListFor = place.id;
+    p.add({
+      id: 'room-genres', type: 'list', x: pad, y, w: W - 2 * pad, h: genreRows * genreRowH, rowH: genreRowH, size: 22,
+      scroll: keepGenres ? genresScroll.scroll : Math.max(0, activeAt - 1),
+      items: genres.map((g) => {
+        const active = room.genre === g.name;
+        return {
+          label: genreLabel(g.name),
+          right: g.count.toLocaleString(),
+          active, disabled: !active && !g.count,
+          onClick: () => this.toggleFilter(place.id, 'genre', g.name),
+        };
+      }),
     });
-    y += Math.ceil(shown.length / cols) * 54 + 8;
+    y += genreRows * genreRowH + 8;
     p.add({ type: 'text', x: pad, y, w: W - 2 * pad, h: 30, text: `Title starts with · up to ${ROOM_CAP.toLocaleString()} works are shelved`, size: 21, color: UI.muted, maxLines: 1 });
     y += 34;
     const keys = ['#', ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'];

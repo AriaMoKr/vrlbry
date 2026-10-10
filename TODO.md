@@ -474,10 +474,13 @@
            with 6 requests in flight (HttpSource maxInFlight), 6.8-7.0 s with 12, 6.3 s with
            16, while sizing 8, 16 or 32 pictures at once made no difference. Six was for
            HTTP/1.1, but Kiwix's mirror and the proxy speak HTTP/2: worth measuring more in
-           flight in a browser and on the Quest. *Seen there, to decide:* a library this big
-           opens on genre "A" (General works: encyclopedias, periodicals; the biggest genre
-           under the 3,000-book cap), and the genre buttons show bare LCC codes ("PS · 11.2k",
-           "PR · 9.7k"). Left for later: the items under steps 6 and 7 (a more
+           flight in a browser and on the Quest. *Seen there, and done (2026-10-10):* a library
+           this big opened on genre "A" (General works: encyclopedias, periodicals; the
+           biggest genre under the 3,000-book cap), and the genre buttons showed bare LCC codes
+           ("PS · 11.2k"), 18 of the 40. Now the first room is all books, a Gutenberg room over
+           the cap shelves its 3,000 most read in the chosen order (the default sort is by
+           title, so "the first 3,000" were "$1,000 a Plate" and on), and the kiosk lists every
+           genre by name (SPEC §5, rooms). Left for later: the items under steps 6 and 7 (a more
            compact index, other languages, keeping popular reads at the edge, CORS on the
            mirrors, then following Kiwix's redirect).
     - *Keep files across reloads (done 2026-10-08):* where the browser gives file handles (the

@@ -76,6 +76,59 @@ function volumesSubtitle(library, volumes) {
 const genreOf = (b) => b.genre || b.shelf || 'Other works';
 
 /**
+ * The Library of Congress classes Gutenberg shelves its books by (a book's `shelf`, from the ZIM's
+ * lcc_shelves.js: the 39 of gutenberg_en_all), by name: Kiwix's names for its Gutenberg ZIM of each
+ * class, except E and F (both "History of the Americas" there), C and PZ (in plainer words).
+ * Rooms and filters keep the codes (saved rooms stay valid); only what is shown is named.
+ */
+export const LCC_NAMES = Object.freeze({
+  A: 'General works',
+  B: 'Philosophy, psychology, religion',
+  C: 'Biography, genealogy, archaeology',
+  D: 'World history (Europe, Asia, Africa, Australia)',
+  E: 'History of the Americas (general, United States)',
+  F: 'History of the Americas (U.S. local, Canada, Latin America)',
+  G: 'Geography, anthropology, recreation',
+  H: 'Social sciences',
+  J: 'Political science',
+  K: 'Law',
+  L: 'Education',
+  M: 'Music and books on music',
+  N: 'Fine arts',
+  P: 'Language and literature',
+  PA: 'Greek and Latin language and literature',
+  PB: 'Modern and Celtic languages',
+  PC: 'Romance languages',
+  PD: 'Germanic and Scandinavian languages',
+  PE: 'English language',
+  PF: 'West Germanic languages',
+  PG: 'Slavic, Baltic and Albanian languages',
+  PH: 'Uralic and Basque languages',
+  PJ: 'Oriental languages and literatures',
+  PK: 'Indo-Iranian languages and literatures',
+  PL: 'Eastern Asia, Africa, Oceania languages',
+  PM: 'Hyperborean, Indian, and artificial languages',
+  PN: 'Literature (general)',
+  PQ: 'French, Italian, Spanish, Portuguese literature',
+  PR: 'English literature',
+  PS: 'American literature',
+  PT: 'Germanic and Scandinavian literature',
+  PZ: "Fiction and children's books",
+  Q: 'Science',
+  R: 'Medicine',
+  S: 'Agriculture',
+  T: 'Technology',
+  U: 'Military science',
+  V: 'Naval science',
+  Z: 'Books, libraries, bibliography',
+});
+
+/** A genre as it is shown: an LCC class by its name, any other (Wikisource's) as it is. */
+export function genreLabel(genre) {
+  return LCC_NAMES[genre] ?? genre;
+}
+
+/**
  * A room in the current shape. Settings saved before the filters could be combined hold
  * `{ type: 'genre' | 'letter', value }`.
  */
@@ -113,13 +166,16 @@ export function inRoom(book, room) {
   return (!room.genre || genreOf(book) === room.genre) && (!room.letter || letterOf(book, 'title') === room.letter);
 }
 
-/** A sensible first room: Novels if there are any, else the largest genre that fits a room. */
+/**
+ * A sensible first room: Novels if there are any (Wikisource), else all the books, of which a
+ * Gutenberg ZIM's room shelves the most read (shelfCollections). A big Gutenberg ZIM opened on its
+ * largest genre that fitted the cap: class A, encyclopedias and periodicals.
+ */
 export function defaultRoom(books) {
   const { genres } = facetsOf(books);
   if (!genres.length) return null;
   const novels = genres.find((g) => g.name === 'Novels');
-  const pick = novels || genres.find((g) => g.count <= ROOM_CAP && g.name !== 'Other works') || genres[0];
-  return { genre: pick.name, letter: null };
+  return { genre: novels ? novels.name : null, letter: null };
 }
 
 /** The room that shows a given book: its genre, narrowed to its title letter when the genre is too big. */
@@ -129,11 +185,24 @@ export function roomFor(book, books) {
   return { genre, letter: count <= ROOM_CAP ? null : letterOf(book, 'title') };
 }
 
+/**
+ * Whether a library's capped rooms shelve their most read books (ROOM_CAP of them, in the shelf
+ * order) rather than the first in the shelf order: a Gutenberg ZIM's `rank` is its popularity
+ * (full_by_popularity.js); other libraries' is their order in the archive, or none.
+ */
+export const capsByPopularity = (library) => library?.kind === 'gutenberg';
+
+/** What a room's count says when it holds more than are shelved: " (the 3,000 most read)", " (first 3,000)", or ''. */
+export function capNote(library, total) {
+  if (total <= ROOM_CAP) return '';
+  return capsByPopularity(library) ? ` (the ${ROOM_CAP.toLocaleString()} most read)` : ` (first ${ROOM_CAP.toLocaleString()})`;
+}
+
 /** Human label of a room. */
 export function roomLabel(room) {
   if (!room?.genre && !room?.letter) return 'All books';
-  if (!room.letter) return room.genre;
-  return room.genre ? `${room.genre}, titles starting with ${room.letter}` : `Titles starting with ${room.letter}`;
+  if (!room.letter) return genreLabel(room.genre);
+  return room.genre ? `${genreLabel(room.genre)}, titles starting with ${room.letter}` : `Titles starting with ${room.letter}`;
 }
 
 export function sameRoom(a, b) {
@@ -181,7 +250,7 @@ export function collectionsFor(libraries, booksByLib, settings) {
   return shelfCollections([lib], booksByLib, settings.rooms, settings.sort).map((c) => ({
     ...c,
     subtitle: c.room
-      ? `${roomLabel(c.room)} · ${c.total.toLocaleString()} works${c.capped ? ` (first ${ROOM_CAP.toLocaleString()})` : ''}`
+      ? `${roomLabel(c.room)} · ${c.total.toLocaleString()} works${capNote(lib, c.total)}`
       : lib.kind === 'wikipedia' ? volumesSubtitle(lib, c.total) : undefined,
   }));
 }
@@ -220,9 +289,12 @@ export function shelfCollections(libraries, booksByLib, rooms, sort) {
     if (room) rooms[library.id] = room;
     // Filter the library's (cached) sorted order rather than sorting the room on every switch.
     const matching = room ? sortBooks(all, sort).filter((b) => inRoom(b, room)) : [];
-    return {
-      library, room, total: matching.length, capped: matching.length > ROOM_CAP,
-      books: matching.slice(0, ROOM_CAP),
-    };
+    let books = matching.slice(0, ROOM_CAP);
+    if (matching.length > ROOM_CAP && capsByPopularity(library) && sort !== 'popularity') {
+      // The most read of the room (the cached popularity order), shelved in the chosen order.
+      const top = new Set(sortBooks(all, 'popularity').filter((b) => inRoom(b, room)).slice(0, ROOM_CAP));
+      books = matching.filter((b) => top.has(b));
+    }
+    return { library, room, total: matching.length, capped: matching.length > ROOM_CAP, books };
   });
 }

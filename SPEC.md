@@ -1400,8 +1400,16 @@ States: `browse` → `inspect` → `opening` → `read` (and back), plus `busy` 
   than 3,000 books. It then shelves one room at a time, `{ genre, letter }` (each a string or
   null): the works of that genre whose title starts with that letter, either filter alone, or —
   both null — all works. A room is sorted by the current sort and capped at `ROOM_CAP` = 3,000
-  books (the section sign says "(first 3,000)"). The default room is Novels if present, else the
-  largest genre that fits. The current room per library is saved in `settings.rooms`; rooms
+  books: a Gutenberg ZIM's room shelves its 3,000 most read (by `rank`, its popularity, from
+  the cached popularity order) in the current sort (the section sign and the kiosk say "(the
+  3,000 most read)": `capNote`); other libraries' rank is no popularity, so theirs shelves the
+  first 3,000 in the sort ("(first 3,000)"). The default room is Novels if present (Wikisource),
+  else all works: a big Gutenberg ZIM opened on its largest genre under the cap, class A
+  (encyclopedias, periodicals). Gutenberg's genres are Library of Congress classes, shown by
+  name (`genreLabel`, `LCC_NAMES` in `rooms.js`: Kiwix's names for its ZIM of each class, E and F
+  told apart, C and PZ in plainer words), kept by code in rooms and settings. The kiosk's Rooms
+  tab lists every genre (a scrolling list, largest first: 40 for English Gutenberg, which its
+  former grid of 18 buttons could neither show nor name). The current room per library is saved in `settings.rooms`; rooms
   saved in the earlier `{ type: 'genre' | 'letter', value }` shape are converted (`normRoom`).
   Ordinary libraries are shelved whole. Search results and "Recently read" entries that are not
   on the shelves first switch to the book's place and room (`placeFor` / `roomFor`: its genre,

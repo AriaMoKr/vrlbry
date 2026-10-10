@@ -4,6 +4,7 @@ import { describe, it } from 'node:test';
 import { EXAMPLE_ZIM } from '../public/js/local/local.js';
 import {
   ROOM_CAP, ALL_PLACE, DEMO_PLACE, DEMO_LIBRARIES, LOCAL_PLACE, groupPlaces, isDemoLibrary, isLocalLibrary, placeBookCount, isFaceted, facetsOf, inRoom, defaultRoom, roomFor, roomLabel, sameRoom, normRoom, shelfCollections, collectionsFor,
+  genreLabel, LCC_NAMES, capNote,
   currentPlace, placeFor,
 } from '../public/js/rooms.js';
 
@@ -22,13 +23,16 @@ describe('rooms', () => {
     assert.equal(isFaceted({ kind: 'generic' }, new Array(ROOM_CAP + 1).fill({})), true);
   });
 
-  it('counts genres and letters; picks Novels first, else the largest genre that fits', () => {
+  it('counts genres and letters; picks Novels first, else all the books (the most read first)', () => {
     const books = works(100, (i) => (i < 60 ? 'Court decisions' : i < 90 ? 'Novels' : 'Poetry'));
     const f = facetsOf(books);
     assert.deepEqual(f.genres.map((g) => [g.name, g.count]), [['Court decisions', 60], ['Novels', 30], ['Poetry', 10]]);
     assert.equal(f.letters.reduce((n, l) => n + l.count, 0), 100);
     assert.deepEqual(defaultRoom(books), { genre: 'Novels', letter: null });
-    assert.deepEqual(defaultRoom(works(5, () => 'Poetry')), { genre: 'Poetry', letter: null });
+    assert.deepEqual(defaultRoom(works(5, () => 'Poetry')), { genre: null, letter: null }, 'all the books, not the largest genre');
+    // A big Gutenberg ZIM opened on class A (encyclopedias, periodicals), its largest genre under the cap.
+    const gutenberg = works(ROOM_CAP * 2, (i) => (i < ROOM_CAP + 5 ? 'PS' : i < ROOM_CAP + 2900 ? 'A' : 'PR'));
+    assert.deepEqual(defaultRoom(gutenberg), { genre: null, letter: null });
     assert.equal(defaultRoom([]), null);
   });
 
@@ -54,6 +58,9 @@ describe('rooms', () => {
     assert.equal(roomLabel({ genre: null, letter: 'A' }), 'Titles starting with A');
     assert.equal(roomLabel({ genre: 'Poetry', letter: 'B' }), 'Poetry, titles starting with B');
     assert.equal(roomLabel({ genre: null, letter: null }), 'All books');
+    // Gutenberg's genres are LCC classes, shown by name.
+    assert.equal(roomLabel({ genre: 'PS', letter: null }), 'American literature');
+    assert.equal(roomLabel({ genre: 'PZ', letter: 'B' }), "Fiction and children's books, titles starting with B");
     assert.ok(sameRoom({ genre: 'Poetry', letter: null }, { genre: 'Poetry' }));
     assert.ok(!sameRoom({ genre: 'Poetry', letter: 'B' }, { genre: 'Poetry', letter: null }));
     // Counts for the kiosk: each filter's count keeps the other filter.
@@ -119,8 +126,8 @@ describe('rooms', () => {
     settings.place = 'ws';
     cols = collectionsFor([pg, ws], books, settings);
     assert.deepEqual(cols.map((c) => c.library.id), ['ws']);
-    assert.equal(cols[0].subtitle, 'Poetry · 20 works');
-    assert.deepEqual(settings.rooms, { ws: { genre: 'Poetry', letter: null } });
+    assert.equal(cols[0].subtitle, 'All books · 20 works', 'no Novels: all its books');
+    assert.deepEqual(settings.rooms, { ws: { genre: null, letter: null } });
     // A place that disappeared (rescan) falls back; an empty library is skipped.
     settings.place = 'gone';
     assert.equal(currentPlace([ws, pg], { pg: pgBooks, ws: [] }, settings).id, 'pg');
@@ -236,5 +243,55 @@ describe('rooms', () => {
     assert.deepEqual(placeFor(books.pg[0], [pg, ws], books), { libId: 'pg', room: null });
     assert.deepEqual(placeFor(wsBooks[3], [pg, ws], books), { libId: 'ws', room: { genre: 'Poetry', letter: null } });
     assert.equal(placeFor({ id: 'x', libId: 'nope' }, [pg, ws], books), null);
+  });
+});
+
+describe('rooms: Gutenberg genres by name', () => {
+  it('names every LCC class English Gutenberg shelves by, each differently, and leaves other genres alone', () => {
+    // gutenberg_en_all_2025-11's lcc_shelves.js
+    const used = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'J', 'K', 'L', 'M', 'N', 'P', 'PA', 'PB', 'PC', 'PD', 'PE', 'PF', 'PG', 'PH',
+      'PJ', 'PK', 'PL', 'PM', 'PN', 'PQ', 'PR', 'PS', 'PT', 'PZ', 'Q', 'R', 'S', 'T', 'U', 'V', 'Z'];
+    for (const code of used) assert.ok(LCC_NAMES[code], code);
+    const names = used.map(genreLabel);
+    assert.equal(new Set(names).size, used.length, 'no two alike (E and F are both "History of the Americas" at Kiwix)');
+    assert.equal(genreLabel('PR'), 'English literature');
+    assert.equal(genreLabel('Novels'), 'Novels', 'a Wikisource genre as it is');
+    assert.equal(genreLabel('Other works'), 'Other works');
+  });
+});
+
+describe('rooms: a capped Gutenberg room shelves its most read books', () => {
+  // 7,000 Gutenberg books: ranked by popularity in reverse title order, so that the first 3,000 by
+  // title are the least read.
+  const N = 7000;
+  const titleOf = (i) => `T${String(i).padStart(5, '0')}`;
+  const pgBig = Array.from({ length: N }, (_, i) => ({ id: `g${i}`, title: titleOf(i), author: 'X', shelf: i % 2 ? 'PS' : 'PR', rank: N - i, libId: 'big' }));
+  const big = { id: 'big', kind: 'gutenberg', title: 'Gutenberg · every book (EN)' };
+
+  it('in the chosen order, the most read of the room (all books, or a capped genre)', () => {
+    const [all] = shelfCollections([big], { big: pgBig }, { big: { genre: null, letter: null } }, 'title');
+    assert.equal(all.total, N);
+    assert.equal(all.capped, true);
+    assert.equal(all.books.length, ROOM_CAP);
+    assert.ok(all.books.every((b) => b.rank <= ROOM_CAP), 'the 3,000 most read');
+    assert.deepEqual(all.books.map((b) => b.title), [...all.books.map((b) => b.title)].sort(), 'in title order');
+    const [ps] = shelfCollections([big], { big: pgBig }, { big: { genre: 'PS', letter: null } }, 'title');
+    assert.equal(ps.total, 3500);
+    const psRanks = pgBig.filter((b) => b.shelf === 'PS').map((b) => b.rank).sort((a, b) => a - b);
+    assert.ok(ps.books.every((b) => b.shelf === 'PS' && b.rank <= psRanks[ROOM_CAP - 1]), 'the most read of the genre');
+    // By popularity: the same books, in that order.
+    const [pop] = shelfCollections([big], { big: pgBig }, { big: { genre: null, letter: null } }, 'popularity');
+    assert.deepEqual(new Set(pop.books), new Set(all.books));
+    assert.equal(pop.books[0].rank, 1);
+  });
+
+  it('elsewhere the first in the shelf order, and the note says which', () => {
+    const generic = { id: 'gen', kind: 'generic', title: 'Generic' };
+    const genBooks = pgBig.map((b) => ({ ...b, libId: 'gen' }));
+    const [g] = shelfCollections([generic], { gen: genBooks }, { gen: { genre: null, letter: null } }, 'title');
+    assert.deepEqual(g.books.map((b) => b.title), genBooks.map((b) => b.title).sort().slice(0, ROOM_CAP), 'its rank is no popularity');
+    assert.equal(capNote(big, N), ' (the 3,000 most read)');
+    assert.equal(capNote(generic, N), ' (first 3,000)');
+    assert.equal(capNote(big, ROOM_CAP), '');
   });
 });
