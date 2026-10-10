@@ -6,8 +6,10 @@
 
 import { titleKey } from '../util/books.js';
 import { platform } from './platform.js';
+import { WIKIPEDIA_INDEX_VERSION } from './index-versions.js';
 
-export const INDEX_VERSION = 4; // bump when the index format or what counts as an article changes
+/** Bump it (core/index-versions.js) when the index format or what counts as an article changes. */
+export const INDEX_VERSION = WIKIPEDIA_INDEX_VERSION;
 /** Articles per volume. */
 export const VOLUME_SIZE = 1000;
 /**

@@ -4,7 +4,7 @@
 // catalogue cannot be reached it says so, with Retry: web addresses and files still open. The
 // kiosk's Kiwix tab (interaction.js) is the same list in VR.
 
-import { KINDS, sizeText } from '../local/kiwix.js';
+import { KINDS, indexLabel, sizeText } from '../local/kiwix.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -80,8 +80,19 @@ export class KiwixDialog {
   hide() { this.el.hidden = true; }
 
   /** The libraries open changed: the Open buttons follow. */
-  refresh() {
-    if (this.visible && this._view) this._renderList();
+  /**
+   * The libraries open changed: the Open buttons follow, and the index labels (one opened may now
+   * be indexed here). The list is read again quietly, without "Reading…".
+   */
+  async refresh() {
+    if (!this.visible || !this._view) return;
+    const { kind, lang } = this._prefs();
+    const token = this._token;
+    const view = await this._catalog.view(kind, lang).catch(() => null);
+    if (view && token === this._token && this.visible) {
+      this._view = view;
+      this._renderList();
+    }
   }
 
   /** Reads the list for the chosen kind and language (the catalogue keeps what it read). */
@@ -127,12 +138,15 @@ export class KiwixDialog {
     this.$('.ov-kiwix-list').innerHTML = shown.map((e) => {
       const open = this._isOpen(e.url);
       const meta = [sizeText(e.size), e.date, e.kind === 'wikipedia' && e.articles ? `${e.articles.toLocaleString()} articles` : ''].filter(Boolean).join(' · ');
-      const why = e.needsIndex ? 'Too big to index in the browser, and this site has no index for it: download it and open the file instead' : '';
+      // Where its index comes from (a Wikipedia or Wikisource): kept here, on the site, built on
+      // first open, or nowhere (then it cannot be opened from here: why, in place of the label).
+      const label = indexLabel(e);
+      const why = e.needsIndex ? label.title : '';
       return `<li class="ov-kiwix-item${e.needsIndex ? ' big' : ''}">
         ${e.illustration ? `<img src="${esc(e.illustration)}" alt="" width="40" height="40" loading="lazy">` : '<span class="ov-kiwix-noimg"></span>'}
         <div class="ov-kiwix-body"><div class="ov-kiwix-title">${esc(e.title)}</div>
           ${e.about ? `<div class="ov-kiwix-summary">${esc(e.about)}</div>` : ''}
-          <div class="ov-kiwix-meta">${esc(meta)}</div>
+          <div class="ov-kiwix-meta">${esc(meta)}${label && !why ? ` <span class="ov-kiwix-index ${esc(e.index)}" title="${esc(label.title)}">${esc(label.text)}</span>` : ''}</div>
           ${why ? `<div class="ov-kiwix-warn">${esc(why)}</div>` : ''}</div>
         <button class="ov-kiwix-open" data-url="${esc(e.url)}"${open || e.needsIndex ? ' disabled' : ''}
           title="${esc(open ? 'Already open' : why || "Read it from Kiwix's mirror")}">${open ? 'Open ✓' : 'Open'}</button>

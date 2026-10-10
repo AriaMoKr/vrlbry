@@ -31,10 +31,10 @@ export function readList(file) {
   return fs.readFileSync(file, 'utf8').split('\n').map((l) => l.replace(/#.*/, '').trim()).filter(Boolean);
 }
 
-/** The index file name of a catalogue entry (core/wikipedia.js, core/wikisource.js indexName). */
+/** The index file name of a catalogue entry (as core/wikipedia.js and core/wikisource.js name it). */
 export async function indexNameOf(entry) {
-  const mod = entry.kind === 'wikisource' ? await import('../public/js/core/wikisource.js') : await import('../public/js/core/wikipedia.js');
-  return `${entry.kind}-${entry.uuid}.v${mod.INDEX_VERSION}.json`;
+  const { indexNameFor } = await import('../public/js/core/index-versions.js');
+  return indexNameFor(entry.kind, entry.uuid);
 }
 
 /** Writes `dir`/list.json: the index files there (Kiwix's library in the page reads it). */

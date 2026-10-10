@@ -13,6 +13,7 @@ import { progressText } from './util/progress.js';
 import { handleStore, pickFiles, reopen, supportsHandles } from './local/handles.js';
 import { onKiwixMirror, zimUrl } from './local/zim-url.js';
 import { defaultLanguage, kiwixCatalog } from './local/kiwix.js';
+import { idbStore } from './local/idb-store.js';
 import { PLAYER, XR_FRAME_RATE } from './config.js';
 import { collectionsFor, LOCAL_PLACE } from './rooms.js';
 import { perf } from './perf.js';
@@ -391,7 +392,15 @@ async function start() {
   // Kiwix's library (milestone 3 step 5; optional): the ZIMs this app reads well, from Kiwix's
   // catalogue, in the card's dialog and on the kiosk's Kiwix tab (VR has no file picker and no
   // keyboard for an address). Its kind and language are remembered in the settings.
-  const kiwix = kiwixCatalog();
+  // Its index labels need the names of the indexes kept in this browser: the worker's store
+  // (local/idb-store.js), read from here (none without IndexedDB).
+  let keptIndexes = null;
+  const kiwix = kiwixCatalog({
+    localIndexes: () => {
+      keptIndexes ??= idbStore();
+      return keptIndexes.names();
+    },
+  });
   const kiwixPrefs = () => ({ kind: settings.kiwix?.kind ?? 'gutenberg', lang: settings.kiwix?.lang ?? defaultLanguage() });
   const setKiwixPrefs = ({ kind, lang }) => {
     settings.kiwix = { kind, lang };

@@ -289,9 +289,18 @@ whole. It works on GitHub Pages (no server) and beside a server's own libraries.
   library (`libraryTitle`, moved to `util/library-title.js` for the page; Gutenberg's whole
   collections "Gutenberg · every book"), its summary unless the title says it (`about`).
   Listed by title, a topic's editions together (the fullest first), and those that open here
-  first: a Wikipedia or Wikisource over 256 MB (`URL_INDEX_BUILD_BYTES`) whose UUID is not in
-  the site's `indexes/list.json` is marked "needs an index" and cannot be opened from the list
-  (47 of the 65 English Wikipedias in October 2026). The card's "Browse Kiwix's library…" opens
+  first. Each Wikipedia or Wikisource has an index state (`indexState`), by its index name
+  (`core/index-versions.js` `indexNameFor`: kind, UUID and the current version, as the core
+  names it, so an old version counts as none) and labelled (`indexLabel`): "Indexed here" (in
+  this browser's store, `local/idb-store.js` `names()`, read again each time the list is shown),
+  "Index ready" (in the site's `indexes/list.json`), "Indexed on first open (under a minute /
+  about N min)" (up to 256 MB, `URL_INDEX_BUILD_BYTES`: built in the browser; the time from its
+  size, at about 70 % of the file read at 1 MB/s) or, over 256 MB and nowhere, "Needs an index":
+  it cannot be opened from the list (43 of the 65 English Wikipedias once the site's indexes
+  were published). The dialog shows the label as a badge after the size and date (its meaning
+  on hover; for "needs an index" the reason, under it); the kiosk at the start of the row's
+  second line ("needs an index" on the right). When the libraries change the list is read again
+  quietly (the dialog's `refresh`, the kiosk's stale view), so an index finished shows. The card's "Browse Kiwix's library…" opens
   the dialog: kind tabs, a language menu (with counts), a filter, rows with thumbnail, title,
   summary, size, date and Open (closing the dialog; "Open ✓" for one already open). The kiosk's
   Kiwix tab is the same list: kind buttons, "Change language" (a list of languages, most

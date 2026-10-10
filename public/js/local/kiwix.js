@@ -6,6 +6,7 @@
 // chosen without another request. When it cannot be reached the page says so, and web addresses
 // and files still open: nothing else needs it.
 
+import { indexNameFor } from '../core/index-versions.js';
 import { libraryTitle } from '../util/library-title.js';
 import { URL_INDEX_BUILD_BYTES, zimUrl } from './zim-url.js';
 
@@ -113,18 +114,62 @@ export function defaultLanguage(langs = globalThis.navigator?.languages ?? []) {
   return 'eng';
 }
 
-/** True when the app reads an entry best with a prebuilt index it does not have (a big Wikipedia or Wikisource). */
-export function needsIndex(entry, prebuilt = new Set()) {
-  return (entry.kind === 'wikipedia' || entry.kind === 'wikisource') && (entry.size ?? 0) > URL_INDEX_BUILD_BYTES
-    && !prebuilt.has(entry.uuid);
+/** How fast an index is built over the network, for an estimate: the build reads about 70 % of a file at 1 MB/s (measured from here). */
+const BUILD_BYTES_PER_SECOND = 1e6 / 0.7;
+
+/**
+ * Where an entry's index would come from: 'here' (kept in this browser from an earlier open),
+ * 'site' (this site has it prebuilt: fetched when opened), 'build' (small enough to be built in
+ * the browser when first opened), 'missing' (too big, and nowhere: it cannot be read well), or
+ * null for a kind without one (Gutenberg).
+ * @param {object} entry
+ * @param {{ site?: Set<string>, here?: Set<string> }} [available] index names (core/index-versions.js
+ *   indexNameFor): the site's indexes/list.json, this browser's store
+ * @returns {'here'|'site'|'build'|'missing'|null}
+ */
+export function indexState(entry, { site = new Set(), here = new Set() } = {}) {
+  const name = indexNameFor(entry.kind, entry.uuid);
+  if (!name) return null;
+  if (here.has(name)) return 'here';
+  if (site.has(name)) return 'site';
+  return (entry.size ?? 0) > URL_INDEX_BUILD_BYTES ? 'missing' : 'build';
+}
+
+/** True when the app reads an entry best with an index it has nowhere (a big Wikipedia or Wikisource). */
+export function needsIndex(entry, available) {
+  return indexState(entry, available) === 'missing';
+}
+
+/**
+ * The label of an entry's index state, for the lists: { text, title } (title: what it means), or
+ * null (Gutenberg).
+ */
+export function indexLabel(entry) {
+  switch (entry.index) {
+    case 'here': return { text: 'Indexed here', title: 'Its index is kept in this browser: it opens without building one' };
+    case 'site': return { text: 'Index ready', title: 'This site has its index, fetched when it is opened instead of a build' };
+    case 'build': {
+      const s = ((entry.size ?? 0) / BUILD_BYTES_PER_SECOND);
+      const time = s < 60 ? 'under a minute' : `about ${Math.round(s / 60)} min`;
+      return { text: `Indexed on first open (${time})`, title: 'Small enough to be indexed in the browser: the first open reads most of the file once, then the index is kept' };
+    }
+    case 'missing': return { text: 'Needs an index', title: 'Too big to index in the browser, and this site has no index for it: download it and open the file instead' };
+    default: return null;
+  }
 }
 
 /**
  * Kiwix's library, read when first asked for and kept for the page's life (a failure is not kept:
  * asking again tries again).
- * @param {{ fetch?: typeof fetch, origin?: string, timeoutMs?: number, indexList?: URL|string|null }} [opts]
+ * @param {{ fetch?: typeof fetch, origin?: string, timeoutMs?: number, indexList?: URL|string|null,
+ *   localIndexes?: () => Promise<Iterable<string>> }} [opts] localIndexes: the names in this
+ *   browser's store (local/idb-store.js), asked each time a list is shown (they change as ZIMs
+ *   are opened); none when not given or failing
  */
-export function kiwixCatalog({ fetch: fetchImpl = (...a) => globalThis.fetch(...a), origin = CATALOG_ORIGIN, timeoutMs = 20000, indexList = INDEX_LIST_URL } = {}) {
+export function kiwixCatalog({
+  fetch: fetchImpl = (...a) => globalThis.fetch(...a), origin = CATALOG_ORIGIN, timeoutMs = 20000, indexList = INDEX_LIST_URL,
+  localIndexes = null,
+} = {}) {
   const feeds = new Map(); // kind → Promise<entries>
   let languageNames = null;
   let prebuilt = null;
@@ -162,27 +207,33 @@ export function kiwixCatalog({ fetch: fetchImpl = (...a) => globalThis.fetch(...
       });
       return languageNames;
     },
-    /** The UUIDs of the ZIMs this site has prebuilt indexes for (none when it has no list). */
+    /** The names of the indexes this site has prebuilt (none when it has no list). */
     prebuilt() {
-      prebuilt ??= (indexList ? get(String(indexList)).then((text) => new Set((JSON.parse(text).indexes ?? [])
-        .map((n) => /[0-9a-f]{32}/.exec(n)?.[0]).filter(Boolean))) : Promise.resolve(new Set()))
-        .catch(() => new Set());
+      prebuilt ??= (indexList ? get(String(indexList)).then((text) => new Set(JSON.parse(text).indexes ?? []))
+        : Promise.resolve(new Set())).catch(() => new Set());
       return prebuilt;
     },
+    /** The names of the indexes kept in this browser (read again each time). */
+    async local() {
+      return new Set(localIndexes ? await Promise.resolve().then(localIndexes).catch(() => []) : []);
+    },
     /**
-     * What a list shows: a kind's entries in one language, each with `needsIndex` (those last), and
-     * the languages it has ({ code, name, count }, most entries first).
+     * What a list shows: a kind's entries in one language, each with its `index` state
+     * (indexState) and `needsIndex` (those last), and the languages it has ({ code, name, count },
+     * most entries first).
      * @returns {Promise<{ entries: object[], languages: Array<{ code: string, name: string, count: number }> }>}
      */
     async view(kind, lang) {
-      const [all, names, built] = await Promise.all([this.entries(kind), this.languageNames(), this.prebuilt()]);
+      const [all, names, site, here] = await Promise.all([this.entries(kind), this.languageNames(), this.prebuilt(), this.local()]);
       const counts = new Map();
       for (const e of all) for (const l of e.languages) counts.set(l, (counts.get(l) ?? 0) + 1);
       const languages = [...counts].map(([code, count]) => ({ code, name: names.get(code) ?? code, count }))
         .sort((a, b) => b.count - a.count || collator.compare(a.name, b.name));
       // Those that open here first (each part in title order): most big Wikipedias need an index.
-      const entries = all.filter((e) => e.languages.includes(lang)).map((e) => ({ ...e, needsIndex: needsIndex(e, built) }))
-        .sort((a, b) => a.needsIndex - b.needsIndex);
+      const entries = all.filter((e) => e.languages.includes(lang)).map((e) => {
+        const index = indexState(e, { site, here });
+        return { ...e, index, needsIndex: index === 'missing' };
+      }).sort((a, b) => a.needsIndex - b.needsIndex);
       return { entries, languages };
     },
   };

@@ -12,7 +12,7 @@ import { perf } from './perf.js';
 import { load, save } from './util/storage.js';
 import { progressText } from './util/progress.js';
 import { isLocal } from './local/local.js';
-import { KINDS as KIWIX_KINDS, sizeText } from './local/kiwix.js';
+import { KINDS as KIWIX_KINDS, indexLabel, sizeText } from './local/kiwix.js';
 import { letterOf, SORT_MODES, inTitleOrder, thumbIndex } from './util/books.js';
 import { PAGE_PX, READ } from './config.js';
 import {
@@ -574,8 +574,11 @@ export class Interaction {
     const k = this.kiwix;
     const { kind, lang } = k.prefs();
     const key = `${kind}|${lang}`;
-    if (this._kiwixView?.key !== key) {
-      this._kiwixView = { key, loading: true };
+    // Read when the kind or language changes; again in the background (the shown list stays) when
+    // the libraries changed (their Open marks, and an index now kept here).
+    if (this._kiwixView?.key !== key || this._kiwixView.stale) {
+      const shown = this._kiwixView?.key === key ? this._kiwixView.view : null;
+      this._kiwixView = shown ? { key, view: shown } : { key, loading: true };
       k.catalog.view(kind, lang).then((view) => ({ key, view }), (err) => ({ key, error: err.message })).then((st) => {
         if (this._kiwixView?.key !== key) return;
         this._kiwixView = st;
@@ -650,7 +653,8 @@ export class Interaction {
         const open = k.isOpen(e.url);
         return {
           label: e.title,
-          sub: [e.date, e.about].filter(Boolean).join(' · '),
+          // Where its index comes from first (a Wikipedia or Wikisource; "needs an index" is on the right).
+          sub: [e.needsIndex ? '' : indexLabel(e)?.text, e.date, e.about].filter(Boolean).join(' · '),
           right: open ? 'open' : e.needsIndex ? 'needs an index' : sizeText(e.size),
           active: open, disabled: open || e.needsIndex,
           onClick: () => {
@@ -665,6 +669,7 @@ export class Interaction {
   /** Library info changed without a rebuild (e.g. indexing progress): refresh the kiosk text. */
   updateLibraries(libraries) {
     this.libraries = libraries;
+    if (this._kiwixView?.view) this._kiwixView.stale = true;
     if (this._kioskTab === 'rooms' || this._kioskTab === 'kiwix') this._fillKiosk();
   }
 
@@ -1576,6 +1581,7 @@ export class Interaction {
   async setCatalog(libraries, booksByLib) {
     this.libraries = libraries;
     this.booksByLib = booksByLib;
+    if (this._kiwixView?.view) this._kiwixView.stale = true; // Kiwix's list: its Open marks and index labels
     if (this.state !== 'browse') {
       this._pendingCatalog = true;
       return false;

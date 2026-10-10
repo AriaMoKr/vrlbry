@@ -7,7 +7,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { CATALOG_ORIGIN, defaultLanguage, kiwixCatalog, needsIndex, parseEntries, parseLanguages, sizeText } from '../public/js/local/kiwix.js';
+import { CATALOG_ORIGIN, defaultLanguage, indexLabel, indexState, kiwixCatalog, needsIndex, parseEntries, parseLanguages, sizeText } from '../public/js/local/kiwix.js';
+import { INDEX_VERSION as WIKIPEDIA_VERSION } from '../public/js/core/wikipedia.js';
+import { INDEX_VERSION as WIKISOURCE_VERSION } from '../public/js/core/wikisource.js';
+import { indexNameFor } from '../public/js/core/index-versions.js';
 
 const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'opds');
 const feed = (name) => fs.readFileSync(path.join(FIXTURES, `${name}.xml`), 'utf8');
@@ -80,13 +83,28 @@ describe('Kiwix\'s library (kiwix.js)', () => {
     assert.equal(defaultLanguage(['tlh']), 'eng', 'unknown: English');
   });
 
-  it('marks a big Wikipedia or Wikisource without a prebuilt index', () => {
+  it('tells where an entry\'s index comes from: here, the site, a build on first open, or nowhere', () => {
     const wp = parseEntries(feed('wikipedia'));
     const by = (name, flavour) => wp.find((e) => e.name === name && e.flavour === flavour);
-    assert.equal(needsIndex(by('wikipedia_en_chemistry', 'mini')), false, '25 MB: built in the browser');
-    assert.equal(needsIndex(by('wikipedia_en_chemistry', 'maxi')), true, '514 MB');
-    assert.equal(needsIndex(by('wikipedia_en_top1m', 'maxi'), new Set([by('wikipedia_en_top1m', 'maxi').uuid])), false, 'its index is on the site');
-    assert.equal(needsIndex(parseEntries(feed('gutenberg')).find((e) => e.name === 'gutenberg_en_all')), false, 'Gutenberg needs none');
+    const top1m = by('wikipedia_en_top1m', 'maxi');
+    const chem = by('wikipedia_en_chemistry', 'mini');
+    const name = (e) => indexNameFor(e.kind, e.uuid);
+    assert.equal(name(top1m), `wikipedia-${top1m.uuid}.v${WIKIPEDIA_VERSION}.json`, 'named as the core names it');
+    assert.equal(indexNameFor('wikisource', 'x'), `wikisource-x.v${WIKISOURCE_VERSION}.json`);
+    assert.equal(indexState(chem), 'build', '25 MB: built in the browser');
+    assert.equal(indexState(by('wikipedia_en_chemistry', 'maxi')), 'missing', '514 MB');
+    assert.equal(indexState(top1m, { site: new Set([name(top1m)]) }), 'site');
+    assert.equal(indexState(top1m, { site: new Set([name(top1m)]), here: new Set([name(top1m)]) }), 'here', 'kept here first');
+    assert.equal(indexState(chem, { here: new Set([name(chem)]) }), 'here');
+    assert.equal(indexState(top1m, { site: new Set([`wikipedia-${top1m.uuid}.v1.json`]) }), 'missing', 'an old version is no index');
+    assert.equal(indexState(parseEntries(feed('gutenberg')).find((e) => e.name === 'gutenberg_en_all')), null, 'Gutenberg needs none');
+    assert.equal(needsIndex(by('wikipedia_en_chemistry', 'maxi')), true);
+    assert.equal(needsIndex(top1m, { site: new Set([name(top1m)]) }), false);
+    // Their labels.
+    assert.deepEqual(['here', 'site', 'missing'].map((index) => indexLabel({ index }).text), ['Indexed here', 'Index ready', 'Needs an index']);
+    assert.equal(indexLabel({ index: 'build', size: 24776704 }).text, 'Indexed on first open (under a minute)');
+    assert.equal(indexLabel({ index: 'build', size: 245e6 }).text, 'Indexed on first open (about 3 min)');
+    assert.equal(indexLabel({ index: null }), null);
     assert.equal(sizeText(24776704), '25 MB');
     assert.equal(sizeText(4532683039), '4.5 GB');
     assert.equal(sizeText(49385356288), '49 GB');
@@ -96,13 +114,21 @@ describe('Kiwix\'s library (kiwix.js)', () => {
   it('lists a kind in a language, reading each feed once, with its languages', async () => {
     const top1m = parseEntries(feed('wikipedia')).find((e) => e.name === 'wikipedia_en_top1m').uuid;
     const fetch = fakeFetch({ indexes: { indexes: [`wikipedia-${top1m}.v4.json`] } });
-    const cat = kiwixCatalog({ fetch, indexList: 'https://site.example/indexes/list.json' });
+    const kept = new Set();
+    const cat = kiwixCatalog({ fetch, indexList: 'https://site.example/indexes/list.json', localIndexes: async () => kept });
     const en = await cat.view('wikipedia', 'eng');
     assert.equal(en.entries.length, 7);
     assert.deepEqual(en.languages, [{ code: 'eng', name: 'English', count: 7 }, { code: 'fra', name: 'français', count: 3 }]);
     assert.equal(en.entries.find((e) => e.name === 'wikipedia_en_top1m').needsIndex, false, 'prebuilt here');
     assert.equal(en.entries.find((e) => e.name === 'wikipedia_en_all').needsIndex, true);
     assert.deepEqual(en.entries.map((e) => e.needsIndex), [false, false, false, false, true, true, true], 'those that open here first');
+    assert.deepEqual(en.entries.map((e) => e.index), ['build', 'build', 'build', 'site', 'missing', 'missing', 'missing']);
+    // An index kept in this browser since (asked again each time the list is shown).
+    const chem = en.entries.find((e) => e.name === 'wikipedia_en_chemistry' && e.flavour === 'mini');
+    kept.add(indexNameFor('wikipedia', chem.uuid));
+    const again = await cat.view('wikipedia', 'eng');
+    assert.equal(again.entries.find((e) => e.uuid === chem.uuid).index, 'here');
+    assert.equal(fetch.asked.filter((u) => /list\.json/.test(u)).length, 1, 'the site\'s list was read once');
     const fr = await cat.view('wikipedia', 'fra');
     assert.deepEqual(fr.entries.map((e) => e.name), ['wikipedia_fr_all', 'wikipedia_fr_all', 'wikipedia_fr_all']);
     assert.equal(fetch.asked.filter((u) => /category=wikipedia/.test(u)).length, 1, 'the feed was read once');

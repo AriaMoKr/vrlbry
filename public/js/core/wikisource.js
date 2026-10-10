@@ -9,8 +9,10 @@
 
 import { resolveHref } from './content/html.js';
 import { platform } from './platform.js';
+import { WIKISOURCE_INDEX_VERSION } from './index-versions.js';
 
-export const INDEX_VERSION = 1;
+/** Bump it in core/index-versions.js. */
+export const INDEX_VERSION = WIKISOURCE_INDEX_VERSION;
 
 /** MediaWiki namespaces that never hold works (Translation: does, so it is not listed). */
 const NS_RE = /^(Author|Portal|Wikisource|Help|Category|Template|Index|Page|File|Image|Special|Talk|User|Module|MediaWiki|Draft|Media|TimedText|Gadget|Gadget definition|Topic)(?: talk)?:/;

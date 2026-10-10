@@ -204,3 +204,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .ov-kiwix-open { flex: none; padding: 5px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--accent); }
 .ov-kiwix-open:hover:not(:disabled) { border-color: var(--accent); }
 .ov-kiwix-open:disabled { color: var(--muted); opacity: .7; }
+/* Where an entry's index comes from (kiwix.js indexLabel) */
+.ov-kiwix-index { display: inline-block; margin-left: 6px; padding: 0 7px; border-radius: 999px; border: 1px solid var(--line); font-size: 11px; line-height: 17px; color: var(--muted); }
+.ov-kiwix-index.here, .ov-kiwix-index.site { border-color: #6f8f4e; color: #a9c98a; }
+.ov-kiwix-index.build { border-style: dashed; }
