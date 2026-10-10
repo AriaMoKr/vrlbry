@@ -239,8 +239,11 @@ whole. It works on GitHub Pages (no server) and beside a server's own libraries.
   checkpoint next time; `--hours` is a hard stop (no build starts after it, and one running
   stops, as "missing", not "failed"). `--prune` deletes the indexes of editions no longer
   current (not with `--only`); `--publish <dir>` copies them into a site's `indexes/`; both
-  folders get `list.json` (`writeIndexList`, which `build-pages.mjs --indexes` uses too). The
-  cloud site's workflow (`pages-cloud.yml`) ships on every run what it has: the indexes kept in
+  folders get `list.json` (`writeIndexList`, which `build-pages.mjs --indexes` uses too).
+  `--ship <site> --budget-mb <n>` copies them into a built site while the whole site stays within
+  the budget, the smallest first (`shipIndexes`; the main site: 950 MB, as Pages publishes at most
+  1 GB). Each site's workflow (main's `pages.yml`, the cloud site's `pages-cloud.yml`, each with
+  its own repo's cache and release) ships on every run what it has: the indexes kept in
   the Actions cache by earlier runs and the assets of the release "indexes" (built on a PC from
   local copies, then `gh release upload indexes .indexes/*.json --clobber`), less old editions;
   with "prebuilt indexes" ticked it first builds the missing ones from the mirror (up to 5 h,
@@ -308,6 +311,18 @@ whole. It works on GitHub Pages (no server) and beside a server's own libraries.
   notice too. The kind and language are remembered (`settings.kiwix`, the browser's language
   at first). Unreachable, the dialog and the tab say so, with Retry; addresses and files still
   open. The dialog's state is in the debug report (`uiState().kiwix`).
+- **The site's own ZIM files** (`tools/build-pages.mjs --zim-files <dir>`; the main site's demo
+  set): copied to the site as `zims/<name>`, with their Wikipedia and Wikisource indexes under
+  `indexes/`, and named in the static `api/libraries` answer (`"zims": [{ "path", "name",
+  "size" }]`, paths relative to the site). The page (`main.js`, from `api.getCatalog().zims`)
+  opens them with every visit, before the remembered addresses, as web addresses on the site
+  itself (range requests: GitHub Pages answers them), with `site: true` (`local.openFiles`'s
+  `site`, the worker's `open({ site })`, the catalogue entry's `site`): they are in the Demo set
+  (`isDemoLibrary` takes a `~` library only when it is the site's; a file the visitor opened is
+  not, even with a demo ZIM's name), not in "Opened here" (`isLocalLibrary`), not remembered,
+  "from this site" on the card (its × closes one until the next visit); Kiwix's list and the
+  address field take the same ZIM as already open (by file name). Nothing of another site is
+  used: each Pages site is self-contained.
 - **Kept from the web** (milestone 3 step 4, optional; `local/block-cache.js`): what is read
   from a web address is kept in IndexedDB (`vrlbry-blocks`: the reads, their sizes and when they
   were written, and the total), so a library, book or search read once costs no network again,

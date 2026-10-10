@@ -173,12 +173,21 @@ images) is saved as a file, so the site needs nothing but static hosting. Search
 articles then happens in the browser, over a saved title list (by title only: redirects are not
 included). A first visit opens the *Demo set* place when the site has it.
 
+`--zim-files <folder>` instead puts the ZIM files themselves on the site: the page opens them
+in the browser with every visit, reading them from the site as it reads ZIMs from the web, with
+their indexes built at deploy time.
+
 The workflow in `.github/workflows/pages.yml` runs the tests, downloads the demo set (the ZIMs
 listed in `tools/demo-set.txt`: Gutenberg LCC-P, the Wikipedia Mathematics, Physics, Chemistry
-and Medicine minis, Wikipedia 100, and Golf with pictures, cached between runs), builds with
-`--zims` and publishes it on every push to `main`; enable it once in the repository's Settings →
-Pages → Source: *GitHub Actions*. The demo set makes a site of about 605 MB in 176,000 files
-(Pages allows 1 GB).
+and Medicine minis, Wikipedia 100, and Golf with pictures, cached between runs) and publishes it
+on every push to `main`; enable it once in the repository's Settings → Pages → Source: *GitHub
+Actions*. Each demo ZIM is on the site in its smaller form: LCC-P, Chemistry, Medicine and
+Wikipedia 100 pre-rendered, Mathematics, Physics and Golf as ZIM files (the second word `file`
+in the list), about 460 MB (pre-rendering all seven made 605 MB in 176,000 files; Pages allows
+1 GB). The site also ships the prebuilt indexes this repository has (its release "indexes" and
+the workflow's cache), as many as fit in 950 MB, and reads Kiwix's files through the edge proxy
+when the repository variable `ZIM_PROXY` names one. It needs nothing from the other two sites
+(below).
 
 ### Your own ZIM files, without the server
 
@@ -204,7 +213,7 @@ the page loads; a library's × closes it. A Wikipedia or Wikisource from the web
 prebuilt index unless it is small (building one reads most of the file). The site publishes
 those of `tools/indexes.txt` under `indexes/`: `node tools/build-indexes.mjs --zims <folder>`
 builds them from local copies of the ZIMs into `.indexes/` (or `--web`, from Kiwix's mirror), and
-the Pages workflow ships them (see `.github/workflows/pages-cloud.yml`).
+the Pages workflow ships those it has, as many as fit (see `.github/workflows/pages.yml`).
 
 Kiwix's own mirror is in France, so from far away every read costs a long round trip. An
 optional edge proxy, `tools/zim-proxy/` (a Cloudflare Worker), reads the mirror nearest each
