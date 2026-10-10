@@ -412,6 +412,26 @@ describe('local library (ZIM files read in the browser)', () => {
     }
   });
 
+  it('opens a long Gutenberg list from the web without looking each book up, and reads its books as before', async () => {
+    // (Which lookups it makes: library.test.js. This fixture's whole directory is in its first reads.)
+    const file = writeGutenbergZim(path.join(tmp, 'web-long-list.zim')).filePath;
+    const { url } = web.serve(file);
+    provide(browser);
+    const eager = createLocalLibraries();
+    const lazy = createLocalLibraries({ urlBookLookups: 2 }); // the fixture's 8 books are "a long list"
+    const a = (await eager.call('open', { url })).value;
+    const b = (await lazy.call('open', { url })).value;
+    const [x, y] = [await localAnswers(eager, a.id), await localAnswers(lazy, b.id)];
+    assert.deepEqual(y.books.map((k) => k.id), x.books.map((k) => k.id));
+    assert.ok(y.books.every((k) => k.size === null && k.cover), 'no sizes; every cover by its usual name');
+    for (const id of Object.keys(x.byBook)) {
+      assert.deepEqual(y.byBook[id].chunks, x.byBook[id].chunks, id);
+      assert.deepEqual(y.byBook[id].meta.error ?? null, x.byBook[id].meta.error ?? null, id);
+      // A cover that is not there comes back as nothing (the page keeps the made cover).
+      assert.equal(y.byBook[id].cover, x.byBook[id].cover, id);
+    }
+  });
+
   it('says why a web address cannot be read: not found, no ranges, not a ZIM', async () => {
     provide(browser);
     const local = createLocalLibraries();

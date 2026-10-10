@@ -60,10 +60,8 @@ export function parseEntries(xml, { origin = CATALOG_ORIGIN } = {}) {
     const flavour = textOf(entry, 'flavour') ?? '';
     const zimTitle = textOf(entry, 'title') ?? name;
     const summary = textOf(entry, 'summary') ?? '';
-    const all = /^gutenberg_([a-z]+)_all$/i.exec(name);
     const thumb = links.find((l) => /thumbnail/.test(l.rel ?? ''));
-    const title = all ? `Gutenberg · every book${all[1] === 'mul' ? ' in every language' : ''}`
-      : libraryTitle({ kind, title: zimTitle, description: summary, name, flavour });
+    const title = libraryTitle({ kind, title: zimTitle, description: summary, name, flavour });
     out.push({
       uuid: (textOf(entry, 'id') ?? '').replace(/^urn:uuid:/i, '').replace(/-/g, '').toLowerCase(),
       name, kind, flavour, zimTitle, summary,

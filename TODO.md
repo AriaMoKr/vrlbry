@@ -454,7 +454,14 @@
            Wikipedias listed in 1.2 s, labelled as on the PC (4 "Index ready", 18 "Indexed on
            first open", 43 "Needs an index"). Docs: SPEC §2.6 (From the web, Kiwix's library,
            Kept from the web, Through an edge proxy, Prebuilt indexes) and §3.1, README.
-           *Milestone 3's plan is done.* Left for later: the items under steps 6 and 7 (a more
+           *Milestone 3's plan is done.* Found after it (2026-10-10): the biggest Gutenberg
+           ZIMs (`gutenberg_mul_all_2025-11`, 75,962 books in 68 languages, 253 GB;
+           `gutenberg_en_all_2025-11`, 60,366 books) did not open from the web in 10 minutes:
+           each book's HTML, EPUB and cover were looked up as it opened, a binary search each
+           over a directory of 5.3 M entries. Now a list longer than 500 books from the web is
+           made from the list alone, each book looked up when first opened (SPEC §3.6
+           `bookLookups`): `gutenberg_mul_all` opens in 9.2 s in the browser (63 reads), a book
+           in 1.8-5.1 s. The biggest Wikipedia stays the full English one: 7,230 volumes. Left for later: the items under steps 6 and 7 (a more
            compact index, other languages, keeping popular reads at the edge, CORS on the
            mirrors, then following Kiwix's redirect).
     - *Keep files across reloads (done 2026-10-08):* where the browser gives file handles (the

@@ -63,7 +63,7 @@ describe('Kiwix\'s library (kiwix.js)', () => {
   it('names Gutenberg\'s collections by their class, and its whole ones as such', () => {
     const g = parseEntries(feed('gutenberg'));
     assert.deepEqual(g.map((e) => [e.name, e.title]), [
-      ['gutenberg_en_all', 'Gutenberg · every book'],
+      ['gutenberg_en_all', 'Gutenberg · every book (EN)'],
       ['gutenberg_mul_all', 'Gutenberg · every book in every language'],
       ['gutenberg_en_lcc-pd', 'Gutenberg · Germanic and Scandinavian languages (PD)'],
       ['gutenberg_en_lcc-p', 'Gutenberg · Language and literature (P)'],

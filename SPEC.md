@@ -263,7 +263,7 @@ whole. It works on GitHub Pages (no server) and beside a server's own libraries.
   https page, an http one (mixed content; this machine's excepted). The worker opens it with an
   `HttpSource` (§3.1) as it opens a File, with what step 2 of the milestone measured best:
   `blockBytes` 8 KB, no whole uncompressed clusters, `wholeCompressedBytes` 4 MB,
-  `checkImages: false` and `maxIndexBuildBytes` 256 MB (§3.6); same ids, catalogue, indexing
+  `checkImages: false`, `maxIndexBuildBytes` 256 MB and `bookLookups` 500 (§3.6); same ids, catalogue, indexing
   and status box. Its catalogue entry carries `url`, and the card shows "from <host>". A
   server's refusal is the open's error: "HTTP 404 (not found)", "the server does not serve parts
   of the file", or, unreachable, "cannot reach the server (…); if it is another site, it may not
@@ -286,8 +286,8 @@ whole. It works on GitHub Pages (no server) and beside a server's own libraries.
   machine-written and read with patterns (`parseEntries`; no DOMParser in a worker or Node).
   Each entry: its UUID, name, kind, languages, flavour, size, date, article count, thumbnail
   and the ZIM's address (through `zimUrl`: Kiwix's mirror), its title as the app shows a
-  library (`libraryTitle`, moved to `util/library-title.js` for the page; Gutenberg's whole
-  collections "Gutenberg · every book"), its summary unless the title says it (`about`).
+  library (`libraryTitle`, moved to `util/library-title.js` for the page), its summary unless
+  the title says it (`about`).
   Listed by title, a topic's editions together (the fullest first), and those that open here
   first. Each Wikipedia or Wikisource has an index state (`indexState`), by its index name
   (`core/index-versions.js` `indexNameFor`: kind, UUID and the current version, as the core
@@ -718,7 +718,16 @@ With `maxIndexBuildBytes` (the local library's web addresses: 256 MB) a Wikipedi
 whose index is found nowhere (the store, the site's `indexes/`) is indexed only up to that size:
 over the network a build reads most of the file (12.7 GB for the top 1M). A bigger one gets
 `indexing: { stage: 'failed', error }` at once, saying why (no index, its size, download it
-instead), once, and has no books. Chunks keep their JSON as bytes (`Uint8Array`, a Buffer on Node), with `gzip()` and `etag`
+instead), once, and has no books. With `bookLookups` (the local library's web addresses: 500) a
+Gutenberg ZIM listing more books than that makes them from its list alone: each book's
+files are not looked up as it opens (a binary search each, three per book: the largest,
+`gutenberg_mul_all` with 75,962 books, had not opened after 10 minutes), its formats are its
+list's flags, its cover the usual name (`C/covers/<id>_cover_image.jpg`, old scheme
+`I/covers/<id>_cover.jpg`; not looked up: one that is missing loads as nothing and the page
+keeps the made cover) and its size unknown (a thickness from its id). A book's files are
+looked up when it is first opened (`_resolveBook`: its HTML and EPUB, once however many ask;
+`formats`, `readable` and `epub` then say what was found, a missing one is unreadable as
+before). `gutenberg_mul_all` then opens from the web in about 10 s. Chunks keep their JSON as bytes (`Uint8Array`, a Buffer on Node), with `gzip()` and `etag`
 from the platform (the server's).
 
 ```js
@@ -878,7 +887,9 @@ with 400/404/500. Unknown `/api/*` → 404 JSON.
 (`illustration` null when absent; missing metadata fields are `null`.) `title` is what a library is
 shown by (`libraryTitle`), `zimTitle` the ZIM's own: they differ for Kiwix's Gutenberg ZIMs of one
 Library of Congress class (name `gutenberg_<lang>_lcc-<code>`, all titled "Project Gutenberg
-Library"), named "Gutenberg · <description> (<CODE>)", and for Wikipedia editions of one topic,
+Library"), named "Gutenberg · <description> (<CODE>)", for Kiwix's whole Gutenberg collections
+(`gutenberg_<lang>_all`), "Gutenberg · every book (<LANG>)" and, for `gutenberg_mul_all`,
+"Gutenberg · every book in every language", and for Wikipedia editions of one topic,
 told apart by `flavour` (the ZIM's Flavour): "<title> (introductions)" for mini, "(no pictures)" for
 nopic, the plain title for maxi. Signs and the library card leave out a description the title
 already contains. `generation` changes when

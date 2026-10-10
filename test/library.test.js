@@ -12,6 +12,7 @@ import {
 import {
   LONG_TITLE, png, writeGenericZim, writeGutenbergZim, writeOldGutenbergZim,
 } from './helpers/zim-fixtures.js';
+import { ZimArchive } from '../public/js/core/zim/reader.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.join(HERE, '..');
@@ -41,7 +42,9 @@ describe('library helpers', () => {
     const lcc = { kind: 'gutenberg', title: 'Project Gutenberg Library', description: 'Slavic, Baltic and Albanian languages', name: 'gutenberg_en_lcc-pg' };
     assert.equal(libraryTitle(lcc), 'Gutenberg · Slavic, Baltic and Albanian languages (PG)');
     assert.equal(libraryTitle({ ...lcc, description: null }), 'Project Gutenberg Library', 'no class name: the ZIM’s title');
-    assert.equal(libraryTitle({ ...lcc, name: 'gutenberg_en_all' }), 'Project Gutenberg Library', 'not one class');
+    assert.equal(libraryTitle({ ...lcc, name: 'gutenberg_en_all' }), 'Gutenberg · every book (EN)', 'a whole collection, by its language');
+    assert.equal(libraryTitle({ ...lcc, name: 'gutenberg_mul_all' }), 'Gutenberg · every book in every language');
+    assert.equal(libraryTitle({ ...lcc, name: 'gutenberg_en_other' }), 'Project Gutenberg Library', 'neither: the ZIM’s title');
     assert.equal(libraryTitle({ ...lcc, kind: 'generic' }), 'Project Gutenberg Library');
     // Wikipedia editions of one topic share a title: the mini and nopic ones say what they are.
     const wp = { kind: 'wikipedia', title: 'Climate change by Wikipedia', description: 'x', name: 'wikipedia_en_climate-change' };
@@ -275,6 +278,93 @@ describe('ArchiveLibrary: synthetic Gutenberg archive', () => {
     assert.deepEqual(zlib.gunzipSync(gz), chunks[0].json);
     assert.equal(await chunks[0].gzip(), gz, 'computed once');
     assert.deepEqual(JSON.parse(chunks[0].json), { index: 0, blocks: chunks[0].blocks });
+  });
+});
+
+describe('ArchiveLibrary: a Gutenberg list longer than bookLookups (as from the web)', () => {
+  let eager;
+  let lazy;
+  let found;
+  /** Opens the file with bookLookups 0, counting the archive's lookups. */
+  const openLazy = async (file, id) => {
+    const archive = await ZimArchive.open(file);
+    const counted = [];
+    const find = archive.findEntry.bind(archive);
+    archive.findEntry = (ns, url) => { counted.push(`${ns}/${url}`); return find(ns, url); };
+    const lib = await ArchiveLibrary.open(archive, { log: quietLog, bookLookups: 0, id });
+    return { lib, counted };
+  };
+  before(async () => {
+    const file = path.join(tmp, 'lazy-gutenberg.zim');
+    writeGutenbergZim(file);
+    eager = await ArchiveLibrary.open(file, { log: quietLog, id: 'lazy-gutenberg' });
+    ({ lib: lazy, counted: found } = await openLazy(file, 'lazy-gutenberg'));
+  });
+  after(async () => {
+    await eager?.close();
+    await lazy?.close();
+  });
+
+  it('makes its books from the list alone: no book is looked up as it opens', async () => {
+    const [a, b] = [await eager.books(), await lazy.books()];
+    const listed = (x) => ({ id: x.id, title: x.title, subtitle: x.subtitle, fullTitle: x.fullTitle, author: x.author, authorId: x.authorId,
+      rank: x.rank, shelf: x.shelf, language: x.language });
+    assert.deepEqual(b.map(listed), a.map(listed));
+    assert.deepEqual(Object.keys(b[0]), Object.keys(a[0]), 'the same fields');
+    assert.deepEqual(found.filter((p) => /covers\/|\.\d{3}(\.html|\.epub)?$/.test(p)), [], `no book's files looked up: ${found.join(', ')}`);
+    // What the list says, not what is there.
+    const by = Object.fromEntries(b.map((x) => [x.id, x]));
+    assert.deepEqual(by['105'].formats, { html: false, epub: true, pdf: false });
+    assert.equal(by['107'].readable, true, 'the Ghost Book\'s list says it has HTML and an EPUB');
+    assert.equal(by['101'].cover, '/zim/lazy-gutenberg/C/covers/101_cover_image.jpg');
+    assert.equal(by['102'].cover, '/zim/lazy-gutenberg/C/covers/102_cover_image.jpg', 'its usual name, though it has none');
+    assert.equal(by['101'].epub, null, 'until it is opened');
+    assert.ok(b.every((x) => x.size === null), 'sizes unknown (a thickness from the id)');
+    assert.deepEqual((await lazy.info()).shelves, (await eager.info()).shelves);
+  });
+
+  it('looks a book\'s files up when it is first opened, and reads it as when all were looked up', async () => {
+    for (const id of ['101', '102', '103', '104', '105', '106', '108']) {
+      const [x, y] = [await eager.content(id), await lazy.content(id)];
+      assert.deepEqual(y.meta, { ...x.meta, cover: y.meta.cover }, id);
+      assert.deepEqual(y.chunks.map((c) => c.json.toString()), x.chunks.map((c) => c.json.toString()), id);
+    }
+    const [a, b] = [await eager.book('101'), await lazy.book('101')];
+    assert.equal(b.epub, a.epub, 'its EPUB found');
+    assert.deepEqual(b.formats, a.formats);
+    // A file the list promised but the archive lacks: unreadable once looked up, as before.
+    await assert.rejects(lazy.content('107'), (err) => err instanceof LibraryError && err.status === 404);
+    assert.equal((await lazy.book('107')).readable, false);
+  });
+
+  it('looks up once however many ask at once, and serves an EPUB\'s files before its text', async () => {
+    const file = path.join(tmp, 'lazy-gutenberg-2.zim');
+    writeGutenbergZim(file);
+    const { lib, counted } = await openLazy(file, 'lazy-2');
+    try {
+      const before = counted.length;
+      await Promise.all([lib.content('103'), lib.content('103'), lib.resource('103', 'OEBPS/content.opf')]);
+      assert.equal(counted.filter((p, i) => i >= before && /\.103/.test(p)).length, 2, 'its HTML and its EPUB, once each');
+      const epub = await eager.resource('105', 'OEBPS/content.opf');
+      assert.deepEqual(await lib.resource('105', 'OEBPS/content.opf'), epub, 'an EPUB-only book\'s files, never opened');
+    } finally {
+      await lib.close();
+    }
+  });
+
+  it('names an old-scheme archive\'s covers as gutenberg2zim 2.x did', async () => {
+    const file = path.join(tmp, 'lazy-old.zim');
+    writeOldGutenbergZim(file);
+    const { lib } = await openLazy(file, 'lazy-old');
+    try {
+      const [old] = await lib.books();
+      assert.equal(old.cover, '/zim/lazy-old/I/covers/201_cover.jpg');
+      assert.ok(await lib.archive.findPath('I/covers/201_cover.jpg'), 'there');
+      assert.equal((await lib.content('201')).meta.source, 'html');
+      assert.equal((await lib.book('201')).epub, '/zim/lazy-old/-/Old%20Book.201.epub');
+    } finally {
+      await lib.close();
+    }
   });
 });
 

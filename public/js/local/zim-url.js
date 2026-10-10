@@ -9,6 +9,13 @@
  */
 export const URL_INDEX_BUILD_BYTES = 256 * 1024 * 1024;
 
+/**
+ * The most Gutenberg books whose files are looked up as a ZIM from the web opens (ArchiveLibrary
+ * bookLookups): about 100 took 2-3 s over the network, so a longer list's books are made from the
+ * list alone and looked up when first opened (gutenberg_mul_all's 76,000 took hours otherwise).
+ */
+export const URL_BOOK_LOOKUPS = 500;
+
 /** Kiwix's own mirror: the one that lets a page read its files (CORS), and serves every ZIM. */
 export const KIWIX_MIRROR = 'mirror.download.kiwix.org';
 

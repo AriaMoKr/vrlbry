@@ -255,6 +255,7 @@ export class ArchiveLibrary {
     this._checkImages = true; // open()'s checkImages (_fixImages' trustSized)
     this._onIndexing = null; // open()'s onIndexing (_setIndexing)
     this._maxIndexBuildBytes = null; // open()'s maxIndexBuildBytes (_startIndexing)
+    this._bookLookups = Infinity; // open()'s bookLookups (_gutenbergCatalog)
     this._epubCache = new LRUCache({ maxBytes: EPUB_CACHE_BYTES, sizeOf: (e) => e.bytes });
     this._epubInflight = new Map();
     this._imageInfo = new LRUCache({ maxEntries: 100000 }); // archive path → { ok, w, h }
@@ -310,6 +311,7 @@ export class ArchiveLibrary {
     onIndexing, // (info) whenever info().indexing changes: { stage, progress }, or null once the index is ready
     checkImages = true, // false: a Wikipedia's or Wikisource's image whose size the HTML gives is not looked up (_fixImages)
     maxIndexBuildBytes = null, // an index found nowhere is built only for an archive up to this big (_startIndexing)
+    bookLookups = Infinity, // a Gutenberg list longer than this: its books' files looked up when first opened (_gutenbergCatalog)
   } = {}) {
     // An open ZimArchive is taken over (closed with the library): the local library opens the
     // file once, for the metadata that decides whether to go on, and keeps its block cache.
@@ -324,6 +326,7 @@ export class ArchiveLibrary {
       lib._checkImages = checkImages;
       lib._onIndexing = onIndexing ?? null;
       lib._maxIndexBuildBytes = maxIndexBuildBytes;
+      lib._bookLookups = bookLookups;
       try {
         await lib.books(); // catalog now: `kind` is final and errors surface at scan time
       } finally {
@@ -558,7 +561,9 @@ export class ArchiveLibrary {
   async resource(bookId, filePath) {
     await this.books();
     const rec = this._byId.get(String(bookId));
-    if (!rec || !rec.epub || typeof filePath !== 'string' || !filePath) return null;
+    if (!rec || typeof filePath !== 'string' || !filePath) return null;
+    await this._resolveBook(rec);
+    if (!rec.epub) return null;
     const epub = await this._epub(rec);
     const data = epub.getFile(filePath);
     if (!data) return null;
@@ -898,6 +903,44 @@ export class ArchiveLibrary {
 
     const recs = new Array(parsed.length);
     const sizeEntries = new Array(parsed.length).fill(null); // the entry whose blob gives the book's size
+    // A long list read from the web (bookLookups): each lookup is a binary search over the
+    // directory, a round trip per step not already read, so its books are made from the list alone
+    // (the format flags, the cover's usual name), their files looked up when first opened
+    // (_resolveBook), and their sizes unknown (a thickness from their id). 76,000 books looked up
+    // over the network took hours.
+    if (parsed.length > this._bookLookups) {
+      // Covers by their usual names: gutenberg2zim's '<id>_cover_image.jpg' (C), 2.x's '<id>_cover.jpg' (I).
+      const [coverNs, coverName] = this.archive.newNamespaceScheme ? ['C', '_cover_image.jpg'] : ['I', '_cover.jpg'];
+      for (const [i, row] of parsed.entries()) {
+        const rawTitle = typeof row[0] === 'string' ? row[0] : String(row[0] ?? '');
+        const author = typeof row[1] === 'string' && row[1].trim() ? row[1].replace(/\s+/g, ' ').trim() : null;
+        const flags = typeof row[2] === 'string' && /^[01]{3}$/.test(row[2]) ? row[2] : null;
+        const id = String(row[3]).trim();
+        const shelf = typeof row[4] === 'string' && row[4].trim() ? row[4].trim() : null;
+        const { title, subtitle, fullTitle } = splitTitle(rawTitle);
+        const bases = [gutenbergBase(rawTitle, id)];
+        const alt = pythonBase(rawTitle, id);
+        if (alt !== bases[0]) bases.push(alt);
+        const formats = { html: !flags || flags[0] === '1', epub: flags?.[1] === '1', pdf: flags?.[2] === '1' };
+        const book = {
+          id, title, subtitle, fullTitle, author,
+          authorId: author !== null ? authorIds.get(row[1]) ?? authorIds.get(author) ?? null : null,
+          rank: i + 1, shelf, language: languageOf(id), formats,
+          readable: formats.html || formats.epub,
+          cover: zimUrl(this.id, `${coverNs}/covers/${id}${coverName}`), // not looked up: a missing one shows the made cover
+          epub: null, // its path once looked up (_resolveBook)
+          size: null,
+        };
+        recs[i] = { book, html: null, epub: null, kind: 'gutenberg', lookup: { bases, nsHtml, nsEpub, flags } };
+      }
+      for (const rec of recs) this._byId.set(rec.book.id, rec);
+      const unreadable = recs.filter((r) => !r.book.readable).length;
+      if (unreadable) this._warn(`${this.file}: ${unreadable} book(s) have neither HTML nor EPUB (their list says)`);
+      const books = recs.map((r) => r.book);
+      this._shelves = Array.isArray(shelves) ? shelves.filter((x) => typeof x === 'string' && x)
+        : [...new Set(books.map((b) => b.shelf).filter(Boolean))];
+      return books;
+    }
     let looked = 0;
     // Lookups are independent binary searches over cached directory entries: run them together.
     await mapLimit(parsed, 16, async (row, i) => {
@@ -971,6 +1014,26 @@ export class ArchiveLibrary {
       }
     }
     return lookup;
+  }
+
+  /**
+   * The files of a book made from the list alone (_gutenbergCatalog's bookLookups): looked up
+   * once, when it is first opened; its formats and readability then say what was found.
+   */
+  async _resolveBook(rec) {
+    if (!rec.lookup) return;
+    rec.resolving ??= (async () => {
+      const { bases, nsHtml, nsEpub, flags } = rec.lookup;
+      const want = (k) => !flags || flags[k] === '1';
+      rec.html = want(0) ? await this._firstOf(nsHtml, bases.flatMap((b) => [b, b + '.html'])) : null;
+      rec.epub = want(1) ? await this._firstOf(nsEpub, bases.map((b) => b + '.epub')) : null;
+      const { book } = rec;
+      book.formats = { ...book.formats, html: !!rec.html, epub: !!rec.epub };
+      book.readable = !!(rec.html || rec.epub);
+      book.epub = rec.epub ? zimUrl(this.id, rec.epub.path) : null;
+      rec.lookup = null;
+    })();
+    await rec.resolving;
   }
 
   async _firstOf(namespaces, urls) {
@@ -1109,6 +1172,7 @@ export class ArchiveLibrary {
    * rest as its images are looked up and sized (_fixImages).
    */
   async _convert(rec, progress = () => {}) {
+    await this._resolveBook(rec);
     const { book } = rec;
     let blocks;
     let source;

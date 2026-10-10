@@ -11,7 +11,7 @@ import { ArchiveLibrary, createContentCache, libraryIdFor } from '../core/librar
 import { IndexQueue } from '../core/util/index-queue.js';
 import { ZimArchive } from '../core/zim/reader.js';
 import { HttpSource, HttpSourceError } from '../core/zim/http-source.js';
-import { fileNameOf, URL_INDEX_BUILD_BYTES } from './zim-url.js';
+import { fileNameOf, URL_BOOK_LOOKUPS, URL_INDEX_BUILD_BYTES } from './zim-url.js';
 
 /** Converted books kept for all local libraries: a headset has far less memory than a PC. */
 const CONTENT_CACHE_BYTES = 64 * 1024 * 1024;
@@ -44,18 +44,18 @@ export class LocalError extends Error {}
 
 /**
  * @param {{ log?: (msg: string) => void, warn?: (msg: string) => void, store?: object|null, onChange?: () => void,
- *   urlIndexBuildBytes?: number, blockCache?: object|null }} [opts]
+ *   urlIndexBuildBytes?: number, urlBookLookups?: number, blockCache?: object|null }} [opts]
  *   store: where derived indexes are kept (idb-store.js; the server's shape, server/cache-store.js),
  *   or null: a Wikipedia's index is built every time and kept in memory only; onChange: called
  *   when a library's catalogue changes on its own (its index finished): the generation is new;
  *   onIndexing(id, info, fileName): a library's index build moved on ({ stage, progress },
  *   'failed' with `error`, or null once ready); fileName names it before the open answers;
- *   urlIndexBuildBytes: URL_INDEX_BUILD_BYTES (for tests); blockCache: block-cache.js's, which keeps
+ *   urlIndexBuildBytes, urlBookLookups: URL_INDEX_BUILD_BYTES, URL_BOOK_LOOKUPS (for tests); blockCache: block-cache.js's, which keeps
  *   what is read from the web (optional: without it every read goes to the network)
  */
 export function createLocalLibraries({
   log = () => {}, warn = log, store = null, onChange = null, onIndexing = null, urlIndexBuildBytes = URL_INDEX_BUILD_BYTES,
-  blockCache = null,
+  urlBookLookups = URL_BOOK_LOOKUPS, blockCache = null,
 } = {}) {
   const libs = new Map(); // id → ArchiveLibrary
   const urls = new Map(); // id → the web address of a library read from one
@@ -128,7 +128,7 @@ export function createLocalLibraries({
         id, log, warn, contentCache, onProgress, estimateSizes: true, store, indexQueue,
         // From the web: a sized image is not looked up (each lookup costs round trips), and an
         // index is built only for a small archive.
-        ...(remote ? { checkImages: false, maxIndexBuildBytes: urlIndexBuildBytes } : {}),
+        ...(remote ? { checkImages: false, maxIndexBuildBytes: urlIndexBuildBytes, bookLookups: urlBookLookups } : {}),
         onChange: () => {
           generation++;
           onChange?.();
