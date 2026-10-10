@@ -385,7 +385,8 @@
            one origin, ariamokr.github.io, so they share localStorage (settings, the remembered
            web addresses) and IndexedDB (indexes, the block cache); harmless so far (only the cloud
            site reads `zimUrls`), but a key prefix per site would keep them apart.
-        7. *Done (2026-10-10, not deployed yet):* an edge proxy (`tools/zim-proxy/`, SPEC §2.6
+        7. *Done (2026-10-10, deployed at https://vrlbry-zim-proxy.vrlbry.workers.dev, Cloudflare's
+           free plan, for the pages of ariamokr.github.io and localhost):* an edge proxy (`tools/zim-proxy/`, SPEC §2.6
            "Through an edge proxy"), measured first. *From here (California), on a warm
            connection:* a read from Kiwix's mirror takes 160-180 ms (curl and the browser alike,
            no preflight per read; HTTP/2), from the US mirrors 85-110 ms (Wisconsin 80-90),
@@ -401,11 +402,16 @@
            s against 0.4 and the article in 1.2-3.0 s against 0.2. Through the proxy run here
            (`serve.mjs`, reading Wisconsin's): the same as Wisconsin's directly (top 1M 0.8 s
            and 3.4 s); from the browser, a fresh Gutenberg ZIM (LCC-PM, 11 reads) opened in 1.6
-           s. Through Cloudflare a read should cost the edge's 40 ms more. So it pays for
-           visitors far from France (the Americas, Asia, Oceania), and the page picks nothing:
-           the Worker chooses by continent. *To do:* deploy it (a Cloudflare account: `npx
-           wrangler deploy` in `tools/zim-proxy/`, then the repository variable `ZIM_PROXY`)
-           and measure it on a Quest. *Later:* keeping popular reads at the edge (the Cache
+           s. *Through Cloudflare* (deployed; Los Angeles, reading Wisconsin's): a warm read
+           100-120 ms; alternating with Kiwix's mirror, LCC-P opens in 1.5-1.9 s against
+           5.1-6.2 s, Chemistry in 0.8 s against 2.1-3.5 and searches in 1.9 s against
+           3.4-3.7; the top 1M opens in 0.9 s against 3.5-4.4, finds Albert Einstein in 4.3-4.4
+           s against 7.5, his volume's contents in 0.5-0.6 s against 2.0-2.5 and the article in
+           0.2-0.4 s against 1.0-1.2. On the live site (`?zimproxy=`), a Gutenberg ZIM never
+           opened there (LCC-PK, 84 MB) opened in 1.6 s. Its certificate took 90 s after the
+           first deploy. So it pays for visitors far from France (the Americas, Asia, Oceania),
+           and the page picks nothing: the Worker chooses by continent. *To do:* the repository
+           variable `ZIM_PROXY`, and a measurement on a Quest (step 8). *Later:* keeping popular reads at the edge (the Cache
            API, which needs a custom domain, not workers.dev; a 206 would be kept as a 200
            under a key of its own); asking the mirrors' operators for CORS (a few lines of
            nginx or Apache: README, "Why only Kiwix's own mirror"), which would make the proxy

@@ -349,9 +349,10 @@ whole. It works on GitHub Pages (no server) and beside a server's own libraries.
   through it (§3.1 `via`) while it works and from `url` for good once it fails, with one
   warning. The library stays the file's: its catalogue `url`, the remembered addresses and the
   block cache's edition all name Kiwix's mirror, so switching the proxy on or off loses
-  nothing. `tools/zim-proxy/serve.mjs` runs it on this machine (port 8090) for trying. Measured
-  from California (TODO, milestone 3 step 7): the top 1M opens in 0.8 s instead of 2.4-4.3 s and
-  finds Albert Einstein in 3.4 s instead of 7.4 s.
+  nothing. `tools/zim-proxy/serve.mjs` runs it on this machine (port 8090) for trying. Deployed
+  at `https://vrlbry-zim-proxy.vrlbry.workers.dev`. Measured from California through it (TODO,
+  milestone 3 step 7): the top 1M opens in 0.9 s instead of 3.5-4.4 s and finds Albert Einstein
+  in 4.4 s instead of 7.5 s.
 - **Closing:** a local library's × in the card's list closes it (stopping its index build) and
   forgets it: its file handle, or its web address (so it does not reopen).
 - **Ids:** `~` + `libraryIdFor(file name)` (then `-2`, `-3` … for the same name twice):
