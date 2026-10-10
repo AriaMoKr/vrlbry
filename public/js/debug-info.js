@@ -9,6 +9,11 @@ import { part, sceneOf } from './scene.js';
 const MAX_ERRORS = 20;
 const MAX_TEXT = 300;
 const errors = [];
+/** The console's own error and warn (startErrorLog wraps them): noteError prints without being kept twice. */
+const raw = {
+  error: (...a) => globalThis.console?.error?.(...a),
+  warn: (...a) => globalThis.console?.warn?.(...a),
+};
 
 const short = (s) => {
   const text = String(s ?? '');
@@ -51,6 +56,7 @@ export function startErrorLog({ target = globalThis, con = globalThis.console } 
   target.addEventListener?.('unhandledrejection', (e) => remember('rejection', describe(e.reason)));
   for (const level of ['error', 'warn']) {
     const real = con[level];
+    raw[level] = (...args) => real.apply(con, args);
     con[level] = (...args) => {
       remember(level, args.map(describe).join(' '));
       real.apply(con, args);
@@ -59,11 +65,13 @@ export function startErrorLog({ target = globalThis, con = globalThis.console } 
 }
 
 /**
- * Keeps a message for the report that never reached the console: what the page showed as an error
- * (a toast), or a ZIM that failed to open, with its full address (the toast names the file only).
+ * Keeps a message for the report, and prints it to the console (for those who copy the console
+ * instead): what the page showed as an error (a toast, printed as a warning), or a ZIM that failed
+ * to open, with its full address (an error; the toast names the file only).
  */
 export function noteError(kind, message) {
   remember(kind, message);
+  (kind === 'open' ? raw.error : raw.warn)(`[vrlbry] ${kind === 'open' ? 'Could not open' : 'Shown'}: ${message}`);
 }
 
 /** The errors kept so far, oldest first (t: seconds since the page started loading). */

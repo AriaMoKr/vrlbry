@@ -39,9 +39,16 @@ describe('debug info', () => {
     assert.ok(errors.at(-1).message.endsWith('…'));
   });
 
-  it('keeps what only the page showed: an error toast, a ZIM that did not open with its address', () => {
+  it('keeps and prints what only the page showed: an error toast, a ZIM that did not open with its address', () => {
+    const [kept, shown] = [recentErrors().length, printed.length];
     noteError('open', 'https://ariamokr.github.io/vrlbry/zims/x.zim: x.zim: the server does not serve parts of the file (no range requests)');
     noteError('toast', 'x.zim: the server does not serve parts of the file (no range requests).');
+    assert.equal(recentErrors().length, Math.min(20, kept + 2), 'kept once each, not again as console lines');
+    // Printed too, for those who copy the console instead: the failed open as an error.
+    assert.deepEqual(printed.slice(shown), [
+      ['error', '[vrlbry] Could not open: https://ariamokr.github.io/vrlbry/zims/x.zim: x.zim: the server does not serve parts of the file (no range requests)'],
+      ['warn', '[vrlbry] Shown: x.zim: the server does not serve parts of the file (no range requests).'],
+    ]);
     const [open, toast] = recentErrors().slice(-2);
     assert.equal(open.kind, 'open');
     assert.match(open.message, /^https:\/\/ariamokr\.github\.io\/vrlbry\/zims\/x\.zim: .*no range requests/);
