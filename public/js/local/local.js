@@ -144,6 +144,7 @@ export async function openEach(list, open, { concurrency = 1, onFile, onProgress
         results[i] = { name, error: err.message, ...(typeof file === 'string' ? { url: file } : {}) };
       }
       fractions[i] = 1;
+      report(); // a file done counts whole (its opener's last word may have been half-way)
     }
   };
   await Promise.all(Array.from({ length: Math.max(1, Math.min(concurrency, list.length)) }, lane));
@@ -183,6 +184,8 @@ export const books = (lib) => call('books', { lib });
 export const articles = (lib, q, limit) => call('articles', { lib, q, limit });
 /** A book's reading metadata; `onProgress(fraction)` while the worker converts it. */
 export const meta = (lib, book, { onProgress } = {}) => call('meta', { lib, book }, { onProgress });
+/** Where a link of a local book leads: { book, c, b?, f? }, or null. */
+export const link = (lib, book, href) => call('link', { lib, book, href });
 /** A chunk's JSON, as bytes. */
 export const chunk = (lib, book, n) => call('chunk', { lib, book, n });
 /** An image of a local library: { bytes, mime }, or null. */
