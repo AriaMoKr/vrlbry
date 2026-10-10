@@ -196,8 +196,10 @@ VR), paste its address into the field under the button (or drop its link on the 
 the example from the card.
 Kiwix's download links work: they are turned into the same file on Kiwix's own mirror,
 `mirror.download.kiwix.org`, the one that lets a web page read its files (its other mirrors do
-not). Only what is shown is fetched, a few kilobytes at a time: opening a Gutenberg ZIM takes a
-few seconds, the 49 GB top-million Wikipedia about six. Web addresses reopen by themselves when
+not). Only what is shown is fetched, a few kilobytes at a time. On a Quest 3 in California,
+through the site's proxy (below), a Gutenberg ZIM opens in about 2 s and the 49 GB
+top-million Wikipedia in 2.4 s, finding an article in it in 5 s; from Kiwix's mirror directly
+those take 7-9 s, 6-7 s and 10-11 s. Web addresses reopen by themselves when
 the page loads; a library's × closes it. A Wikipedia or Wikisource from the web needs a
 prebuilt index unless it is small (building one reads most of the file). The site publishes
 those of `tools/indexes.txt` under `indexes/`: `node tools/build-indexes.mjs --zims <folder>`

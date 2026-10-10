@@ -381,10 +381,22 @@
            232 s). Later: a more compact index (the full
            English one is about 75 MB, 38 MB compressed: deltas of the order and a byte per
            size would shrink it several times), and other languages.
-           *Shared storage:* the three Pages sites (vrlbry, vrlbry-standalone, vrlbry-cloud) are
-           one origin, ariamokr.github.io, so they share localStorage (settings, the remembered
-           web addresses) and IndexedDB (indexes, the block cache); harmless so far (only the cloud
-           site reads `zimUrls`), but a key prefix per site would keep them apart.
+           *Shared storage, on purpose (decided 2026-10-10):* the three Pages sites (vrlbry,
+           vrlbry-standalone, vrlbry-cloud) are one origin, ariamokr.github.io, so they share
+           localStorage (`vrlbry:` keys: settings, reading positions, recent, the card, the
+           remembered web addresses) and IndexedDB (`vrlbry-local` indexes, `vrlbry-files`
+           handles, `vrlbry-blocks`). They are flavours of one app: most features will be merged
+           back into the main site, and the other two kept, at low priority, for trying new
+           features or for particular needs. So no prefix per site; instead the stored formats
+           stay compatible across them: (1) settings are loaded as `{ ...DEFAULT_SETTINGS,
+           ...stored }` and saved whole, so a site keeps the fields it does not know (all three
+           branches, checked 2026-10-10): never rebuild them from known keys only; (2) a changed
+           shape stays readable by the older code (as `normRoom` reads rooms' old shape) or goes
+           under a new key; (3) a database's version is never raised (older code opening version
+           1 would fail with a VersionError and fall back to memory): new stores go in a new
+           database; (4) derived data names carry their version (`core/index-versions.js`), so
+           sites on different versions keep their own. Two of them open at once: the last to
+           save its settings wins.
         7. *Done (2026-10-10, deployed at https://vrlbry-zim-proxy.vrlbry.workers.dev, Cloudflare's
            free plan, for the pages of ariamokr.github.io and localhost):* an edge proxy (`tools/zim-proxy/`, SPEC §2.6
            "Through an edge proxy"), measured first. *From here (California), on a warm
@@ -423,7 +435,28 @@
            200 without the headers (checked 2026-10-10). Cloudflare's free
            plan allows 100,000 requests a day (an article costs 20-40 reads, an index build
            over the web thousands).
-        8. Quest checks and docs (SPEC §2.6 remote sources, README).
+        8. *Done (2026-10-10):* Quest checks and docs. On a Quest 3 (Quest Browser 152, Wi-Fi,
+           California), the live site with the proxy deployed, driven over adb and DevTools; the
+           headset's own state for the site (settings, reading positions) saved first and put
+           back after. The core in the page with no caches (no block cache, no HTTP cache, an
+           index store in memory), Kiwix's mirror against the proxy, two rounds each: a read on
+           its own 202-205 ms against 110, 8 at once 529-723 ms against 156-169; LCC-P opens in
+           7.3-8.8 s against 1.9-2.0 and a book in 1.4-2.1 s against 0.3-0.4; Chemistry, its
+           index built on first open (131 reads, 10 MB), in 50-51 s against 9.6-10.1; the top
+           1M opens in 6.1-7.4 s against 2.3-2.4, finds Albert Einstein in 10.3-11.4 s against
+           4.6-5.0, his volume's contents in 2.1-2.7 s against 0.6-0.7 and the article in
+           1.2-1.7 s against 0.3. The full English Wikipedia (its 77 MB index from the site)
+           opens in 23.4 s against 17.5, searches in 11.4 s against 4.9, a volume in 1.3 s
+           against 0.4 and the article in 1.6 s against 0.3 (190 MB of page heap after). The
+           proxy unreachable: LCC-P read directly after one failed try (5.7 s). The app itself:
+           a Gutenberg ZIM not opened there before (LCC-PB) opened through the site's proxy in
+           3.7 s, shelves included, with no fallback. The kiosk's Kiwix tab: the 65 English
+           Wikipedias listed in 1.2 s, labelled as on the PC (4 "Index ready", 18 "Indexed on
+           first open", 43 "Needs an index"). Docs: SPEC §2.6 (From the web, Kiwix's library,
+           Kept from the web, Through an edge proxy, Prebuilt indexes) and §3.1, README.
+           *Milestone 3's plan is done.* Left for later: the items under steps 6 and 7 (a more
+           compact index, other languages, keeping popular reads at the edge, CORS on the
+           mirrors, then following Kiwix's redirect).
     - *Keep files across reloads (done 2026-10-08):* where the browser gives file handles (the
       File System Access API: desktop Chrome/Edge, and Quest Browser has it too) they are kept
       in IndexedDB and the card offers "Last time: … Reopen" (permission asked again within the
