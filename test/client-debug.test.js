@@ -2,7 +2,7 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { debugReport, recentErrors, startErrorLog } from '../public/js/debug-info.js';
+import { debugReport, noteError, recentErrors, startErrorLog } from '../public/js/debug-info.js';
 
 const event = (type, props) => Object.assign(new Event(type), props);
 
@@ -37,6 +37,16 @@ describe('debug info', () => {
     assert.equal(errors[0].message, 'w5 ');
     assert.equal(errors.at(-1).message.length, 301);
     assert.ok(errors.at(-1).message.endsWith('…'));
+  });
+
+  it('keeps what only the page showed: an error toast, a ZIM that did not open with its address', () => {
+    noteError('open', 'https://ariamokr.github.io/vrlbry/zims/x.zim: x.zim: the server does not serve parts of the file (no range requests)');
+    noteError('toast', 'x.zim: the server does not serve parts of the file (no range requests).');
+    const [open, toast] = recentErrors().slice(-2);
+    assert.equal(open.kind, 'open');
+    assert.match(open.message, /^https:\/\/ariamokr\.github\.io\/vrlbry\/zims\/x\.zim: .*no range requests/);
+    assert.equal(toast.kind, 'toast');
+    assert.equal(typeof open.t, 'number');
   });
 
   it('reports what it can, part by part', () => {

@@ -7,6 +7,7 @@ import { droppedHandles } from '../local/handles.js';
 import { KiwixDialog } from './kiwix-dialog.js';
 import { bookIndex, matchBooks, findArticles } from '../search.js';
 import { load, save } from '../util/storage.js';
+import { noteError } from '../debug-info.js';
 
 const ARTICLE_RESULTS = 8; // per Wikipedia library
 
@@ -561,6 +562,7 @@ export class Overlay {
    * @returns {{ update: (msg: string) => void, progress: (fraction: number) => void, close: () => void }}
    */
   showToast(msg, kind = 'info', ms = 3500) {
+    if (kind === 'error') noteError('toast', msg); // in "Copy debug info"'s errors too
     const t = document.createElement('div');
     t.className = `ov-toast ${kind}`;
     const text = document.createTextNode(msg);

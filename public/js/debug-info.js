@@ -58,6 +58,14 @@ export function startErrorLog({ target = globalThis, con = globalThis.console } 
   }
 }
 
+/**
+ * Keeps a message for the report that never reached the console: what the page showed as an error
+ * (a toast), or a ZIM that failed to open, with its full address (the toast names the file only).
+ */
+export function noteError(kind, message) {
+  remember(kind, message);
+}
+
 /** The errors kept so far, oldest first (t: seconds since the page started loading). */
 export const recentErrors = () => errors.slice();
 

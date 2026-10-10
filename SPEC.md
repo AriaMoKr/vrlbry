@@ -1466,8 +1466,8 @@ States: `browse` → `inspect` → `opening` → `read` (and back), plus `busy` 
   dialog's "Tell me when this site has been updated" checkbox turns it back on.
 - DOM overlay (non-VR): see `ui/overlay.js` — title with the same "Updated …" stamp, library
   cards (with indexing progress or "waiting to index"), a ⟳ rescan button, under the cards
-  "Browse Kiwix's library…" first (what a new visitor most likely wants), then "Open ZIM files…"
-  and the web-address field, and a drop target over the page (local library, §2.6), search box (filters by title / author across *all* books of all libraries;
+  "Browse Kiwix's library…" first, on a line of its own (what a new visitor most likely wants),
+  then "Open ZIM files…" on the next, and the web-address field, and a drop target over the page (local library, §2.6), search box (filters by title / author across *all* books of all libraries;
   picking a result = switch room if needed, teleport to it and select it; for Wikipedia
   libraries it also asks the server for articles by title, 150 ms after typing stops, listed
   after up to 6 books; picking an article takes its volume off the shelf and opens it at that

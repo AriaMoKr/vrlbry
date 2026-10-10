@@ -17,7 +17,7 @@ import { idbStore } from './local/idb-store.js';
 import { PLAYER, XR_FRAME_RATE } from './config.js';
 import { collectionsFor, LOCAL_PLACE } from './rooms.js';
 import { perf } from './perf.js';
-import { copyText, debugReport, startErrorLog } from './debug-info.js';
+import { copyText, debugReport, startErrorLog, noteError } from './debug-info.js';
 import { parseScene, restoreScene, saveScene, savedScene } from './scene.js';
 
 startErrorLog(); // first: the debug report lists the page's last errors
@@ -339,6 +339,8 @@ async function start() {
       // Kiwix's other mirrors send no CORS headers: the same file on its own mirror can be read.
       const mirror = r.url && /CORS/.test(r.error) ? onKiwixMirror(r.url) : null;
       const hint = mirror ? ` Kiwix's own mirror lets pages read its files: ${mirror}` : '';
+      // For "Copy debug info": which address failed (the toast names the file only).
+      noteError('open', `${r.url ?? r.name}: ${r.error}`);
       overlay.showToast(`${reopening ? 'Not reopened: ' : ''}${r.error}.${hint}`, 'error', mirror ? 15000 : 9000);
       // In VR the page's toasts are out of sight (a ZIM opened from the kiosk's Kiwix tab).
       if (controls.presenting) interaction.notice(`Could not open ${r.name}`, r.error, 8);
