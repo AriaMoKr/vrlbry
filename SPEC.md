@@ -246,7 +246,9 @@ whole. It works on GitHub Pages (no server) and beside a server's own libraries.
   with "prebuilt indexes" ticked it first builds the missing ones from the mirror (up to 5 h,
   then the cache is saved). Measured: from local copies, Wikipedia 100 in 2 s, Simple English
   (3.1 GB) 28 s and a 2.9 MB index, Wikisource (8.6 GB) 119 s and 3.4 MB, the top 1M 396 s and
-  10.7 MB (5.6 MB compressed); over the web from here, Cricket (379 MB) read 0.20 GB in 232 s.
+  10.7 MB (5.6 MB compressed), the full English Wikipedia (maxi, 7.2 M articles) 32 min and
+  77 MB (39 MB compressed); over the web from here, Cricket (379 MB) read 0.20 GB in 232 s. On a
+  Quest the full English Wikipedia opens from the web with its index in 24 s.
   The list without the three full English Wikipedias reads about 60 GB of the mirror once, then
   only new editions; those three about 110 GB more (each index about 75 MB), so they are best
   built from local copies. None of it is needed: without an index a big Wikipedia from the web

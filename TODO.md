@@ -365,7 +365,12 @@
            section-redirect pages (5.9 M entries for the top 1M's 1 M articles), and telling
            those pages apart needs their HTML. Built here from local copies (`.indexes/`):
            Wikipedia 100, Simple English, the top 1M, Wikisource, and the full English
-           Wikipedia (maxi). *To publish them:* `gh release create indexes .indexes/*.json`
+           Wikipedia (maxi: 7,229,793 articles, built in 32 min, an index of 77 MB, 39 MB
+           compressed). Tried on a Quest from a test build of the site: the top 1M opened from
+           the web in 3.6 s with its index, the full English Wikipedia (127 GB) in 24 s (7,230
+           volumes; the index came from this PC over adb, so the site's download of it is not
+           counted). With them, Kiwix's library offers 21 of the 65 English Wikipedias instead
+           of 18. *To publish them:* `gh release create indexes .indexes/*.json`
            (then `gh release upload indexes .indexes/*.json --clobber` for new ones), and run the
            workflow; or tick "prebuilt indexes" to build the rest from the mirror (about 60 GB
            of its bandwidth once without the three full English Wikipedias; over the web from
