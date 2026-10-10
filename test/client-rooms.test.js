@@ -261,9 +261,11 @@ describe('rooms: Gutenberg genres by name', () => {
 });
 
 describe('rooms: a capped Gutenberg room shelves its most read books', () => {
-  // 7,000 Gutenberg books: ranked by popularity in reverse title order, so that the first 3,000 by
-  // title are the least read.
-  const N = 7000;
+  // Two and a half rooms of Gutenberg books (25,000 with the cap at 10,000), half of them American
+  // literature: ranked by popularity in reverse title order, so that the first by title are the
+  // least read.
+  const N = 2 * ROOM_CAP + ROOM_CAP / 2;
+  const fmt = (n) => n.toLocaleString();
   const titleOf = (i) => `T${String(i).padStart(5, '0')}`;
   const pgBig = Array.from({ length: N }, (_, i) => ({ id: `g${i}`, title: titleOf(i), author: 'X', shelf: i % 2 ? 'PS' : 'PR', rank: N - i, libId: 'big' }));
   const big = { id: 'big', kind: 'gutenberg', title: 'Gutenberg · every book (EN)' };
@@ -273,10 +275,10 @@ describe('rooms: a capped Gutenberg room shelves its most read books', () => {
     assert.equal(all.total, N);
     assert.equal(all.capped, true);
     assert.equal(all.books.length, ROOM_CAP);
-    assert.ok(all.books.every((b) => b.rank <= ROOM_CAP), 'the 3,000 most read');
+    assert.ok(all.books.every((b) => b.rank <= ROOM_CAP), 'the most read');
     assert.deepEqual(all.books.map((b) => b.title), [...all.books.map((b) => b.title)].sort(), 'in title order');
     const [ps] = shelfCollections([big], { big: pgBig }, { big: { genre: 'PS', letter: null } }, 'title');
-    assert.equal(ps.total, 3500);
+    assert.equal(ps.total, N / 2);
     const psRanks = pgBig.filter((b) => b.shelf === 'PS').map((b) => b.rank).sort((a, b) => a - b);
     assert.ok(ps.books.every((b) => b.shelf === 'PS' && b.rank <= psRanks[ROOM_CAP - 1]), 'the most read of the genre');
     // By popularity: the same books, in that order.
@@ -290,8 +292,8 @@ describe('rooms: a capped Gutenberg room shelves its most read books', () => {
     const genBooks = pgBig.map((b) => ({ ...b, libId: 'gen' }));
     const [g] = shelfCollections([generic], { gen: genBooks }, { gen: { genre: null, letter: null } }, 'title');
     assert.deepEqual(g.books.map((b) => b.title), genBooks.map((b) => b.title).sort().slice(0, ROOM_CAP), 'its rank is no popularity');
-    assert.equal(capNote(big, N), ' (the 3,000 most read)');
-    assert.equal(capNote(generic, N), ' (first 3,000)');
+    assert.equal(capNote(big, N), ` (the ${fmt(ROOM_CAP)} most read)`);
+    assert.equal(capNote(generic, N), ` (first ${fmt(ROOM_CAP)})`);
     assert.equal(capNote(big, ROOM_CAP), '');
   });
 
@@ -303,7 +305,7 @@ describe('rooms: a capped Gutenberg room shelves its most read books', () => {
     };
     assert.equal(pagesOf(N), 3);
     const pages = [0, 1, 2].map((page) => shelve({ genre: null, letter: null, ...(page ? { page } : {}) }));
-    assert.deepEqual(pages.map((c) => [c.page, c.pages, c.books.length]), [[0, 3, 3000], [1, 3, 3000], [2, 3, 1000]]);
+    assert.deepEqual(pages.map((c) => [c.page, c.pages, c.books.length]), [[0, 3, ROOM_CAP], [1, 3, ROOM_CAP], [2, 3, N - 2 * ROOM_CAP]]);
     for (const [i, c] of pages.entries()) {
       const ranks = c.books.map((b) => b.rank);
       assert.ok(Math.min(...ranks) === i * ROOM_CAP + 1 && Math.max(...ranks) === Math.min(N, (i + 1) * ROOM_CAP), `page ${i}: ranks ${i * ROOM_CAP + 1}-`);
@@ -317,11 +319,11 @@ describe('rooms: a capped Gutenberg room shelves its most read books', () => {
     // By popularity: the same bands, in that order.
     assert.deepEqual(shelve({ genre: null, letter: null, page: 1 }, 'popularity').books.map((b) => b.rank), Array.from({ length: ROOM_CAP }, (_, i) => ROOM_CAP + i + 1));
     // The note says which page.
-    assert.equal(capNote(big, N, 1), ' (most read 3,001–6,000)');
-    assert.equal(capNote(big, N, 2), ' (most read 6,001–7,000)');
-    assert.equal(capNote({ kind: 'generic' }, N, 1), ' (3,001–6,000)');
+    assert.equal(capNote(big, N, 1), ` (most read ${fmt(ROOM_CAP + 1)}–${fmt(2 * ROOM_CAP)})`);
+    assert.equal(capNote(big, N, 2), ` (most read ${fmt(2 * ROOM_CAP + 1)}–${fmt(N)})`, 'the last page, partly full');
+    assert.equal(capNote({ kind: 'generic' }, N, 1), ` (${fmt(ROOM_CAP + 1)}–${fmt(2 * ROOM_CAP)})`);
     assert.equal(collectionsFor([big], { big: pgBig }, { place: 'big', sort: 'title', rooms: { big: { genre: null, letter: null, page: 2 } } })[0].subtitle,
-      'All books · 7,000 works (most read 6,001–7,000)');
+      `All books · ${fmt(N)} works (most read ${fmt(2 * ROOM_CAP + 1)}–${fmt(N)})`);
   });
 
   it('keeps a page only past the first, and tells rooms apart by it', () => {

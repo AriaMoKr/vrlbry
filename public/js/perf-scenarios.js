@@ -121,7 +121,7 @@ export async function runScenarios(app, { only = null } = {}) {
 
     if (faceted) {
       await scenario('room-walk', async () => {
-        await goTo(faceted.id, { genre: null, letter: null }); // the first 3,000 of the whole library
+        await goTo(faceted.id, { genre: null, letter: null }); // the first ROOM_CAP (10,000) of the whole library
         await glide(C, walkPath(world));
       });
       await scenario('filters', async () => {

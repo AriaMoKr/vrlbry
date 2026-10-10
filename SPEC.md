@@ -1399,11 +1399,15 @@ States: `browse` → `inspect` → `opening` → `read` (and back), plus `busy` 
 - A library is further browsed by rooms when `kind === 'wikisource'` or it has more
   than 3,000 books. It then shelves one room at a time, `{ genre, letter }` (each a string or
   null): the works of that genre whose title starts with that letter, either filter alone, or —
-  both null — all works. A room is sorted by the current sort and capped at `ROOM_CAP` = 3,000
-  books: a Gutenberg ZIM's room shelves its 3,000 most read (by `rank`, its popularity, from
-  the cached popularity order) in the current sort (the section sign and the kiosk say "(the
-  3,000 most read)": `capNote`); other libraries' rank is no popularity, so theirs shelves the
-  first 3,000 in the sort ("(first 3,000)"). The default room is Novels if present (Wikisource),
+  both null — all works. A room is sorted by the current sort and capped at `ROOM_CAP` = 10,000
+  books (3,000 until 2026-10-10; measured on a Quest in VR, TODO milestone 3; `?roomcap=<n>`
+  for measuring): a Gutenberg ZIM's room shelves its 10,000 most read (by `rank`, its
+  popularity, from the cached popularity order) in the current sort (the section sign and the
+  kiosk say "(the 10,000 most read)": `capNote`); other libraries' rank is no popularity, so
+  theirs shelves the first 10,000 in the sort ("(first 10,000)"). A room holding more is
+  shelved a page at a time (`room.page`, kept only past the first; the kiosk's "◀ Previous /
+  Next ▶" and "Page 2 of 7"; a Gutenberg ZIM's pages by popularity: "(most read
+  10,001–20,000)"); changing a filter goes back to the first page. The default room is Novels if present (Wikisource),
   else all works: a big Gutenberg ZIM opened on its largest genre under the cap, class A
   (encyclopedias, periodicals). Gutenberg's genres are Library of Congress classes, shown by
   name (`genreLabel`, `LCC_NAMES` in `rooms.js`: Kiwix's names for its ZIM of each class, E and F

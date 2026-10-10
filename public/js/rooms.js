@@ -9,8 +9,11 @@
 import { letterOf, sortBooks } from './util/books.js';
 
 /**
- * Most books a room shelves at once (~26 bookcases; more are shelved a page at a time). The page
- * address's `?roomcap=<n>` (500-30,000) sets another, for measuring bigger rooms on a headset.
+ * Most books a room shelves at once (~92 bookcases; more are shelved a page at a time). Measured
+ * on a Quest 3 in VR (TODO, milestone 3): walking stayed at 72 Hz with 42-46 draw calls whether a
+ * room held 3,000, 6,000, 10,000 or 20,000 books; a room switch took 0.93, 0.97, 1.19 and 1.81 s,
+ * its worst frame 100, 189, 278 and 500 ms. The page address's `?roomcap=<n>` (500-30,000) sets
+ * another, for measuring.
  */
 export const ROOM_CAP = (() => {
   let n = NaN;
@@ -19,7 +22,7 @@ export const ROOM_CAP = (() => {
   } catch {
     // no page address (Node)
   }
-  return Number.isInteger(n) && n >= 500 && n <= 30000 ? n : 3000;
+  return Number.isInteger(n) && n >= 500 && n <= 30000 ? n : 10000;
 })();
 /**
  * The place that shelves every library whole in one hall — no filters, no cap (an experiment:
@@ -206,8 +209,9 @@ export function roomFor(book, books) {
 export const capsByPopularity = (library) => library?.kind === 'gutenberg';
 
 /**
- * What a room's count says when it holds more than are shelved: " (the 3,000 most read)" or
- * " (first 3,000)" on its first page, " (most read 3,001–6,000)" or " (3,001–6,000)" past it, or ''.
+ * What a room's count says when it holds more than are shelved (ROOM_CAP 10,000): " (the 10,000
+ * most read)" or " (first 10,000)" on its first page, " (most read 10,001–20,000)" or
+ * " (10,001–20,000)" past it, or ''.
  */
 export function capNote(library, total, page = 0) {
   if (total <= ROOM_CAP) return '';

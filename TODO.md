@@ -495,8 +495,15 @@
            on 92 in 1.12 s (256 ms, 5.4 %), 20,000 on 183 in 1.66 s (411 ms, 7.6 %; of it the
            build 417 ms and the low atlases 703 ms); walking the room after (room-walk) dropped
            1.3, 1.4, 1.5 and 0.6 %, with 34-40 draw calls (rows behind not drawn) and the
-           browser's memory ~100 MB more at 20,000. *To do:* the same walk in VR (both eyes, 72
-           Hz: needs the headset worn), then choose the cap. *Possible later:* the whole
+           browser's memory ~100 MB more at 20,000. *In VR* (worn, 72 Hz, both eyes; room-walk):
+           3,000, 6,000, 10,000 and 20,000 books all walked at 71.6-71.7 fps, 0.5-0.7 % of
+           frames dropped, 42-46 draw calls (max 72-84); each walk had one stall, growing with
+           the room: 140, 203, 263, 461 ms (cause not traced: probably as the walk starts); a
+           room switch took 0.93, 0.97, 1.19, 1.81 s, its worst frame 100, 189, 278, 500 ms, and
+           2.2, 4.2, 5.5, 9 % of frames dropped in the 4 s after (atlases arriving). *Decided:
+           10,000* (English Gutenberg in 7 pages instead of 21). *To trace:* that stall when a
+           walk starts, and the build's worst frame (build and low atlases), which grow with the
+           room. *Possible later:* the whole
            library on the shelves, only the bookcases near the viewer built as they walk (a
            virtual hall), instead of a cap and pages. Left for later: the items under steps 6 and 7 (a more
            compact index, other languages, keeping popular reads at the edge, CORS on the
