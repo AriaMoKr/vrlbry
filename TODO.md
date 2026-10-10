@@ -353,7 +353,7 @@
            (`indexes/list.json`, now written by `--indexes`) are listed last and cannot be
            opened: 47 of the 65 English ones, which is what step 6 is for. On a Quest the list
            fills in about a second. Addresses and files still open without the catalogue.
-        6. *Done (2026-10-10), publishing left to do:* prebuilt indexes (optional, SPEC §2.6
+        6. *Done and published (2026-10-10):* prebuilt indexes (optional, SPEC §2.6
            "Prebuilt indexes"): `tools/indexes.txt` lists the 49 English Wikipedias and
            Wikisources over 256 MB; `tools/build-indexes.mjs` builds the missing ones for their
            current editions (Kiwix's catalogue) from local copies (`--zims`) or from the mirror
@@ -370,13 +370,21 @@
            the web in 3.6 s with its index, the full English Wikipedia (127 GB) in 24 s (7,230
            volumes; the index came from this PC over adb, so the site's download of it is not
            counted). With them, Kiwix's library offers 21 of the 65 English Wikipedias instead
-           of 18. *To publish them:* `gh release create indexes .indexes/*.json`
-           (then `gh release upload indexes .indexes/*.json --clobber` for new ones), and run the
-           workflow; or tick "prebuilt indexes" to build the rest from the mirror (about 60 GB
-           of its bandwidth once without the three full English Wikipedias; over the web from
-           here Cricket, 379 MB, read 0.20 GB in 232 s). Later: a more compact index (the full
+           of 18. *Published* as the release "indexes" and shipped by the workflow: on the live
+           site (desktop browser) Kiwix's library offers 22 English Wikipedias, the top 1M opens
+           from the web in 2.6 s and the full English Wikipedia in 16 s, each with its index
+           downloaded from Pages (5.6 MB and 39 MB compressed). *For new editions:* build them
+           (`node tools/build-indexes.mjs --zims <folder>`), `gh release upload indexes
+           .indexes/*.json --clobber`, then push or run the workflow; or tick "prebuilt indexes"
+           to build the rest from the mirror (about 60 GB of its bandwidth once without the three
+           full English Wikipedias; over the web from here Cricket, 379 MB, read 0.20 GB in
+           232 s). Later: a more compact index (the full
            English one is about 75 MB, 38 MB compressed: deltas of the order and a byte per
            size would shrink it several times), and other languages.
+           *Shared storage:* the three Pages sites (vrlbry, vrlbry-standalone, vrlbry-cloud) are
+           one origin, ariamokr.github.io, so they share localStorage (settings, the remembered
+           web addresses) and IndexedDB (indexes, the block cache); harmless so far (only the cloud
+           site reads `zimUrls`), but a key prefix per site would keep them apart.
         7. Speed, if step 2 says so (optional): an edge proxy (e.g. a Cloudflare Worker) adding
            CORS and reading from the nearest mirror (a US one from here), or asking mirror
            operators to add CORS. Used only when configured; the direct URL otherwise.
