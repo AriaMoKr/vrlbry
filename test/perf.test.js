@@ -5,7 +5,7 @@ import { describe, it } from 'node:test';
 import { Recorder, MAX_FRAMES } from '../public/js/perf.js';
 import {
   devtoolsSockets, parseVrApiLine, parseMeminfo, parseBattery, summarizeVrApi, parseAdbDevices, isNetworkSerial,
-  keepTraceEvent, gcPauses, summarizeGc, TRACE_SYNC_MARK, atlasStalls,
+  keepTraceEvent, gcPauses, summarizeGc, TRACE_SYNC_MARK, atlasStalls, PROXIMITY,
 } from '../tools/quest-perf.mjs';
 
 const HZ72 = 1000 / 72;
@@ -226,5 +226,13 @@ Total RSS by OOM adjustment:
 
   it('reads the battery level and temperature', () => {
     assert.deepEqual(parseBattery('Current Battery Service state:\n  AC powered: false\n  level: 87\n  temperature: 312\n'), { level: 87, tempC: 31.2 });
+  });
+});
+
+describe('quest-perf: the proximity override', () => {
+  it('makes the headset act as if worn for a run, and gives the sensor back after', () => {
+    assert.deepEqual(PROXIMITY.worn, ['shell', 'am', 'broadcast', '-a', 'com.oculus.vrpowermanager.prox_close']);
+    assert.deepEqual(PROXIMITY.sensor, ['shell', 'am', 'broadcast', '-a', 'com.oculus.vrpowermanager.automation_disable']);
+    assert.ok(Object.isFrozen(PROXIMITY));
   });
 });

@@ -31,13 +31,27 @@ Options:
   --out <dir>      where to write the dump (default perf/)
   --serial <id>    adb device serial, when several devices are connected
   --no-gc          do not trace garbage collection during run (on by default)
+  --no-prox        leave the proximity sensor alone during run (by default run makes the headset
+                   act as if worn, and gives the sensor back at the end)
   --cdp <url>      use this DevTools endpoint instead of the headset (e.g. http://127.0.0.1:9222
                    for a desktop browser started with --remote-debugging-port); skips adb
   -h, --help       this help
 
 The headset must be connected (USB or adb over Wi-Fi) with USB debugging allowed for this PC.
 The scenarios move you around the library (smooth gliding along aisles): wearing the headset is
-optional; the proximity sensor must think it is worn for the session to keep rendering.`;
+optional. A headset nobody wears stops rendering, so run overrides its proximity sensor for the run
+(PROXIMITY: as if worn, then the sensor given back, also when the run fails or is stopped; a
+restart of the headset gives it back too). No tape on the sensor needed.`;
+
+/**
+ * Meta's power manager broadcasts (adb): the headset acts as if worn, its proximity sensor
+ * overridden (a headset nobody wears stops rendering its VR session and the browser's frames), and
+ * the sensor given back. The override lasts until it is given back or the headset restarts.
+ */
+export const PROXIMITY = Object.freeze({
+  worn: ['shell', 'am', 'broadcast', '-a', 'com.oculus.vrpowermanager.prox_close'],
+  sensor: ['shell', 'am', 'broadcast', '-a', 'com.oculus.vrpowermanager.automation_disable'],
+});
 
 // ---------------------------------------------------------------------------------------------
 // Parsing (exported for tests)
@@ -540,7 +554,8 @@ async function main() {
     options: {
       open: { type: 'boolean' }, port: { type: 'string', default: '8080' }, only: { type: 'string' },
       'enter-vr': { type: 'boolean' }, 'allow-2d': { type: 'boolean' }, out: { type: 'string', default: path.join(ROOT, 'perf') },
-      serial: { type: 'string' }, cdp: { type: 'string' }, 'no-gc': { type: 'boolean' }, help: { type: 'boolean', short: 'h' },
+      serial: { type: 'string' }, cdp: { type: 'string' }, 'no-gc': { type: 'boolean' }, 'no-prox': { type: 'boolean' },
+      help: { type: 'boolean', short: 'h' },
     },
   });
   const command = positionals[0];
@@ -555,11 +570,17 @@ async function main() {
   let logger = null;
   let gcTrace = null;
   let cdp = null;
+  let proximityHeld = false;
   try {
     if (useAdb) {
       await chooseDevice(opts);
       dump.device = { serial: opts.serial, ...(await deviceInfo(opts)) };
       console.log(`Headset: ${dump.device.model} (${opts.serial}) · build ${dump.device.build} · Quest Browser ${dump.device.browser ?? '?'}`);
+      if (command === 'run' && !opts['no-prox']) {
+        await adb(opts, ...PROXIMITY.worn);
+        proximityHeld = true;
+        console.log('The headset acts as if worn (its proximity sensor overridden) until the run ends.');
+      }
       if (opts.open) {
         await adb(opts, 'reverse', `tcp:${opts.port}`, `tcp:${opts.port}`);
         await adb(opts, 'shell', 'am', 'start', '-a', 'android.intent.action.VIEW', '-d', `http://localhost:${opts.port}/?perf`);
@@ -663,6 +684,10 @@ async function main() {
     logger?.stop();
     cdp?.close();
     await release();
+    if (proximityHeld) {
+      await adb(opts, ...PROXIMITY.sensor).then(() => console.log('The proximity sensor is back in charge.'),
+        (err) => console.warn(`Could not give the proximity sensor back (${err.message}): restart the headset, or run adb ${PROXIMITY.sensor.join(' ')}`));
+    }
   }
 }
 
