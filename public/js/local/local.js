@@ -74,27 +74,42 @@ function call(method, args = {}, { onProgress } = {}) {
  * Opens ZIM files (File objects from a picker or a drop), one after the other.
  * @param {Iterable<File>} files
  * @param {{ onFile?: (file: File, i: number) => void, onProgress?: (fraction: number) => void,
- *   onOpened?: (result: object) => void }} [opts]
+ *   onOpened?: (result: object) => void, stopped?: () => boolean }} [opts]
  *   onFile: called as each file starts; onProgress: how far all of them are (each file's share by
- *   how much of its catalogue is built); onOpened: each file's result as soon as it is open
+ *   how much of its catalogue is built); onOpened: each file's result as soon as it is open;
+ *   stopped: checked before each file: true opens no more (those left get `skipped: true`).
+ *   Several files' index builds wait until all are open, then go smallest first.
  * @returns {Promise<Array<{ name: string, id?: string, title?: string, kind?: string, books?: number, error?: string }>>}
  */
-export async function openFiles(files, { onFile, onProgress, onOpened } = {}) {
+export async function openFiles(files, { onFile, onProgress, onOpened, stopped = () => false } = {}) {
   const list = [...files];
   const results = [];
-  for (const [i, file] of list.entries()) {
-    onFile?.(file, i);
-    onProgress?.(i / list.length);
-    try {
-      results.push({ name: file.name, ...(await call('open', { file }, { onProgress: onProgress && ((f) => onProgress((i + f) / list.length)) })) });
-      onOpened?.(results.at(-1));
-      opened++;
-    } catch (err) {
-      results.push({ name: file.name, error: err.message });
+  const batch = list.length > 1;
+  if (batch) await call('hold');
+  try {
+    for (const [i, file] of list.entries()) {
+      if (stopped()) {
+        results.push({ name: file.name, skipped: true });
+        continue;
+      }
+      onFile?.(file, i);
+      onProgress?.(i / list.length);
+      try {
+        results.push({ name: file.name, ...(await call('open', { file }, { onProgress: onProgress && ((f) => onProgress((i + f) / list.length)) })) });
+        onOpened?.(results.at(-1));
+        opened++;
+      } catch (err) {
+        results.push({ name: file.name, error: err.message });
+      }
     }
+  } finally {
+    if (batch) await call('release').catch(() => {});
   }
   return results;
 }
+
+/** Closes a local library: stops its index build too (a cancel). */
+export const close = (lib) => call('close', { lib });
 
 /**
  * Calls fn when a local library's catalogue changed on its own: its index finished (a Wikipedia

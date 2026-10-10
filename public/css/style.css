@@ -139,6 +139,20 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 @keyframes ov-spin { to { transform: rotate(360deg); } }
 .ov-toast-bar { height: 4px; margin: 7px 0 2px; border-radius: 2px; background: var(--line); overflow: hidden; }
 .ov-toast-bar > div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+.ov-toast-action { pointer-events: auto; margin-left: 10px; padding: 1px 10px; font-size: 12px; }
+/* The local library's index builds: one box at the foot of the page, out of the view's middle. */
+.ov-status { position: fixed; right: 16px; bottom: 84px; width: min(340px, calc(100vw - 32px)); padding: 8px 12px; background: var(--panel-solid); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 8px 20px rgba(0,0,0,.4); font-size: 13px; }
+.ov-status-head { display: flex; align-items: center; gap: 8px; }
+.ov-status-head::before { content: ""; flex: none; width: 11px; height: 11px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: ov-spin .9s linear infinite; }
+.ov-status-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ov-status-toggle { flex: none; padding: 0 8px; font-size: 13px; line-height: 1.6; }
+.ov-status-rows { list-style: none; margin: 8px 0 0; padding: 0; max-height: 40vh; overflow-y: auto; display: grid; gap: 8px; }
+.ov-status-rows li.waiting { color: var(--muted); }
+.ov-status-row { display: flex; align-items: baseline; gap: 8px; }
+.ov-status-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ov-status-line { flex: none; color: var(--muted); font-size: 12px; }
+.ov-status-cancel { flex: none; padding: 0 7px; line-height: 1.4; }
+.ov-status-rows .ov-toast-bar { margin: 4px 0 0; height: 3px; }
 
 @media (max-width: 640px) {
   .ov-card { width: calc(100vw - 24px); }

@@ -29,12 +29,24 @@ export const DEMO_LIBRARIES = [
 export const isDemoLibrary = (library) => DEMO_LIBRARIES.some((name) => library.id.startsWith(name)
   && /^\d{4}-\d{2}$/.test(library.id.slice(name.length)));
 
+/**
+ * The libraries opened in this browser (ZIM files from the device, SPEC §2.6: ids start with
+ * '~'), shelved together once there are two or more: opening several files at once goes there.
+ */
+export const LOCAL_PLACE = { id: 'local', title: 'Opened here', kind: 'local' };
+export const isLocalLibrary = (library) => String(library.id).startsWith('~');
+
 /** Places that shelve several libraries together: which libraries each takes, and when it exists. */
 const GROUPS = [
   { place: DEMO_PLACE, includes: isDemoLibrary, exists: (libraries) => libraries.some(isDemoLibrary) },
-  // All libraries: not when they are all the demo set's (as on the GitHub Pages site), where it
-  // would be the Demo set again.
-  { place: ALL_PLACE, includes: () => true, exists: (libraries) => libraries.length > 1 && !libraries.every(isDemoLibrary) },
+  { place: LOCAL_PLACE, includes: isLocalLibrary, exists: (libraries) => libraries.filter(isLocalLibrary).length > 1 },
+  // All libraries: not when they are all the demo set's (as on the GitHub Pages site) or all
+  // opened here, where it would be one of those again.
+  {
+    place: ALL_PLACE,
+    includes: () => true,
+    exists: (libraries) => libraries.length > 1 && !libraries.every(isDemoLibrary) && !libraries.every(isLocalLibrary),
+  },
 ];
 const groupOf = (place) => GROUPS.find((g) => g.place === place);
 
@@ -138,6 +150,7 @@ export function sameRoom(a, b) {
 export function currentPlace(libraries, booksByLib, settings) {
   // All libraries, where it would be the demo set again (see GROUPS), is the demo set.
   if (settings.place === ALL_PLACE.id && libraries.length > 1 && libraries.every(isDemoLibrary)) settings.place = DEMO_PLACE.id;
+  if (settings.place === ALL_PLACE.id && libraries.length > 1 && libraries.every(isLocalLibrary)) settings.place = LOCAL_PLACE.id;
   const group = GROUPS.find((g) => g.place.id === settings.place);
   if (group?.exists(libraries)) return group.place;
   let lib = libraries.find((l) => l.id === settings.place);

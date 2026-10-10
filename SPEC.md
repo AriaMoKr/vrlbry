@@ -181,7 +181,10 @@ whole. It works on GitHub Pages (no server) and beside a server's own libraries.
   `util/progress.js` `progressText`; the bar from the worker's
   progress: how much of the catalogue is built, Gutenberg books looked up or generic entries
   scanned, `ArchiveLibrary.open`'s `onProgress`) stays until every file is open, however long
-  that takes; then the catalogue's "New library" toast or the file's error follows. Under the
+  that takes; then the catalogue's "New library" toast or the file's error follows. With several
+  files the toast has a Stop button: no more files are opened (`openFiles`' `stopped`; "Stopped:
+  N files not opened."). Several files opened together go to the "Opened here" place (§5.6), one
+  to its own room. Under the
   button, a line links an example to download
   (`EXAMPLE_ZIM` in `local/local.js`: Gutenberg LCC-P, 37 MB, from tools/demo-set.txt, which a
   test checks) and Kiwix's Gutenberg folder. In a headset, files are picked before entering VR;
@@ -196,8 +199,18 @@ whole. It works on GitHub Pages (no server) and beside a server's own libraries.
   reported and forgotten. Other browsers pick the file again.
 - **What opens:** Gutenberg, generic, Wikipedia and Wikisource ZIMs. The last two need a full
   index pass (§2.4, §2.5): the worker runs the same build as the server (`ArchiveLibrary` with
-  an `IndexQueue`: past 1 GB one at a time, smallest first) in the background, and meanwhile
-  the catalogue entry says so (`indexing`, as for the server's) and has no books. The index is
+  an `IndexQueue`) in the background, but one at a time whatever the size, the smallest first
+  (`smallBytes: 0`: builds share the worker's one thread, so at once each only ended later),
+  and while a batch of files opens it holds the queue (`hold` / `release` requests), so the
+  smallest goes first rather than the first opened. Meanwhile the catalogue entry says so
+  (`indexing`, `'queued'` while waiting, as for the server's) and has no books, and a room
+  without books because of it says "Indexing…" (`World.build`'s `emptyText`). The builds show
+  in one status box at the page's foot (`overlay.setIndexing`), not a toast each (six covered
+  the view): a summary line ("Indexing 6 files · 2 ready · Chemistry: 4 s · about 3 s left · 3
+  waiting") with an overall bar, and behind a toggle (remembered) a row per file with its
+  bar, its time ("waiting" while queued, the time counted from its start) and a × that stops
+  the build and closes the file (`close`: the archive's reads then fail and the build ends
+  silently; a closed library tells no more, `_setIndexing`), forgetting it for Reopen. The index is
   kept in IndexedDB (`local/idb-store.js`: the store interface of `server/cache-store.js`, one
   object store, name → string or `Uint8Array`; `appendBytes` and `truncate` read and write
   back in one transaction), named by the ZIM's UUID like the server's, so a file is indexed
@@ -216,15 +229,18 @@ whole. It works on GitHub Pages (no server) and beside a server's own libraries.
 - **Requests:** `local/local.js` (page) ↔ `local/local-handler.js` (worker) by `postMessage`:
   `open`, `catalog`, `books`, `articles` (a Wikipedia's article search, §2.5, as the server's
   route), `meta`, `chunk` (the chunk's JSON bytes, transferred), `image` (bytes and MIME type
-  of a URL), `close`. Before its answer an `open` or a `meta` may send
+  of a URL), `close`, `hold` and `release` (the index queue, around a batch of files). Before
+  its answer an `open` or a `meta` may send
   `{ id, progress }` (a fraction, at most 10 a second), for the page's progress bars; and the
-  worker sends of its own `{ indexing: { id, stage, progress } }` as a library's index build
-  moves on (at most 4 a second per library; `{ id, done }` once ready, `error` with stage
-  'failed'; `local.onIndexing`: the page keeps a toast per build, "Indexing <title>… · 12 s ·
-  about 4 min left" with a bar, "Waiting to index …" while queued, until it is ready or
-  failed) and `{ changed }` when a library's index finished (`local.onChange`: the page
-  refreshes its catalogue at once rather than at the next 10 s poll). `api.js` sends the
-  requests of `~` libraries there;
+  worker sends of its own `{ indexing: { id, file, stage, progress } }` as a library's index
+  build moves on (at most 4 a second per library; `{ id, file, done }` once ready, `error` with
+  stage 'failed'; `local.onIndexing`: the status box above. The page keeps the last word per
+  build, and once a batch is open makes a row only for builds not yet done: a small file's
+  build can end while the next files open, and a row made from its open-time snapshot then
+  stood at 0 % for good, issue #1) and `{ changed }` when a library's index finished
+  (`local.onChange`: the page refreshes its catalogue at once rather than at the next 10 s
+  poll; a refresh asked for while one is applied runs right after it, never dropped). `api.js`
+  sends the requests of `~` libraries there;
   `getCatalog()` (and a rescan's answer) lists the local libraries after the server's, with
   generation `"<server>+<local>"` so the poll notices either changing. A local Wikipedia's
   article search (`api.searchArticles`) goes to the worker's `articles`, so the search box and
@@ -1136,7 +1152,10 @@ States: `browse` → `inspect` → `opening` → `read` (and back), plus `busy` 
   (`settings.place = '*'`), that shelves every library in one hall, with no filters (not when every
   library is the demo set's, as on the GitHub Pages site, where it would be the Demo set again: a
   saved `'*'` opens the Demo set). Wikipedia
-  volumes keep their own order and sign there too. Likewise `DEMO_PLACE` (`settings.place =
+  volumes keep their own order and sign there too. `LOCAL_PLACE` (`settings.place = 'local'`,
+  "Opened here") shelves the libraries opened in this browser (ids starting with `~`, §2.6)
+  together once there are two or more; opening several files at once goes there, and `'*'` is
+  not offered when every library was opened here (a saved `'*'` opens this place). Likewise `DEMO_PLACE` (`settings.place =
   'demo'`, "Demo set") shelves the demo set's libraries together whenever at least one is present:
   those whose id is an entry of `DEMO_LIBRARIES` (`gutenberg_en_lcc-p_`,
   `wikipedia_en_mathematics_mini_`, `wikipedia_en_physics_mini_`, `wikipedia_en_chemistry_mini_`,

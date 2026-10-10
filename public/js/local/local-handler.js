@@ -35,7 +35,10 @@ export class LocalError extends Error {}
 export function createLocalLibraries({ log = () => {}, warn = log, store = null, onChange = null, onIndexing = null } = {}) {
   const libs = new Map(); // id → ArchiveLibrary
   const contentCache = createContentCache(CONTENT_CACHE_BYTES);
-  const indexQueue = new IndexQueue(); // index builds one at a time past 1 GB, smallest first
+  // Index builds one at a time, the smallest first, whatever their size: they share the worker's
+  // one thread, so at once each only ended later (six files opened together all waited for the
+  // last), while in turn the first is on the shelves in seconds.
+  const indexQueue = new IndexQueue({ smallBytes: 0 });
   let generation = 0;
 
   const lib = (id) => {
@@ -142,6 +145,7 @@ export function createLocalLibraries({ log = () => {}, warn = log, store = null,
       return { value: { bytes, mime: found.mime }, transfer: [bytes.buffer] };
     },
 
+    /** Closes a library: also stops its index build, running or waiting (a cancel). */
     async close({ lib: id }) {
       const l = libs.get(id);
       if (l) {
@@ -149,6 +153,20 @@ export function createLocalLibraries({ log = () => {}, warn = log, store = null,
         generation++;
         await l.close();
       }
+      return { value: true };
+    },
+
+    /**
+     * Starts no index build until release(): while a batch of files opens, so that the smallest
+     * of them is indexed first rather than the first opened (IndexQueue.hold).
+     */
+    async hold() {
+      indexQueue.hold();
+      return { value: true };
+    },
+
+    async release() {
+      indexQueue.release();
       return { value: true };
     },
   };

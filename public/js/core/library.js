@@ -687,10 +687,13 @@ export class ArchiveLibrary {
     });
   }
 
-  /** info().indexing, and open()'s onIndexing told (the local library's worker relays it to its page). */
+  /**
+   * info().indexing, and open()'s onIndexing told (the local library's worker relays it to its
+   * page); not once the library is closed (a cancelled build runs on until its next read fails).
+   */
   _setIndexing(info) {
     this._indexing = info;
-    this._onIndexing?.(info ? { ...info } : null);
+    if (!this._closed) this._onIndexing?.(info ? { ...info } : null);
   }
 
   // ------------------------------------------------------------------------------------------

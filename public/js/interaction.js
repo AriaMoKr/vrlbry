@@ -1489,7 +1489,10 @@ export class Interaction {
       this._highlightUntil = 0;
       this.tooltip.visible = false;
       const collections = collectionsFor(this.libraries, this.booksByLib, this.settings);
-      const built = this.world.build(collections, { sort: this.settings.sort });
+      // A room with no books yet because its libraries are being indexed says so.
+      const emptyText = !collections.length && this.libraries.some((l) => l.indexing)
+        ? ['Indexing…', 'The shelves fill as each library is ready'] : null;
+      const built = this.world.build(collections, { sort: this.settings.sort, emptyText });
       t.built = performance.now(); // the synchronous part: packing, geometry, signs
       await built; // the low atlases from the worker
       t.ready = performance.now();

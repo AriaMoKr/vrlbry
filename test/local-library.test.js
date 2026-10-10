@@ -224,6 +224,48 @@ describe('local library (ZIM files read in the browser)', () => {
     store.close();
   });
 
+  it('indexes files opened together one at a time, the smallest first; closing one stops its build', async () => {
+    provide(browser);
+    // Three Wikipedias of different sizes (padding), opened as a batch (local.js holds the queue).
+    const files = [['big', 3_000_000], ['small', 0], ['middle', 1_500_000], ['dropped', 500_000]]
+      .map(([name, pad]) => asFile(writeWikipediaZim(path.join(tmp, `wikipedia_${name}.zim`), pad).filePath));
+    const events = [];
+    const local = createLocalLibraries({ onIndexing: (id, info) => events.push({ id, stage: info?.stage ?? 'ready' }) });
+    await local.call('hold');
+    const ids = [];
+    for (const file of files) ids.push((await local.call('open', { file })).value.id);
+    assert.ok(events.every((e) => e.stage === 'queued'), 'nothing built while the batch opens');
+    // One closed while it waits: its build never starts.
+    await local.call('close', { lib: ids[3] });
+    await local.call('release');
+    await indexed(async () => (await local.call('catalog')).value.libraries.some((l) => l.indexing));
+    // In turn: each build ends before the next starts, the smallest first.
+    const started = [];
+    const active = new Set();
+    for (const e of events) {
+      if (e.stage === 'queued') continue;
+      if (e.stage === 'ready') active.delete(e.id);
+      else {
+        if (!active.has(e.id)) started.push(e.id);
+        active.add(e.id);
+      }
+      assert.ok(active.size <= 1, `two builds at once: ${[...active]}`);
+    }
+    assert.deepEqual(started, [ids[1], ids[2], ids[0]], 'small, middle, big');
+    assert.equal(events.some((e) => e.id === ids[3] && e.stage !== 'queued'), false, 'the closed one never built');
+    const libs = (await local.call('catalog')).value.libraries;
+    assert.deepEqual(libs.map((l) => l.id), ids.slice(0, 3));
+    assert.ok(libs.every((l) => l.bookCount === 1 && !l.indexing));
+    // Closed while its build runs: no word from it after the close.
+    const runner = asFile(writeWikipediaZim(path.join(tmp, 'wikipedia_runner.zim'), 4_000_000).filePath);
+    const { id } = (await local.call('open', { file: runner })).value;
+    const before = events.length;
+    await local.call('close', { lib: id });
+    await sleep(300);
+    assert.deepEqual(events.slice(before).filter((e) => e.id === id), [], 'silent once closed');
+    assert.equal((await local.call('catalog')).value.libraries.some((l) => l.id === id), false);
+  });
+
   it('skips the build when the site ships the index (prebuilt.js)', async () => {
     const file = writeWikipediaZim(path.join(tmp, 'wikipedia_prebuilt.zim')).filePath;
     // The index as the server (or tools/build-pages.mjs --indexes) builds it, in a folder.

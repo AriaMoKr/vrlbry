@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import { describe, it } from 'node:test';
 import { EXAMPLE_ZIM } from '../public/js/local/local.js';
 import {
-  ROOM_CAP, ALL_PLACE, DEMO_PLACE, DEMO_LIBRARIES, groupPlaces, isDemoLibrary, placeBookCount, isFaceted, facetsOf, inRoom, defaultRoom, roomFor, roomLabel, sameRoom, normRoom, shelfCollections, collectionsFor,
+  ROOM_CAP, ALL_PLACE, DEMO_PLACE, DEMO_LIBRARIES, LOCAL_PLACE, groupPlaces, isDemoLibrary, isLocalLibrary, placeBookCount, isFaceted, facetsOf, inRoom, defaultRoom, roomFor, roomLabel, sameRoom, normRoom, shelfCollections, collectionsFor,
   currentPlace, placeFor,
 } from '../public/js/rooms.js';
 
@@ -173,6 +173,30 @@ describe('rooms', () => {
     assert.equal(currentPlace(demo, books, settings), DEMO_PLACE, 'a saved all-libraries place opens the demo set');
     assert.equal(settings.place, DEMO_PLACE.id);
     assert.deepEqual(groupPlaces([...demo, { id: 'mine', kind: 'generic', title: 'Mine' }]), [DEMO_PLACE, ALL_PLACE]);
+  });
+
+  it('shelves the libraries opened here together, once there are two', () => {
+    const a = { id: '~gutenberg_en_lcc-p_2026-03', kind: 'gutenberg', title: 'P' };
+    const b = { id: '~wikipedia_en_chemistry_mini_2026-07', kind: 'wikipedia', title: 'Chemistry', articles: 9254 };
+    const server = { id: 'gutenberg_en_lcc-pe_2026-03', kind: 'gutenberg', title: 'PE' };
+    assert.equal(isLocalLibrary(a), true);
+    assert.equal(isLocalLibrary(server), false);
+    assert.equal(isDemoLibrary(b), false, 'a file opened here is not the demo set, even with its name');
+    assert.deepEqual(groupPlaces([a]), [], 'one file: its own room');
+    assert.deepEqual(groupPlaces([a, b]), [LOCAL_PLACE], 'no all-libraries place: it would be the same');
+    assert.deepEqual(groupPlaces([server, a, b]), [LOCAL_PLACE, ALL_PLACE]);
+    const vols = [1, 2].map((v) => ({ id: 'v' + v, title: 'Range ' + (3 - v), volume: v }));
+    const books = { [a.id]: pgBooks, [b.id]: vols, [server.id]: pgBooks };
+    const settings = { sort: 'title', place: LOCAL_PLACE.id };
+    assert.equal(currentPlace([server, a, b], books, settings), LOCAL_PLACE);
+    const cols = collectionsFor([server, a, b], books, settings);
+    assert.deepEqual(cols.map((c) => c.library.id), [a.id, b.id], 'both files, not the server\'s');
+    // A saved all-libraries place, where every library was opened here, is this place.
+    const all = { place: ALL_PLACE.id };
+    assert.equal(currentPlace([a, b], books, all), LOCAL_PLACE);
+    // Down to one file (the other closed): its room.
+    const one = { place: LOCAL_PLACE.id };
+    assert.equal(currentPlace([server, a], books, one).id, server.id, 'falls back as for a removed library');
   });
 
   it('shelves the demo set together when its libraries are here', () => {

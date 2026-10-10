@@ -12,7 +12,7 @@ import { load, save } from './util/storage.js';
 import { progressText } from './util/progress.js';
 import { handleStore, pickFiles, reopen, supportsHandles } from './local/handles.js';
 import { PLAYER, XR_FRAME_RATE } from './config.js';
-import { collectionsFor } from './rooms.js';
+import { collectionsFor, LOCAL_PLACE } from './rooms.js';
 import { perf } from './perf.js';
 import { copyText, debugReport, startErrorLog } from './debug-info.js';
 import { parseScene, restoreScene, saveScene, savedScene } from './scene.js';
@@ -281,11 +281,21 @@ async function start() {
       return [];
     }
     // Shown until every file is open (a big file on a Quest takes a while), with the seconds so
-    // far and, from the worker's progress, about how long is left; then the catalogue's "New
-    // library" toast follows.
+    // far and, from the worker's progress, about how long is left, and with several files a Stop
+    // that opens no more; then the catalogue's "New library" toast follows.
     const name = (f) => f.name || 'the ZIM file';
     let base = `Opening ${zims.length === 1 ? name(zims[0]) : `${zims.length} ZIM files`}…`;
-    const status = overlay.showToast(base, 'busy', Infinity);
+    let stop = false;
+    const status = overlay.showToast(base, 'busy', Infinity, zims.length > 1 ? {
+      action: {
+        label: 'Stop',
+        onClick: (btn) => {
+          stop = true;
+          btn.disabled = true;
+          btn.textContent = 'Stopping…';
+        },
+      },
+    } : {});
     const t0 = performance.now();
     let fraction = null;
     const tell = () => status.update(base + progressText(performance.now() - t0, fraction, { estimating: true }));
@@ -293,6 +303,7 @@ async function start() {
     let results;
     try {
       results = await localLibrary.openFiles(zims, {
+        stopped: () => stop,
         onFile: (file, i) => {
           if (zims.length > 1) {
             base = `Opening ${name(file)} (${i + 1} of ${zims.length})…`;
@@ -303,12 +314,13 @@ async function start() {
           fraction = f;
           status.progress(f);
         },
-        // Its title for its indexing toast, as soon as this one file is open.
+        // Its title for its index build's row, as soon as this one file is open.
         onOpened: (r) => {
-          const t = r.id && indexingToasts.get(r.id);
-          if (t && r.title && t.title !== r.title) {
-            t.title = r.title;
-            tellIndexing(t);
+          const b = r.id && builds.get(r.id);
+          if (b && r.title) {
+            b.title = r.title;
+            b.file = r.name;
+            renderBuilds();
           }
         },
       });
@@ -319,22 +331,25 @@ async function start() {
     for (const r of results) {
       if (r.error) overlay.showToast(r.error, 'error', 9000);
     }
-    // A toast for each build still under way. Not from the open's own snapshot alone: files open
-    // one after another, and a small file's build often ends while the next ones open (its
-    // toast then never heard from the worker again and stood at 0 % for good).
+    const skipped = results.filter((r) => r.skipped).length;
+    if (skipped) overlay.showToast(`Stopped: ${skipped} file${skipped === 1 ? '' : 's'} not opened.`, 'info', 5000);
+    // A row for each build still under way. Not from the open's own snapshot alone: files open
+    // one after another, and a small file's build may end while the next ones open (a toast for
+    // it then never heard from the worker again and stood at 0 % for good, issue #1).
     for (const r of results) {
       if (!r.id || !r.indexing) continue;
       const seen = indexingSeen.get(r.id);
-      if (seen !== 'done') showIndexing(r.id, r.title, seen ?? r.indexing);
+      if (seen !== 'done') trackIndexing(r.id, r.title, seen ?? r.indexing, r.name);
     }
     // Remembered (their handles kept), to be reopened after a reload: the ones that opened.
     const keep = picked.filter((p, i) => p.handle && results[i]?.id).map((p) => p.handle);
     if (keep.length) rememberFiles(keep);
     const added = results.filter((r) => r.id);
     if (added.length) {
-      // Shelve the (first) new library: the catalogue's rebuild goes to its room.
+      // Shelve the new library, or the files opened here together when there are several: the
+      // catalogue's rebuild goes to that room.
       if (interaction.state === 'browse') {
-        settings.place = added[0].id;
+        settings.place = added.length > 1 ? LOCAL_PLACE.id : added[0].id;
         save('settings', settings);
       }
       await applyCatalog(await getCatalog());
@@ -367,41 +382,68 @@ async function start() {
     });
     fileHandles.list().then((entries) => overlay.setRemembered(entries.map((e) => e.name))).catch(() => {});
   }
-  // A toast per local library whose index is being built (a Wikipedia or Wikisource file: a big
-  // one takes minutes on a headset): the stage, the time so far and about how long is left, with
-  // a bar, until the index is ready (the worker says: local.onIndexing) or the build fails.
-  const indexingToasts = new Map(); // lib id → { toast, t0, title, info }
-  const indexingSeen = new Map(); // lib id → what the worker last said: { stage, progress }, or 'done' (ready or failed)
-  function showIndexing(id, title, info) {
-    let t = indexingToasts.get(id);
+  // The index builds of local libraries (a Wikipedia or Wikisource file: a big one takes minutes
+  // on a headset), in one status box at the page's foot that collapses to its summary line
+  // (overlay.setIndexing): a row per file with its bar, the time so far and about how long is
+  // left, and a × that stops it and closes the file. The worker builds them one at a time, the
+  // smallest first ("waiting" meanwhile), and says how each goes (local.onIndexing).
+  const builds = new Map(); // lib id → { title, file, info, t0 (when it started, not while waiting) }
+  let buildsReady = 0; // finished since the box appeared, for its summary and overall bar
+  const indexingSeen = new Map(); // lib id → what the worker last said: { stage, progress }, or 'done' (ready, failed or closed)
+  function trackIndexing(id, title, info, file) {
     if (!info || info.done || info.stage === 'failed') {
-      if (t) {
-        t.toast.close();
-        indexingToasts.delete(id);
-      }
+      if (builds.delete(id) && !info?.error) buildsReady++;
       if (info?.stage === 'failed') overlay.showToast(`Could not index ${title}: ${info.error}`, 'error', 9000);
-      return;
+      return renderBuilds();
     }
-    if (!t) {
-      t = { toast: overlay.showToast('', 'busy', Infinity), t0: performance.now(), title };
-      indexingToasts.set(id, t);
+    let b = builds.get(id);
+    if (!b) builds.set(id, b = { title, file, t0: null });
+    if (title && title !== id) b.title = title;
+    if (file) b.file = file;
+    if (info.stage !== 'queued') b.t0 ??= performance.now();
+    b.info = info;
+    renderBuilds();
+  }
+  function renderBuilds() {
+    if (!builds.size) {
+      buildsReady = 0;
+      return overlay.setIndexing(null);
     }
-    if (title !== id) t.title = title; // the first progress can come before the open answers with the title
-    t.info = info;
-    tellIndexing(t);
+    const rows = [...builds].map(([id, b]) => {
+      const waiting = b.info.stage === 'queued';
+      const time = b.t0 === null ? '' : progressText(performance.now() - b.t0, b.info.progress, { estimating: true }).replace(/^ · /, '');
+      return { id, title: b.title, waiting, fraction: waiting ? 0 : b.info.progress, line: waiting ? 'waiting' : time || 'starting' };
+    });
+    const now = rows.find((r) => !r.waiting);
+    const waiting = rows.filter((r) => r.waiting).length;
+    const summary = rows.length === 1
+      ? `Indexing ${rows[0].title}${now ? ` · ${now.line}` : ' · waiting'}`
+      : `Indexing ${rows.length} files${buildsReady ? ` · ${buildsReady} ready` : ''}${now ? ` · ${now.title}: ${now.line}` : ''}${waiting ? ` · ${waiting} waiting` : ''}`;
+    const fraction = (buildsReady + rows.reduce((s, r) => s + r.fraction, 0)) / (buildsReady + rows.length);
+    overlay.setIndexing({ summary, fraction, rows });
   }
-  function tellIndexing(t) {
-    const waiting = t.info.stage === 'queued';
-    t.toast.update(`${waiting ? 'Waiting to index' : 'Indexing'} ${t.title}…`
-      + progressText(performance.now() - t.t0, waiting ? null : t.info.progress, { estimating: !waiting }));
-    if (!waiting) t.toast.progress(t.info.progress);
-  }
-  setInterval(() => { for (const t of indexingToasts.values()) tellIndexing(t); }, 1000);
+  setInterval(() => { if (builds.size) renderBuilds(); }, 1000);
+  const cancelled = new Set(); // lib ids closed with a row's ×: their builds' last words are ignored
   localLibrary.onIndexing(({ id, file, ...info }) => {
+    if (cancelled.has(id)) return;
     indexingSeen.set(id, info.done || info.stage === 'failed' ? 'done' : info);
     // Before its open answers, a build is named by its file.
-    const title = indexingToasts.get(id)?.title ?? libraries.find((l) => l.id === id)?.title ?? (file ? file.replace(/\.zim$/i, '') : id);
-    showIndexing(id, title, info);
+    const title = builds.get(id)?.title ?? libraries.find((l) => l.id === id)?.title ?? (file ? file.replace(/\.zim$/i, '') : id);
+    trackIndexing(id, title, info, file);
+  });
+  // A row's ×: stop that build and close the file (and forget it for "Reopen").
+  overlay.onIndexingCancel(async (id) => {
+    const b = builds.get(id);
+    cancelled.add(id);
+    indexingSeen.set(id, 'done');
+    builds.delete(id);
+    renderBuilds();
+    await localLibrary.close(id).catch(() => {});
+    if (b?.file && fileHandles) {
+      await fileHandles.forget(b.file).catch(() => {});
+      fileHandles.list().then((entries) => overlay.setRemembered(entries.map((e) => e.name))).catch(() => {});
+    }
+    await refreshCatalog();
   });
   // A new version of the site (a deploy, or edited client files) means this page runs old code, and
   // new data may need the new code: a page left open across a deploy once took a new ZIM into the

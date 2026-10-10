@@ -130,7 +130,15 @@ export class Overlay {
         <button class="ov-update-never">Don't show again</button>
         <button class="ov-update-close" aria-label="Dismiss" title="Dismiss">×</button>
       </div>
-      <div class="ov-toasts" aria-live="polite"></div>`;
+      <div class="ov-toasts" aria-live="polite"></div>
+      <section class="ov-status" aria-label="Indexing" hidden>
+        <div class="ov-status-head">
+          <span class="ov-status-text" role="status"></span>
+          <button class="ov-status-toggle" aria-expanded="false" title="Show each file">▸</button>
+        </div>
+        <div class="ov-toast-bar"><div></div></div>
+        <ul class="ov-status-rows" hidden></ul>
+      </section>`;
     this.$ = (sel) => root.querySelector(sel);
     this.$('.ov-collapse').onclick = () => this.setCardCollapsed(!this.$('.ov-card').classList.contains('collapsed'));
     // A minimized library card stays minimized when the page is reloaded.
@@ -157,6 +165,17 @@ export class Overlay {
     };
     this.$('.ov-reopen-btn').onclick = () => this._reopen?.();
     this.$('.ov-reopen-forget').onclick = () => this._forget?.();
+    // The index builds' status box: its rows shown or not (remembered).
+    this._statusOpen = load('statusOpen', false) === true;
+    this.$('.ov-status-toggle').onclick = () => {
+      this._statusOpen = !this._statusOpen;
+      save('statusOpen', this._statusOpen);
+      this._renderStatus();
+    };
+    this.$('.ov-status-rows').onclick = (e) => {
+      const btn = e.target.closest('.ov-status-cancel');
+      if (btn) this._cancelIndexing?.(btn.dataset.id);
+    };
     const hasFiles = (e) => [...(e.dataTransfer?.types ?? [])].includes('Files');
     let dragDepth = 0;
     document.addEventListener('dragenter', (e) => {
@@ -334,6 +353,41 @@ export class Overlay {
   onRescan(cb) { this._rescan = cb; }
 
   /** cb(files): ZIM files picked or dropped, to open in the browser (main.js openLocalFiles). */
+  /**
+   * The index builds of the files opened here (a Wikipedia or Wikisource file), in one box at the
+   * page's foot that a toggle collapses to its summary line, rather than a toast each (six of
+   * them covered the view). null hides it.
+   * @param {{ summary: string, fraction: number, rows: Array<{ id: string, title: string, line: string, fraction: number, waiting: boolean }> } | null} status
+   */
+  setIndexing(status) {
+    this._status = status;
+    this._renderStatus();
+  }
+
+  /** fn(libId): the × of a build's row (stop it and close that file). */
+  onIndexingCancel(fn) { this._cancelIndexing = fn; }
+
+  _renderStatus() {
+    const box = this.$('.ov-status');
+    const s = this._status;
+    box.hidden = !s;
+    if (!s) return;
+    const pct = (f) => `${Math.round(Math.min(1, Math.max(0, f)) * 100)}%`;
+    this.$('.ov-status-text').textContent = s.summary;
+    this.$('.ov-status > .ov-toast-bar > div').style.width = pct(s.fraction);
+    const toggle = this.$('.ov-status-toggle');
+    toggle.textContent = this._statusOpen ? '▾' : '▸';
+    toggle.setAttribute('aria-expanded', String(this._statusOpen));
+    toggle.title = this._statusOpen ? 'Hide the files' : 'Show each file';
+    const list = this.$('.ov-status-rows');
+    list.hidden = !this._statusOpen;
+    if (!this._statusOpen) return;
+    list.innerHTML = s.rows.map((r) => `<li class="${r.waiting ? 'waiting' : ''}">
+      <div class="ov-status-row"><span class="ov-status-title">${esc(r.title)}</span><span class="ov-status-line">${esc(r.line)}</span>
+        <button class="ov-status-cancel" data-id="${esc(r.id)}" title="Stop and close this file" aria-label="Stop and close ${esc(r.title)}">×</button></div>
+      <div class="ov-toast-bar"><div style="width:${pct(r.fraction)}"></div></div></li>`).join('');
+  }
+
   /** cb(files, handles): ZIM files picked or dropped (handles: the File System Access API's, or null each). */
   onOpenFiles(cb) { this._openFiles = cb; }
   /** fn() → { files, handles } | null: the handle-giving picker the Open button uses when set. */
@@ -438,13 +492,21 @@ export class Overlay {
   /**
    * A short message at the bottom of the page for `ms`, or with Infinity until close(): for work
    * under way, with kind 'busy' (a spinner) and progress(fraction) (a bar, from its first call).
+   * With `action` ({ label, onClick }) it carries a button (the toasts are otherwise click-through).
    * @returns {{ update: (msg: string) => void, progress: (fraction: number) => void, close: () => void }}
    */
-  showToast(msg, kind = 'info', ms = 3500) {
+  showToast(msg, kind = 'info', ms = 3500, { action = null } = {}) {
     const t = document.createElement('div');
     t.className = `ov-toast ${kind}`;
     const text = document.createTextNode(msg);
     t.append(text);
+    if (action) {
+      const btn = document.createElement('button');
+      btn.className = 'ov-toast-action';
+      btn.textContent = action.label;
+      btn.onclick = () => action.onClick(btn);
+      t.append(btn);
+    }
     this.$('.ov-toasts').appendChild(t);
     let bar = null;
     let closed = false;
