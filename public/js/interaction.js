@@ -13,6 +13,7 @@ import { load, save } from './util/storage.js';
 import { progressText } from './util/progress.js';
 import { isLocal } from './local/local.js';
 import { resolveLink } from './api.js';
+import { makeRoom } from './world/room-ahead.js';
 import { KINDS as KIWIX_KINDS, indexLabel, sizeText } from './local/kiwix.js';
 import { letterOf, SORT_MODES, inTitleOrder, thumbIndex } from './util/books.js';
 import { PAGE_PX, READ } from './config.js';
@@ -33,6 +34,9 @@ const OPENING_BAR_MS = 200; // the opening progress bar's repaints, at most one 
 const LINK_MARKS = 4; // lines of a link that the hover band covers
 
 const _plane = new THREE.Plane();
+const _from = new THREE.Vector3();
+const _toward = new THREE.Vector3();
+const _ray = new THREE.Ray();
 const _onPlane = new THREE.Vector3();
 const _normal = new THREE.Vector3();
 
@@ -949,6 +953,8 @@ export class Interaction {
         }
       }
       if (pressed && name === 'a' && this.state === 'inspect') this.read();
+      // A thumbstick press (walking is off while a book is out): the book in front of the eyes.
+      if (pressed && name === 'stick' && (this.state === 'inspect' || this.state === 'read')) this.bookToFront();
     });
     c.addEventListener('key', (e) => {
       if (e.detail.pressed) this._key(e.detail);
@@ -1070,6 +1076,10 @@ export class Interaction {
 
   _key({ key, code, text }) {
     if (this.state === 'busy') return;
+    if (key === 'Home' && !text) {
+      this.resetView();
+      return;
+    }
     if (text && this.state === 'browse') {
       if (key === 'Escape') this._focusSearch(false);
       else if (key === 'Enter') this._openFirstSearchResult();
@@ -1087,11 +1097,13 @@ export class Interaction {
         if (this.tocPanel.visible) this.toggleToc(false);
         else this.closeBook();
       } else if (code === 'KeyT' || code === 'KeyC') this.toggleToc();
+      else if (code === 'KeyF') this.bookToFront();
       else if (code === 'KeyN') this.cycleTheme();
     } else if (this.state === 'inspect') {
       if (key === 'Enter' || key === ' ') {
         if (this.book.readable) this.read();
       } else if (key === 'Escape' || key === 'Backspace') this.putBack();
+      else if (code === 'KeyF') this.bookToFront();
     } else if (this.state === 'opening' && (key === 'Escape' || key === 'Backspace')) {
       this._cancelOpening?.();
     }
@@ -1154,6 +1166,8 @@ export class Interaction {
     this._setHover(null);
     this.controls.locomotionEnabled = false;
     const tr = this.world.shelves.getBookTransform(book);
+    // Room for it and its panel first: close to a bookcase they ended behind its back board.
+    const k = await this._makeRoom(this._inspectOffsets(tr.dims));
     this.world.shelves.hideBook(book);
     this.book = book;
     const b3 = new Book3D({ book, dims: tr.dims, spineCanvas: this.world.shelves.makeSpineCanvas(book), renderer: this.renderer });
@@ -1168,15 +1182,13 @@ export class Interaction {
     const out = new THREE.Vector3(-1, 0, 0).applyQuaternion(tr.quaternion).multiplyScalar(tr.dims.d * 0.9);
     await this._fly(b3.group, tr.position.clone().add(out), tr.quaternion, 1, 0.28, 0);
 
-    const { eye, fwd, right } = this._viewerFrame();
-    const target = eye.clone().addScaledVector(fwd, 0.62).addScaledVector(right, -0.12);
-    target.y = eye.y - 0.16;
+    const { target, quat: face } = this._inspectPose(k);
     this.holder.position.copy(target);
-    this.holder.quaternion.copy(this._faceQuat(target, eye));
-    this.holder.scale.setScalar(1);
+    this.holder.quaternion.copy(face);
+    this.holder.scale.setScalar(k); // nearer to make room: smaller too, so it looks the same
     this.holder.updateMatrixWorld(true);
     const quat = this.holder.quaternion.clone().multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -0.12));
-    await this._fly(b3.group, target, quat, 1.25, 0.6, 0.1);
+    await this._fly(b3.group, target, quat, 1.25 * k, 0.6, 0.1);
     this.holder.attach(b3.group);
 
     this._fillInspect(book);
@@ -1185,6 +1197,7 @@ export class Interaction {
     p.mesh.rotation.set(0, -0.25, 0);
     p.visible = true;
     this.state = 'inspect';
+    this.overlay?.setBookOut?.(true);
   }
 
   /** Returns the book to its shelf (keepTrail: a link leads to another book: back() returns). */
@@ -1221,6 +1234,7 @@ export class Interaction {
     this.book = null;
     this.state = 'browse';
     this.controls.locomotionEnabled = true;
+    this.overlay?.setBookOut?.(false);
     if (this._pendingCatalog) await this._rebuildWorld(); // a rescan arrived while reading
     else this._fillKiosk(); // refresh "recently read"
   }
@@ -1280,35 +1294,28 @@ export class Interaction {
     this.state = 'busy';
     this.inspectPanel.visible = false;
 
-    // Reading pose: in front of the eyes, a little below, facing them. On a flat screen the book
-    // sits higher and further so that it and its toolbar fit the (narrower) field of view.
+    // Reading pose (_readingPose): in front of the eyes, a little below, facing them, with room for
+    // the spread and its toolbar made first (_makeRoom: nearer and smaller by k when needed).
+    const pose = this._readingPose();
+    this._readScale = b3.readingScale * (this.settings.readScale || 1);
+    const k = await this._makeRoom(this._readOffsets(pose, this._readScale));
     const { eye, fwd } = this._viewerFrame();
-    const flat = !this.controls.presenting;
-    let dist = this.settings.readDistance || READ.distance;
-    if (flat) {
-      // Far enough that the whole spread fits the screen's width (portrait phones) and height.
-      const half = READ.pageWidth * (this.settings.readScale || 1) * 1.06;
-      const vt = Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2));
-      const fitW = half / (vt * this.camera.aspect);
-      const fitH = (half * 1.45 * 0.5 + 0.36) / vt;
-      dist = Math.max(0.64, fitW, fitH);
-    }
-    const target = eye.clone().addScaledVector(fwd, dist);
-    target.y = eye.y - (flat ? 0.04 : READ.drop);
-    if (flat) this.controls.pitch = 0;
+    const target = eye.clone().addScaledVector(fwd, pose.dist * k);
+    target.y = eye.y - pose.drop * k;
+    if (pose.flat) this.controls.pitch = 0;
     this.overlay?.setReading(true);
     const quat = this._faceQuat(target, eye);
     this.scene.attach(b3.group);
     this.holder.position.copy(target);
     this.holder.quaternion.copy(quat);
+    this.holder.scale.setScalar(k);
     this.holder.updateMatrixWorld(true);
-    this._readScale = b3.readingScale * (this.settings.readScale || 1);
     // The cover swings open around a fixed spine at the spread centre, so the closed book lands
     // on the right half of where the spread will be.
     b3.centerWhenOpen = false;
     const half = (b3.dims.d / 2) * this._readScale;
-    const flyTarget = target.clone().addScaledVector(new THREE.Vector3(1, 0, 0).applyQuaternion(quat), half);
-    await this._fly(b3.group, flyTarget, quat, this._readScale, 0.5, 0.05);
+    const flyTarget = target.clone().addScaledVector(new THREE.Vector3(1, 0, 0).applyQuaternion(quat), half * k);
+    await this._fly(b3.group, flyTarget, quat, this._readScale * k, 0.5, 0.05);
     this.holder.attach(b3.group);
     b3.group.position.set(half, 0, 0);
     b3.group.quaternion.identity();
@@ -1322,6 +1329,165 @@ export class Interaction {
     this.toolbar.visible = true;
     this.state = 'read';
     this._afterTurn();
+  }
+
+  /**
+   * How far in front of the eyes (and below them) an open book sits: in a headset the distance
+   * chosen with the stick (settings.readDistance); on a flat screen far enough that the whole
+   * spread fits the screen's width (portrait phones) and height, a little higher.
+   * @returns {{ dist: number, drop: number, flat: boolean }}
+   */
+  _readingPose() {
+    const flat = !this.controls.presenting;
+    let dist = this.settings.readDistance || READ.distance;
+    if (flat) {
+      const half = READ.pageWidth * (this.settings.readScale || 1) * 1.06;
+      const vt = Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2));
+      const fitW = half / (vt * this.camera.aspect);
+      const fitH = (half * 1.45 * 0.5 + 0.36) / vt;
+      dist = Math.max(0.64, fitW, fitH);
+    }
+    return { dist, drop: flat ? 0.04 : READ.drop, flat };
+  }
+
+  /** Points of a pose (holder-local [x, y, z]) placed at `target` facing the eyes, as vectors from them. */
+  _poseOffsets(eye, target, locals) {
+    const quat = this._faceQuat(target, eye);
+    return locals.map(([x, y, z]) => new THREE.Vector3(x, y, z).applyQuaternion(quat).add(target).sub(eye));
+  }
+
+  /** The book in hand and its info panel (pick), `k` nearer: { eye, target, quat }. */
+  _inspectPose(k = 1) {
+    const { eye, fwd, right } = this._viewerFrame();
+    const target = eye.clone().addScaledVector(fwd, 0.62 * k).addScaledVector(right, -0.12 * k);
+    target.y = eye.y - 0.16 * k;
+    return { eye, target, quat: this._faceQuat(target, eye) };
+  }
+
+  /** Points of the inspect pose (its centre first, the cover's corners, the info panel's). */
+  _inspectOffsets(dims) {
+    const { eye, target } = this._inspectPose();
+    const bw = dims.d * 0.625; // the cover (1.25 ×), half
+    const bh = dims.h * 0.625;
+    const px = dims.d * 0.62 + 0.21; // the panel (0.36 × 0.41 m) beside it
+    return this._poseOffsets(eye, target, [
+      [0, 0, 0], [-bw, -bh, 0], [bw, -bh, 0], [-bw, bh, 0], [bw, bh, 0],
+      [px + 0.18, -0.19, 0.02], [px + 0.18, 0.23, 0.02],
+    ]);
+  }
+
+  /** Points of the reading pose (the spread's centre first, its corners, the toolbar's foot). */
+  _readOffsets({ dist, drop }, scale) {
+    const { eye, fwd } = this._viewerFrame();
+    const target = eye.clone().addScaledVector(fwd, dist);
+    target.y = eye.y - drop;
+    const { w, h } = this.book3d.pageSize;
+    const sw = w * scale;
+    const sh = (h * scale) / 2;
+    return this._poseOffsets(eye, target, [
+      [0, 0, 0], [-sw, -sh, 0], [sw, -sh, 0], [-sw, sh, 0], [sw, sh, 0],
+      [-0.33, -sh - 0.15, 0.05], [0.33, -sh - 0.15, 0.05],
+    ]);
+  }
+
+  /**
+   * Distance from `e` along `o`'s direction to a wall, furniture or a bookcase (Infinity: none).
+   * A bookcase counts as a closed box: a book held inside its open front was hidden by its boards.
+   */
+  _obstacle(e, o) {
+    _from.set(e.x, e.y, e.z);
+    _toward.set(o.x, o.y, o.z).normalize();
+    _ray.set(_from, _toward);
+    return Math.min(this.world.raycastSolid(_ray), this.world.shelves.boxDistance(_ray));
+  }
+
+  /**
+   * Makes room in front of the viewer for something about to be placed there (`offsets`: its
+   * points as vectors from the eyes, room-ahead.js): steps the viewer back where something stands
+   * too near (and they can stand), and returns how much nearer (k ≤ 1) it must come for the rest.
+   */
+  async _makeRoom(offsets) {
+    const eye = this.camera.getWorldPosition(new THREE.Vector3());
+    const feet = this.controls.viewerPosition(new THREE.Vector3());
+    const back = this.camera.getWorldDirection(new THREE.Vector3()).setY(0);
+    if (back.lengthSq() < 1e-6) back.set(0, 0, -1);
+    back.normalize().negate();
+    const t0 = performance.now();
+    const room = makeRoom({
+      eye, feet, dir: back, offsets,
+      // In a headset nearer is tiring to focus on; a flat screen can show it close.
+      nearest: this.controls.presenting ? 0.25 : 0.12,
+      free: (e, o) => this._obstacle(e, o),
+      canStand: (x, z) => this.world.isWalkable(x, z),
+      inRoom: (x, z) => this.world.room?.walkable(x, z) ?? true,
+    });
+    perf.event('room', { t: t0, ms: performance.now() - t0, back: room.back, k: room.k });
+    if (room.back > 0) await this._stepBack(back.multiplyScalar(room.back));
+    return room.k;
+  }
+
+  /** Moves the viewer by `delta` (horizontal): a short glide; in a headset a quick fade instead. */
+  async _stepBack(delta) {
+    const C = this.controls;
+    const from = C.viewerPosition(new THREE.Vector3());
+    const to = from.clone().add(delta);
+    if (C.presenting) {
+      await this._fadeTo(1, 0.12);
+      C.teleportTo(to);
+      await this._fadeTo(0, 0.2);
+    } else {
+      const at = new THREE.Vector3();
+      await this._tween(0.3, (t) => C.teleportTo(at.lerpVectors(from, to, easeInOut(t))));
+    }
+  }
+
+  /**
+   * Brings the book that is out, with its panels, in front of the viewer again (F, a thumbstick
+   * press, the help dialog): where it was taken out or opened, room made as then.
+   */
+  async bookToFront() {
+    const state = this.state;
+    if ((state !== 'inspect' && state !== 'read') || this._turnBusy || this._following || !this.book3d) return;
+    this.state = 'busy';
+    this._markLink(null);
+    try {
+      let target;
+      let quat;
+      let k;
+      if (state === 'inspect') {
+        k = await this._makeRoom(this._inspectOffsets(this.book3d.dims));
+        ({ target, quat } = this._inspectPose(k));
+      } else {
+        const pose = this._readingPose();
+        k = await this._makeRoom(this._readOffsets(pose, this._readScale));
+        const { eye, fwd } = this._viewerFrame();
+        target = eye.clone().addScaledVector(fwd, pose.dist * k);
+        target.y = eye.y - pose.drop * k;
+        quat = this._faceQuat(target, eye);
+        if (pose.flat) this.controls.pitch = 0;
+      }
+      await this._fly(this.holder, target, quat, k, 0.4, 0.02);
+    } finally {
+      this.state = state;
+    }
+  }
+
+  /**
+   * Back to the start (Home, the help dialog's Reset view): a book that is out goes back on its
+   * shelf, the viewer stands at the entrance looking into the room, level, and the reading
+   * distance and size are as they first were.
+   */
+  async resetView() {
+    if (this.state === 'opening') this._cancelOpening?.();
+    for (let i = 0; i < 200 && (this.state === 'busy' || this.state === 'opening'); i++) await new Promise((r) => setTimeout(r, 25));
+    if (this.state === 'inspect' || this.state === 'read') await this.putBack();
+    if (this.state !== 'browse') return;
+    this.settings.readDistance = READ.distance;
+    this.settings.readScale = 1;
+    save('settings', this.settings);
+    this._focusSearch(false);
+    const { position, yaw } = this.world.spawn;
+    this.controls.setViewpoint({ x: position.x, z: position.z, yaw, pitch: 0 });
   }
 
   _placeReadingPanels() {

@@ -656,6 +656,28 @@ export class Bookshelves {
     return best;
   }
 
+  /**
+   * Distance along a world ray to the nearest bookcase taken as a closed box, its open front
+   * included (0 from inside one), or Infinity: where something held out in front of the eyes
+   * must not be (raycast lets a ray into the opening, onto the books and the back board). Only
+   * bookcases within `reach` metres of the ray's origin are looked at.
+   * @param {THREE.Ray} worldRay
+   */
+  boxDistance(worldRay, reach = 3) {
+    let best = Infinity;
+    const ray = this._ray;
+    const at = this._tmp;
+    const r2 = (reach + BOOKCASE.width) ** 2;
+    for (const cs of this.cases) {
+      if (cs.group.position.distanceToSquared(worldRay.origin) > r2) continue;
+      this._inv.copy(cs.group.matrixWorld).invert();
+      ray.copy(worldRay).applyMatrix4(this._inv);
+      if (cs.box.containsPoint(ray.origin)) return 0;
+      if (ray.intersectBox(cs.box, at)) best = Math.min(best, ray.origin.distanceTo(at));
+    }
+    return best;
+  }
+
   /** World transform of a book in its slot (Book3D frame: spine −X, front cover +Z). */
   getBookTransform(book) {
     const rec = this._rec(book);

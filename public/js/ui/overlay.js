@@ -39,6 +39,8 @@ const HELP = {
     ['Read', 'Click the book or “Read” · turn pages with ← → / Space / click a page'],
     ['Text size', '+ / − or the A− A+ buttons'],
     ['Put it back', 'Esc or “Put back”'],
+    ['Book out of sight', 'F, or “Bring the book in front of me” below'],
+    ['Back to the start', 'Home, or “Reset view” below'],
     ['Search', 'The box at the top, or type on the catalogue stand’s Search tab (Esc to stop typing)'],
   ],
   touch: [
@@ -47,6 +49,7 @@ const HELP = {
     ['Take a book', 'Tap it on the shelf'],
     ['Read', 'Tap “Read” · swipe or tap the page edges to turn'],
     ['Put it back', 'Tap “Put back”'],
+    ['Book out of sight', '“Bring the book in front of me” below'],
   ],
   gamepad: [
     ['Look around', 'Right stick'],
@@ -64,6 +67,7 @@ const HELP = {
     ['Read', 'Flick the right stick or trigger a page to turn · grip to move the book'],
     ['Book distance / size', 'Right stick up/down · left stick up/down'],
     ['Close / put back', 'B or Y button'],
+    ['Book out of sight', 'Press a thumbstick: it comes in front of you'],
     ['Leave VR', 'Hold B or Y for a second while browsing, or “Exit VR” on the catalogue stand'],
   ],
 };
@@ -126,6 +130,11 @@ export class Overlay {
         <div class="ov-help-inner">
           <header><h2>How to use the library</h2><button class="ov-help-close" aria-label="Close">×</button></header>
           <div class="ov-help-body"></div>
+          <div class="ov-view">
+            <button class="ov-view-book" hidden>Bring the book in front of me</button>
+            <button class="ov-view-reset">Reset view</button>
+            <span class="ov-view-note">Back to the start, looking into the room; a book that is out goes back on its shelf.</span>
+          </div>
           <label class="ov-update-pref"><input type="checkbox" checked> Tell me when this site has been updated</label>
           <footer class="ov-debug">
             <div><button class="ov-debug-btn">Copy debug info</button><span class="ov-debug-note">Something wrong? Copy this and paste it into your bug report.</span></div>
@@ -251,6 +260,15 @@ export class Overlay {
       if (e.target === this.$('.ov-help')) this.showHelp(false);
     };
     this.$('.ov-vr').onclick = () => this._enterVR?.();
+    // Both close the dialog first: what they do is to be seen behind it.
+    this.$('.ov-view-reset').onclick = () => {
+      this.showHelp(false);
+      this._view?.reset();
+    };
+    this.$('.ov-view-book').onclick = () => {
+      this.showHelp(false);
+      this._view?.toFront();
+    };
     this.$('.ov-debug-btn').onclick = () => this._debug?.();
     this.$('.ov-scene-save').onclick = () => this._scene?.save();
     this.$('.ov-scene-restore').onclick = () => this._scene?.restore();
@@ -305,6 +323,12 @@ export class Overlay {
 
   /** cb() for "Copy debug info" (help dialog, error screen); it calls showDebugInfo. */
   onDebugInfo(cb) { this._debug = cb; }
+
+  /** Handlers of the help dialog's view buttons: { reset(), toFront() }. */
+  onView(handlers) { this._view = handlers; }
+
+  /** A book is out (in hand or open): the help dialog offers to bring it in front of the eyes. */
+  setBookOut(on) { this.$('.ov-view-book').hidden = !on; }
 
   /** Handlers of the help dialog's scene buttons: { save(), restore(), restoreText(text) }. */
   onScene(handlers) { this._scene = handlers; }

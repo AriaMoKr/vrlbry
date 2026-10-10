@@ -1375,7 +1375,21 @@ States: `browse` → `inspect` → `opening` → `read` (and back), plus `busy` 
 - **browse:** pointers raycast shelves + panels. Hover a book → `shelves.setHighlight`, tooltip
   panel near the book with title / author. Select → book leaves its slot (`hideBook`, a `Book3D`
   at its slot transform) and flies (~0.5 s ease) to ~0.45 m in front of the viewer at chest height,
-  turning to show the cover → **inspect**.
+  turning to show the cover → **inspect**. **Room first** (`world/room-ahead.js` `makeRoom`): the
+  book and its info panel (and, when it opens, the spread and its toolbar) must come before
+  whatever stands ahead: rays from the eyes to their corners, against the room's walls and
+  furniture (`world.raycastSolid`) and the bookcases taken as closed boxes, open fronts included
+  (`shelves.boxDistance`: through the open front a book ended inside the bookcase, hidden by its
+  boards, with the buttons that would put it back). Where something is nearer than they would be
+  (+5 cm), the viewer steps back first, just far enough, to a spot they can stand on without
+  crossing a wall (a 0.3 s glide; a quick fade in a headset); what still does not fit comes
+  nearer as a whole, the holder scaled with it so it looks the same (down to 0.12 m on a flat
+  screen, 0.25 m in a headset).
+  **The book in front of me** (F, a thumbstick press while a book is out, the help dialog's
+  button): the book and its panels come in front of the eyes again, room made as above.
+  **Reset view** (Home, the help dialog): a book that is out goes back on its shelf, the viewer
+  stands at the spawn point looking into the room, level, and the reading distance and size are
+  as they first were.
 - **inspect:** info panel beside the book: title, subtitle, author, library, "Read" /
   "Continue (p. N)" / "Put back" buttons. In XR the book can be grabbed with squeeze and turned
   in the hand (bonus). Select on the book or "Read" → **opening** → **read**. "Put back"/B/Esc →

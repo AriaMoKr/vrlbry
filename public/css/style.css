@@ -112,6 +112,10 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .ov-help dl { display: grid; grid-template-columns: minmax(110px, auto) 1fr; gap: 6px 14px; margin: 0; }
 .ov-help dt { font-weight: 600; }
 .ov-help dd { margin: 0; color: var(--muted); }
+.ov-view { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 14px; }
+.ov-view-book, .ov-view-reset { padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--accent); }
+.ov-view-book[hidden] { display: none; }
+.ov-view-note { color: var(--muted); font-size: 13px; }
 .ov-debug { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--line); }
 .ov-debug > div { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .ov-debug > div + div { margin-top: 8px; }

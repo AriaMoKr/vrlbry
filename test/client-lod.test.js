@@ -413,6 +413,20 @@ describe('pointer rays on the shelves', () => {
       shelves.dispose();
     }
   });
+
+  it('boxDistance: a bookcase as a closed box (where a book held out must not be), the near ones only', () => {
+    const shelves = shelvesWith(1);
+    const at = (origin, dir) => new THREE.Ray(new THREE.Vector3(...origin), new THREE.Vector3(...dir).normalize());
+    try {
+      // Its front (the open one too) 2 m ahead, less half its depth and the books' lip.
+      assert.ok(Math.abs(shelves.boxDistance(at([0, 1.2, -5], [0, 0, -1])) - (2 - D / 2 - 0.05)) < 1e-6);
+      assert.equal(shelves.boxDistance(at([0, 1.2, -7 + D / 2 - 0.015], [0, 0, 1])), 0, 'from inside the opening');
+      assert.equal(shelves.boxDistance(at([0, 1.2, -5], [0, 0, 1])), Infinity, 'looking away');
+      assert.equal(shelves.boxDistance(at([0, 1.2, 0], [0, 0, -1])), Infinity, 'too far to matter (7 m)');
+    } finally {
+      shelves.dispose();
+    }
+  });
 });
 
 describe('huge rooms (all libraries in one hall)', () => {

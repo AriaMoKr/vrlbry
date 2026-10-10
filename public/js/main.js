@@ -202,6 +202,7 @@ async function start() {
     },
   };
   overlay.onScene(sceneActions);
+  overlay.onView({ reset: () => interaction.resetView(), toFront: () => interaction.bookToFront() });
   interaction.onSaveScene = sceneActions.save;
   interaction.onRestoreScene = sceneActions.restore;
   showSaved();
