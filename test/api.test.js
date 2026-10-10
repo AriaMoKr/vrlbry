@@ -731,8 +731,10 @@ describe('CLI (server/index.js)', () => {
       app = await main(['--dir', dir, '--port', String(busy), '--host', '127.0.0.1'], {
         out: (m) => out.push(m), err: (m) => out.push(m), handleSignals: false,
       });
-      assert.equal(app.port, busy + 1);
-      assert.deepEqual(app.urls, [`http://127.0.0.1:${busy + 1}`]);
+      // The next free one: busy + 1, unless another test took that meanwhile (the suite runs
+      // its files at once, each on free ports).
+      assert.ok(app.port > busy && app.port <= busy + 10, `moved on from ${busy} to ${app.port}`);
+      assert.deepEqual(app.urls, [`http://127.0.0.1:${app.port}`]);
       const text = out.join('\n');
       assert.match(text, new RegExp(`Port ${busy} is in use`));
       assert.match(text, /cli\.zim\s+—\s+API Fixture\s+\(5 books, gutenberg\)/);
