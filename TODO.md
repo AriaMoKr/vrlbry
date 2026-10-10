@@ -60,8 +60,15 @@
     says which form each ZIM takes (a second word `file`), `build-pages.mjs --zim-files` ships
     the files with their indexes and names them in `api/libraries`, the page opens them with
     each visit (`site: true`: in the Demo set, not "Opened here"), and the workflow ships main's
-    own prebuilt indexes within 950 MB (`build-indexes.mjs --ship --budget-mb`). To do: the
-    first visit timed on a Quest once deployed; ZIM files split into parts (cold CDN misses).
+    own prebuilt indexes within 950 MB (`build-indexes.mjs --ship --budget-mb`). Deployed
+    2026-10-10 (main at e807c3a, then bc42ff5): the site 357 MB compressed (~553 MB) with the
+    release's five big indexes and the demo set's three. *First visit on a Quest 3* (the live
+    site, its localStorage cleared for the test and put back): the app up 1.6 s after the page
+    was asked for, with the four pre-rendered libraries; the three ZIM files opened one after
+    another, Golf at 4.8 s, Mathematics 6.2 s, Physics 9.7 s (all seven in the Demo set on 7
+    bookcases); Quantum mechanics read from Physics in 1.3 s; 90 Hz; the page's process 239 to
+    358 MB. To do: open the site's files at once rather than in turn (~4-5 s for all, not ~10);
+    ZIM files split into parts (cold CDN misses).
   - *GitHub Pages serves files over 100 MB* when a workflow deploys them (tested 2026-10-10 with a
     throwaway repo, pages-size-test: Golf's 138 MB and Wikipedia 100's 318 MB ZIMs, downloaded
     into the Pages artifact: whole sizes, range requests at both ends, the same bytes as Kiwix's;
