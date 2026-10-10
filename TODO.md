@@ -70,7 +70,10 @@
     it had the file). The first request for a file in each city (San Jose, Los Angeles, Burbank
     from here; the servers of a city share one cache) waits while Fastly fetches the whole file
     from GitHub, even for an 80-byte range: a 138 MB ZIM 2.1-3.8 s, a 318 MB one 4.4 s, a small
-    file under 0.1 s. Not tied to the deploy: 4 s after it 3.8 s, 15 min after 2.1 and 3.0 s, 45
+    file under 0.1 s. A range at the file's end does the same (3.6 and 6.6 s), and then every
+    range of it, start and middle, is a hit (0.07-0.09 s): GitHub's Fastly service has no
+    Segmented Caching (which would fetch and keep only the parts asked for), so files are cached,
+    and presumably evicted, whole. Not tied to the deploy: 4 s after it 3.8 s, 15 min after 2.1 and 3.0 s, 45
     min after 2.7 s. Afterwards that city's copy stays: past its 10 minutes (`max-age=600`) it is
     only revalidated (~0.09 s), never fetched whole again (none evicted within the hour
     watched). So warming the cache after a deploy would not help: requests from the workflow's
