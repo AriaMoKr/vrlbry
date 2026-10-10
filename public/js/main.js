@@ -342,7 +342,9 @@ async function start() {
       const hint = mirror ? ` Kiwix's own mirror lets pages read its files: ${mirror}` : '';
       // For "Copy debug info": which address failed (the toast names the file only).
       noteError('open', `${r.url ?? r.name}: ${r.error}`);
-      overlay.showToast(`${reopening ? 'Not reopened: ' : ''}${r.error}.${hint}`, 'error', mirror ? 15000 : 9000);
+      // (The site's own files open with every visit: theirs "did not open", not "reopen".)
+      const lead = site ? 'This site’s file did not open: ' : reopening ? 'Not reopened: ' : '';
+      overlay.showToast(`${lead}${r.error}.${hint}`, 'error', mirror ? 15000 : 9000);
       // In VR the page's toasts are out of sight (a ZIM opened from the kiosk's Kiwix tab).
       if (controls.presenting) interaction.notice(`Could not open ${r.name}`, r.error, 8);
     }
