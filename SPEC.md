@@ -175,16 +175,17 @@ whole. It works on GitHub Pages (no server) and beside a server's own libraries.
 
 - **Opening:** "Open ZIM files…" under the library list (a file input, several at once) or a drop
   on the page (`ui/overlay.js` → `main.js` `openLocalFiles`); `__vrlbry.openZim(file)` does the
-  same for scripted tests. A toast with a spinner and a progress bar ("Opening <file>…", "(2 of
-  3)" for several, then "· 12 s · about 40 s left": the seconds so far and, from the fraction
-  done, about how long is left, "· estimating…" until there is enough to tell,
-  `util/progress.js` `progressText`; the bar from the worker's
-  progress: how much of the catalogue is built, Gutenberg books looked up or generic entries
-  scanned, `ArchiveLibrary.open`'s `onProgress`) stays until every file is open, however long
-  that takes; then the catalogue's "New library" toast or the file's error follows. With several
-  files the toast has a Stop button: no more files are opened (`openFiles`' `stopped`; "Stopped:
-  N files not opened."). Several files opened together go to the "Opened here" place (§5.6), one
-  to its own room. Under the
+  same for scripted tests. The status box at the page's foot (below, with the index builds:
+  one box for all the local library's work, not a toast beside it) reads "Opening <file>…",
+  "(2 of 3)" for several, then "· 12 s · about 40 s left" (the seconds so far and, from the
+  fraction done, about how long is left, "· estimating…" until there is enough to tell,
+  `util/progress.js` `progressText`) and "· N to index", with a bar from the worker's progress
+  (how much of the catalogue is built, Gutenberg books looked up or generic entries scanned,
+  `ArchiveLibrary.open`'s `onProgress`), until every file is open, however long that takes;
+  then the catalogue's "New library" toast or the file's error follows. With several files the
+  box's head has a Stop: no more files are opened (`openFiles`' `stopped`; "Stopped: N files
+  not opened."). Several files opened together go to the "Opened here" place (§5.6), one to its
+  own room. Under the
   button, a line links an example to download
   (`EXAMPLE_ZIM` in `local/local.js`: Gutenberg LCC-P, 37 MB, from tools/demo-set.txt, which a
   test checks) and Kiwix's Gutenberg folder. In a headset, files are picked before entering VR;
@@ -205,9 +206,10 @@ whole. It works on GitHub Pages (no server) and beside a server's own libraries.
   smallest goes first rather than the first opened. Meanwhile the catalogue entry says so
   (`indexing`, `'queued'` while waiting, as for the server's) and has no books, and a room
   without books because of it says "Indexing…" (`World.build`'s `emptyText`). The builds show
-  in one status box at the page's foot (`overlay.setIndexing`), not a toast each (six covered
-  the view): a summary line ("Indexing 6 files · 2 ready · Chemistry: 4 s · about 3 s left · 3
-  waiting") with an overall bar, and behind a toggle (remembered) a row per file with its
+  in the status box at the page's foot (`overlay.setStatus`), not a toast each (six covered
+  the view): once no file is opening, its head line is the summary ("Indexing 6 files · 2 ready ·
+  Chemistry: 4 s · about 3 s left · 3 waiting") with an overall bar, and behind a toggle
+  (remembered) a row per file with its
   bar, its time ("waiting" while queued, the time counted from its start) and a × that stops
   the build and closes the file (`close`: the archive's reads then fail and the build ends
   silently; a closed library tells no more, `_setIndexing`), forgetting it for Reopen. The index is

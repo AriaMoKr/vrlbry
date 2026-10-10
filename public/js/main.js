@@ -280,39 +280,29 @@ async function start() {
       overlay.showToast('Only .zim files can be opened.', 'error');
       return [];
     }
-    // Shown until every file is open (a big file on a Quest takes a while), with the seconds so
-    // far and, from the worker's progress, about how long is left, and with several files a Stop
-    // that opens no more; then the catalogue's "New library" toast follows.
+    // In the status box until every file is open (a big file on a Quest takes a while), with the
+    // seconds so far and, from the worker's progress, about how long is left, and with several
+    // files a Stop that opens no more; then the catalogue's "New library" toast follows.
     const name = (f) => f.name || 'the ZIM file';
-    let base = `Opening ${zims.length === 1 ? name(zims[0]) : `${zims.length} ZIM files`}…`;
-    let stop = false;
-    const status = overlay.showToast(base, 'busy', Infinity, zims.length > 1 ? {
-      action: {
-        label: 'Stop',
-        onClick: (btn) => {
-          stop = true;
-          btn.disabled = true;
-          btn.textContent = 'Stopping…';
-        },
-      },
-    } : {});
-    const t0 = performance.now();
-    let fraction = null;
-    const tell = () => status.update(base + progressText(performance.now() - t0, fraction, { estimating: true }));
-    const timer = setInterval(tell, 1000);
+    const job = {
+      label: zims.length === 1 ? name(zims[0]) : `${zims.length} ZIM files`,
+      t0: performance.now(), fraction: null, stoppable: zims.length > 1, stopping: false,
+    };
+    openings.add(job);
+    renderStatus();
     let results;
     try {
       results = await localLibrary.openFiles(zims, {
-        stopped: () => stop,
+        stopped: () => job.stopping,
         onFile: (file, i) => {
           if (zims.length > 1) {
-            base = `Opening ${name(file)} (${i + 1} of ${zims.length})…`;
-            tell();
+            job.label = `${name(file)} (${i + 1} of ${zims.length})`;
+            renderStatus();
           }
         },
         onProgress: (f) => {
-          fraction = f;
-          status.progress(f);
+          job.fraction = f;
+          renderStatus();
         },
         // Its title for its index build's row, as soon as this one file is open.
         onOpened: (r) => {
@@ -320,13 +310,13 @@ async function start() {
           if (b && r.title) {
             b.title = r.title;
             b.file = r.name;
-            renderBuilds();
+            renderStatus();
           }
         },
       });
     } finally {
-      clearInterval(timer);
-      status.close();
+      openings.delete(job);
+      renderStatus();
     }
     for (const r of results) {
       if (r.error) overlay.showToast(r.error, 'error', 9000);
@@ -382,11 +372,13 @@ async function start() {
     });
     fileHandles.list().then((entries) => overlay.setRemembered(entries.map((e) => e.name))).catch(() => {});
   }
-  // The index builds of local libraries (a Wikipedia or Wikisource file: a big one takes minutes
-  // on a headset), in one status box at the page's foot that collapses to its summary line
-  // (overlay.setIndexing): a row per file with its bar, the time so far and about how long is
-  // left, and a × that stops it and closes the file. The worker builds them one at a time, the
-  // smallest first ("waiting" meanwhile), and says how each goes (local.onIndexing).
+  // What the local library is doing, in one status box at the page's foot (overlay.setStatus):
+  // files being opened (its head line, bar and Stop), and the index builds of Wikipedia and
+  // Wikisource files (a big one takes minutes on a headset), a row each behind a toggle with its
+  // bar, the time so far and about how long is left, and a × that stops it and closes the file.
+  // The worker builds them one at a time, the smallest first ("waiting" meanwhile), and says how
+  // each goes (local.onIndexing).
+  const openings = new Set(); // { label, t0, fraction, stoppable, stopping }: files being opened (openLocalFiles)
   const builds = new Map(); // lib id → { title, file, info, t0 (when it started, not while waiting) }
   let buildsReady = 0; // finished since the box appeared, for its summary and overall bar
   const indexingSeen = new Map(); // lib id → what the worker last said: { stage, progress }, or 'done' (ready, failed or closed)
@@ -394,7 +386,7 @@ async function start() {
     if (!info || info.done || info.stage === 'failed') {
       if (builds.delete(id) && !info?.error) buildsReady++;
       if (info?.stage === 'failed') overlay.showToast(`Could not index ${title}: ${info.error}`, 'error', 9000);
-      return renderBuilds();
+      return renderStatus();
     }
     let b = builds.get(id);
     if (!b) builds.set(id, b = { title, file, t0: null });
@@ -402,27 +394,42 @@ async function start() {
     if (file) b.file = file;
     if (info.stage !== 'queued') b.t0 ??= performance.now();
     b.info = info;
-    renderBuilds();
+    renderStatus();
   }
-  function renderBuilds() {
-    if (!builds.size) {
-      buildsReady = 0;
-      return overlay.setIndexing(null);
-    }
+  function renderStatus() {
+    if (!builds.size) buildsReady = 0;
+    const job = [...openings].at(-1);
+    if (!builds.size && !job) return overlay.setStatus(null);
     const rows = [...builds].map(([id, b]) => {
       const waiting = b.info.stage === 'queued';
       const time = b.t0 === null ? '' : progressText(performance.now() - b.t0, b.info.progress, { estimating: true }).replace(/^ · /, '');
       return { id, title: b.title, waiting, fraction: waiting ? 0 : b.info.progress, line: waiting ? 'waiting' : time || 'starting' };
     });
-    const now = rows.find((r) => !r.waiting);
-    const waiting = rows.filter((r) => r.waiting).length;
-    const summary = rows.length === 1
-      ? `Indexing ${rows[0].title}${now ? ` · ${now.line}` : ' · waiting'}`
-      : `Indexing ${rows.length} files${buildsReady ? ` · ${buildsReady} ready` : ''}${now ? ` · ${now.title}: ${now.line}` : ''}${waiting ? ` · ${waiting} waiting` : ''}`;
-    const fraction = (buildsReady + rows.reduce((s, r) => s + r.fraction, 0)) / (buildsReady + rows.length);
-    overlay.setIndexing({ summary, fraction, rows });
+    let summary;
+    let fraction;
+    if (job) { // opening files comes first: their builds wait for them
+      summary = `Opening ${job.label}…${progressText(performance.now() - job.t0, job.fraction, { estimating: true })}`
+        + `${rows.length ? ` · ${rows.length} to index` : ''}`;
+      fraction = job.fraction ?? 0;
+    } else {
+      const now = rows.find((r) => !r.waiting);
+      const waiting = rows.filter((r) => r.waiting).length;
+      summary = rows.length === 1
+        ? `Indexing ${rows[0].title}${now ? ` · ${now.line}` : ' · waiting'}`
+        : `Indexing ${rows.length} files${buildsReady ? ` · ${buildsReady} ready` : ''}${now ? ` · ${now.title}: ${now.line}` : ''}${waiting ? ` · ${waiting} waiting` : ''}`;
+      fraction = (buildsReady + rows.reduce((s, r) => s + r.fraction, 0)) / (buildsReady + rows.length);
+    }
+    const stop = job?.stoppable ? { label: job.stopping ? 'Stopping…' : 'Stop', disabled: job.stopping } : null;
+    overlay.setStatus({ summary, fraction, stop, rows });
   }
-  setInterval(() => { if (builds.size) renderBuilds(); }, 1000);
+  setInterval(() => { if (builds.size || openings.size) renderStatus(); }, 1000);
+  overlay.onStopOpening(() => {
+    const job = [...openings].at(-1);
+    if (job?.stoppable) {
+      job.stopping = true;
+      renderStatus();
+    }
+  });
   const cancelled = new Set(); // lib ids closed with a row's ×: their builds' last words are ignored
   localLibrary.onIndexing(({ id, file, ...info }) => {
     if (cancelled.has(id)) return;
@@ -437,7 +444,7 @@ async function start() {
     cancelled.add(id);
     indexingSeen.set(id, 'done');
     builds.delete(id);
-    renderBuilds();
+    renderStatus();
     await localLibrary.close(id).catch(() => {});
     if (b?.file && fileHandles) {
       await fileHandles.forget(b.file).catch(() => {});
