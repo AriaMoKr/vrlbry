@@ -9,7 +9,7 @@ import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import '../server/platform-node.js';
 import { ZimArchive } from '../public/js/core/zim/reader.js';
-import { buildListed, currentEditions, indexNameOf, readList, writeIndexList } from '../tools/build-indexes.mjs';
+import { buildListed, currentEditions, indexNameOf, readList, shipIndexes, writeIndexList } from '../tools/build-indexes.mjs';
 import { startRangeServer } from './helpers/range-server.js';
 import { writeWikipediaZim } from './helpers/zim-fixtures.js';
 
@@ -57,6 +57,36 @@ describe('prebuilt indexes (tools/build-indexes.mjs)', () => {
     assert.equal(found[0].entry.uuid, 'a'.repeat(32));
     assert.equal(found[1].entry, null, 'not in the catalogue');
     assert.equal(await indexNameOf(found[0].entry), `wikipedia-${'a'.repeat(32)}.v4.json`);
+  });
+
+  it('ships the indexes into a built site, the smallest first, while the site stays within its budget', () => {
+    const from = fs.mkdtempSync(path.join(os.tmpdir(), 'vrlbry-ship-from-'));
+    const site = fs.mkdtempSync(path.join(os.tmpdir(), 'vrlbry-ship-site-'));
+    try {
+      const name = (kind, n) => `${kind}-${String(n).repeat(32)}.v1.json`;
+      fs.writeFileSync(path.join(from, name('wikipedia', 1)), 'x'.repeat(300));
+      fs.writeFileSync(path.join(from, name('wikipedia', 2)), 'x'.repeat(100));
+      fs.writeFileSync(path.join(from, name('wikisource', 3)), 'x'.repeat(200));
+      fs.writeFileSync(path.join(from, 'list.json'), '{}');
+      fs.writeFileSync(path.join(from, 'notes.txt'), 'not an index');
+      // The site: 500 bytes of its own, one of them its own index (the demo set's).
+      fs.mkdirSync(path.join(site, 'indexes'));
+      fs.writeFileSync(path.join(site, 'indexes', name('wikipedia', 4)), 'y'.repeat(50));
+      fs.writeFileSync(path.join(site, 'page.html'), 'z'.repeat(450));
+      const said = [];
+      const r = shipIndexes(from, site, { budgetBytes: 900, log: (m) => said.push(m) });
+      assert.deepEqual(r.shipped, [name('wikipedia', 2), name('wikisource', 3)], 'the smallest first');
+      assert.deepEqual(r.left, [name('wikipedia', 1)], 'over the budget');
+      assert.ok(r.siteBytes <= 900);
+      assert.match(said[0], /left out/);
+      assert.deepEqual(JSON.parse(fs.readFileSync(path.join(site, 'indexes', 'list.json'), 'utf8')).indexes.sort(),
+        [name('wikipedia', 2), name('wikisource', 3), name('wikipedia', 4)].sort(), 'its own and those shipped');
+      // No budget: everything.
+      assert.deepEqual(shipIndexes(from, site, { log: () => {} }).shipped, [name('wikipedia', 1)]);
+    } finally {
+      fs.rmSync(from, { recursive: true, force: true });
+      fs.rmSync(site, { recursive: true, force: true });
+    }
   });
 
   it('builds a missing index from a copy, keeps it, prunes old editions and publishes the list', async () => {

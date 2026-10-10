@@ -1,0 +1,124 @@
+# Publishes the main site, https://ariamokr.github.io/vrlbry/, to GitHub Pages: the static site
+# (tools/build-pages.mjs: the client without the Node server) with its demo set and prebuilt
+# indexes, on every push to main or by hand.
+#
+# The demo set (tools/demo-set.txt) is on the site itself, readable without Kiwix's mirrors or a
+# proxy: part pre-rendered (--zims: JSON files, read without the browser's worker), part as the ZIM
+# files themselves (--zim-files: opened in the browser with each visit, with their indexes), each
+# ZIM in its smaller form (TODO, "Merging back into the main site"): ~460 MB.
+#
+# Prebuilt indexes (tools/build-indexes.mjs, tools/indexes.txt): for big Wikipedias and
+# Wikisources a visitor opens from the web (Kiwix's library), which would otherwise need a build
+# reading most of the file. Every run ships what this repo has: the indexes kept in its Actions
+# cache by earlier runs and the assets of its release "indexes" (built on a PC: node
+# tools/build-indexes.mjs --zims <folder>, then gh release upload indexes .indexes/*.json
+# --clobber), less old editions, as many as fit in the site's budget (950 MB in all: Pages
+# publishes at most 1 GB), the smallest first. With "prebuilt indexes" ticked, the missing ones are
+# first built here from Kiwix's mirror (up to 5 h). None of it is needed: without an index a big
+# Wikipedia from the web is listed as needing one, and every ZIM still opens from a file.
+#
+# The edge proxy (tools/zim-proxy/, optional): with the repository variable ZIM_PROXY set to its
+# address, the page reads Kiwix's files through it, from the mirror nearest each visitor.
+#
+# This site uses nothing of the other two (vrlbry-standalone, vrlbry-cloud): its demo set, indexes
+# and settings are its own, so any of the three can go without the others noticing.
+#
+# One-time setup: the repository's Settings → Pages → Build and deployment → Source: GitHub Actions.
+name: Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      prebuilt_indexes:
+        description: Also build the missing prebuilt indexes (tools/indexes.txt) from Kiwix's mirror (up to 5 hours)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time; a newer push waits rather than cancelling one in progress.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 345
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      # The demo set, cached until the list changes: pre-rendered ones in .demo/render, the ZIMs
+      # shipped as files in .demo/files (a line's second word "file").
+      - uses: actions/cache@v4
+        with:
+          path: .demo
+          key: demo-set-${{ hashFiles('tools/demo-set.txt') }}
+      - name: Download the demo set
+        run: |
+          mkdir -p .demo/render .demo/files
+          while read -r url form _; do
+            case "$url" in ''|'#'*) continue ;; esac
+            dir=.demo/render
+            [ "$form" = file ] && dir=.demo/files
+            file="$dir/$(basename "$url")"
+            [ -f "$file" ] || curl -fsSL --retry 3 -o "$file" "$url"
+          done < tools/demo-set.txt
+          ls -l .demo/render .demo/files
+      - name: Build the site
+        env:
+          ZIM_PROXY: ${{ vars.ZIM_PROXY }}
+        run: npm run build:pages -- --zims .demo/render --zim-files .demo/files ${ZIM_PROXY:+--zim-proxy "$ZIM_PROXY"}
+      # Prebuilt indexes: the cache of earlier runs, the release's assets, and (by hand) new builds.
+      - uses: actions/cache/restore@v4
+        with:
+          path: .indexes
+          key: indexes-${{ github.run_id }}
+          restore-keys: indexes-
+      - name: Prebuilt indexes published as release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p .indexes
+          gh release download indexes --repo "$GITHUB_REPOSITORY" --dir .indexes --pattern '*.v*.json' --skip-existing \
+            || echo "No release \"indexes\" (or nothing new in it)."
+      # Optional: a build that fails (or Kiwix's catalogue out of reach) does not stop the deploy.
+      - name: Build the missing prebuilt indexes from Kiwix's mirror
+        if: inputs.prebuilt_indexes
+        continue-on-error: true
+        run: node tools/build-indexes.mjs --out .indexes --web --hours 5
+      - name: Drop the indexes of editions no longer current
+        continue-on-error: true
+        run: node tools/build-indexes.mjs --out .indexes --prune
+      - if: inputs.prebuilt_indexes && !cancelled()
+        uses: actions/cache/save@v4
+        with:
+          path: .indexes
+          key: indexes-${{ github.run_id }}
+      - name: Ship the prebuilt indexes (as many as fit)
+        run: |
+          node tools/build-indexes.mjs --out .indexes --ship dist --budget-mb 950
+          du -sh dist
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

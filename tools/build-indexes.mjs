@@ -8,6 +8,7 @@
 //
 //   node tools/build-indexes.mjs [--out .indexes] [--zims <folder>] [--web] [--hours <n>] [--prune]
 //                                [--publish <dir>] [--list tools/indexes.txt] [--only <base,…>]
+//   node tools/build-indexes.mjs --ship <site> [--out .indexes] [--budget-mb <n>]
 //
 // The ZIMs are those of tools/indexes.txt, in their current editions as Kiwix's catalogue lists
 // them. An index already in --out (named by the edition's UUID) is kept; a missing one is built
@@ -15,6 +16,8 @@
 // heavy on the mirror: tens of GB for the big ones, hence opt-in). --hours stops starting builds
 // after that long. --prune deletes indexes of editions no longer current. --publish copies the
 // indexes into a site's indexes/ folder. --out and --publish get a list.json of what is there.
+// --ship copies the indexes in --out into a built site, as many as fit in --budget-mb for the
+// whole site (GitHub Pages: 1 GB per site), the smallest first (shipIndexes).
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -38,6 +41,50 @@ export async function indexNameOf(entry) {
 }
 
 /** Writes `dir`/list.json: the index files there (Kiwix's library in the page reads it). */
+/** Bytes of every file under a folder. */
+function dirBytes(dir) {
+  if (!fs.existsSync(dir)) return 0;
+  let n = 0;
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, e.name);
+    n += e.isDirectory() ? dirBytes(p) : fs.statSync(p).size;
+  }
+  return n;
+}
+
+/**
+ * Copies the prebuilt indexes in `from` into a built site's indexes/ (with its list.json), as many
+ * as fit: the whole site stays within `budgetBytes` (GitHub Pages publishes at most 1 GB a site),
+ * the smallest first, so a few big ones do not crowd out many small ones. One already there is
+ * kept (the site's own: the demo set's).
+ * @returns {{ shipped: string[], left: string[], siteBytes: number }}
+ */
+export function shipIndexes(from, site, { budgetBytes = Infinity, log = console.log } = {}) {
+  const to = path.join(site, 'indexes');
+  const files = (fs.existsSync(from) ? fs.readdirSync(from) : [])
+    .filter((n) => /^(wikipedia|wikisource)-[0-9a-f]{32}\.v\d+\.json$/.test(n) && !fs.existsSync(path.join(to, n)))
+    .map((n) => ({ name: n, size: fs.statSync(path.join(from, n)).size }))
+    .sort((a, b) => a.size - b.size || a.name.localeCompare(b.name));
+  let siteBytes = dirBytes(site);
+  const shipped = [];
+  const left = [];
+  for (const f of files) {
+    if (siteBytes + f.size > budgetBytes) {
+      left.push(f.name);
+      continue;
+    }
+    fs.mkdirSync(to, { recursive: true });
+    fs.copyFileSync(path.join(from, f.name), path.join(to, f.name));
+    siteBytes += f.size;
+    shipped.push(f.name);
+  }
+  if (fs.existsSync(to)) writeIndexList(to);
+  const mb = (b) => `${(b / 1048576).toFixed(1)} MB`;
+  log(`Shipped ${shipped.length} prebuilt indexes; the site is ${mb(siteBytes)}`
+    + `${left.length ? `; ${left.length} left out to stay within ${mb(budgetBytes)}: ${left.join(', ')}` : ''}`);
+  return { shipped, left, siteBytes };
+}
+
 export function writeIndexList(dir) {
   const indexes = fs.readdirSync(dir).filter((n) => /^(wikipedia|wikisource)-[0-9a-f]{32}\.v\d+\.json$/.test(n)).sort();
   fs.writeFileSync(path.join(dir, 'list.json'), `${JSON.stringify({ indexes }, null, 1)}\n`);
@@ -180,8 +227,15 @@ async function main() {
       only: { type: 'string' },
       prune: { type: 'boolean', default: false },
       publish: { type: 'string' },
+      ship: { type: 'string' },
+      'budget-mb': { type: 'string' },
     },
   });
+  if (opts.ship) {
+    const budget = opts['budget-mb'] ? Number(opts['budget-mb']) * 1048576 : Infinity;
+    shipIndexes(path.resolve(opts.out), path.resolve(opts.ship), { budgetBytes: budget });
+    return;
+  }
   const only = opts.only ? new Set(opts.only.split(',').map((s) => s.trim())) : null;
   const summary = await buildListed({
     bases: readList(opts.list).filter((b) => !only || only.has(b)), partial: !!only,
