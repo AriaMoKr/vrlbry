@@ -1,0 +1,273 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom"
+      xmlns:dc="http://purl.org/dc/terms/"
+      xmlns:opds="https://specs.opds.io/opds-1.2"
+      xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/">
+  <id>056f0acf-6cee-004b-476d-f1ff0fb8c87d</id>
+
+  <link rel="self"
+        href="/catalog/v2/entries?category=wikipedia&amp;count=-1"
+        type="application/atom+xml;profile=opds-catalog;kind=acquisition"/>
+  <link rel="start"
+        href="/catalog/v2/root.xml"
+        type="application/atom+xml;profile=opds-catalog;kind=navigation"/>
+  <link rel="up"
+        href="/catalog/v2/root.xml"
+        type="application/atom+xml;profile=opds-catalog;kind=navigation"/>
+
+  <title>Filtered Entries (category=wikipedia&amp;count=-1)</title>
+  <updated>2026-10-10T04:10:13Z</updated>
+  <totalResults>10</totalResults>
+  <startIndex>0</startIndex>
+  <itemsPerPage>1227</itemsPerPage>
+  <entry>
+    <id>urn:uuid:c22094d0-6ad1-6360-36b7-dab953595143</id>
+    <title>Wikipedia</title>
+    <updated>2026-06-17T00:00:00Z</updated>
+    <summary>The free encyclopedia</summary>
+    <language>eng</language>
+    <name>wikipedia_en_all</name>
+    <flavour>nopic</flavour>
+    <category>wikipedia</category>
+    <tags>wikipedia;_category:wikipedia;_pictures:no;_videos:no;_details:yes;_ftindex:yes</tags>
+    <articleCount>19191219</articleCount>
+    <mediaCount>515775</mediaCount>
+    <link rel="http://opds-spec.org/image/thumbnail"
+          href="/catalog/v2/illustration/c22094d0-6ad1-6360-36b7-dab953595143/?size=48"
+          type="image/png;width=48;height=48;scale=1"/>
+    <link type="text/html" href="https://browse.library.kiwix.org/content/wikipedia_en_all_nopic_2026-06" />
+    <author>
+      <name>Wikipedia</name>
+    </author>
+    <publisher>
+      <name>openZIM</name>
+    </publisher>
+    <dc:issued>2026-06-17T00:00:00Z</dc:issued>
+    <link rel="http://opds-spec.org/acquisition/open-access" type="application/x-zim" href="https://lb.download.kiwix.org/zim/wikipedia/wikipedia_en_all_nopic_2026-06.zim.meta4" length="52690707456" />
+  </entry>
+  <entry>
+    <id>urn:uuid:8e5195c9-9249-1740-5c00-b50ece3babc7</id>
+    <title>Chemistry by Wikipedia</title>
+    <updated>2026-07-16T00:00:00Z</updated>
+    <summary>A selection of Wikipedia articles on chemistry</summary>
+    <language>eng</language>
+    <name>wikipedia_en_chemistry</name>
+    <flavour>mini</flavour>
+    <category>wikipedia</category>
+    <tags>wikipedia;_category:wikipedia;_pictures:no;_videos:no;_details:no;_ftindex:yes</tags>
+    <articleCount>57058</articleCount>
+    <mediaCount>1155</mediaCount>
+    <link rel="http://opds-spec.org/image/thumbnail"
+          href="/catalog/v2/illustration/8e5195c9-9249-1740-5c00-b50ece3babc7/?size=48"
+          type="image/png;width=48;height=48;scale=1"/>
+    <link type="text/html" href="https://browse.library.kiwix.org/content/wikipedia_en_chemistry_mini_2026-07" />
+    <author>
+      <name>Wikipedia</name>
+    </author>
+    <publisher>
+      <name>openZIM</name>
+    </publisher>
+    <dc:issued>2026-07-16T00:00:00Z</dc:issued>
+    <link rel="http://opds-spec.org/acquisition/open-access" type="application/x-zim" href="https://lb.download.kiwix.org/zim/wikipedia/wikipedia_en_chemistry_mini_2026-07.zim.meta4" length="24776704" />
+  </entry>
+  <entry>
+    <id>urn:uuid:e2221719-553b-cc9b-89a1-02c634b20dc7</id>
+    <title>Chemistry by Wikipedia</title>
+    <updated>2026-07-16T00:00:00Z</updated>
+    <summary>A selection of Wikipedia articles on chemistry</summary>
+    <language>eng</language>
+    <name>wikipedia_en_chemistry</name>
+    <flavour>maxi</flavour>
+    <category>wikipedia</category>
+    <tags>wikipedia;_category:wikipedia;_pictures:yes;_videos:no;_details:yes;_ftindex:yes</tags>
+    <articleCount>57058</articleCount>
+    <mediaCount>43989</mediaCount>
+    <link rel="http://opds-spec.org/image/thumbnail"
+          href="/catalog/v2/illustration/e2221719-553b-cc9b-89a1-02c634b20dc7/?size=48"
+          type="image/png;width=48;height=48;scale=1"/>
+    <link type="text/html" href="https://browse.library.kiwix.org/content/wikipedia_en_chemistry_maxi_2026-07" />
+    <author>
+      <name>Wikipedia</name>
+    </author>
+    <publisher>
+      <name>openZIM</name>
+    </publisher>
+    <dc:issued>2026-07-16T00:00:00Z</dc:issued>
+    <link rel="http://opds-spec.org/acquisition/open-access" type="application/x-zim" href="https://lb.download.kiwix.org/zim/wikipedia/wikipedia_en_chemistry_maxi_2026-07.zim.meta4" length="514097152" />
+  </entry>
+  <entry>
+    <id>urn:uuid:4c7bbd63-5216-cf15-b7aa-94432c737325</id>
+    <title>Chemistry by Wikipedia</title>
+    <updated>2026-07-16T00:00:00Z</updated>
+    <summary>A selection of Wikipedia articles on chemistry</summary>
+    <language>eng</language>
+    <name>wikipedia_en_chemistry</name>
+    <flavour>nopic</flavour>
+    <category>wikipedia</category>
+    <tags>wikipedia;_category:wikipedia;_pictures:no;_videos:no;_details:yes;_ftindex:yes</tags>
+    <articleCount>57058</articleCount>
+    <mediaCount>13579</mediaCount>
+    <link rel="http://opds-spec.org/image/thumbnail"
+          href="/catalog/v2/illustration/4c7bbd63-5216-cf15-b7aa-94432c737325/?size=48"
+          type="image/png;width=48;height=48;scale=1"/>
+    <link type="text/html" href="https://browse.library.kiwix.org/content/wikipedia_en_chemistry_nopic_2026-07" />
+    <author>
+      <name>Wikipedia</name>
+    </author>
+    <publisher>
+      <name>openZIM</name>
+    </publisher>
+    <dc:issued>2026-07-16T00:00:00Z</dc:issued>
+    <link rel="http://opds-spec.org/acquisition/open-access" type="application/x-zim" href="https://lb.download.kiwix.org/zim/wikipedia/wikipedia_en_chemistry_nopic_2026-07.zim.meta4" length="130402304" />
+  </entry>
+  <entry>
+    <id>urn:uuid:207ae4ad-0ee1-868e-331b-376c7556bc24</id>
+    <title>Wikipedia&apos;s 1m Top Articles</title>
+    <updated>2026-04-28T00:00:00Z</updated>
+    <summary>A selection of the best 1 Million Wikipedia articles</summary>
+    <language>eng</language>
+    <name>wikipedia_en_top1m</name>
+    <flavour>maxi</flavour>
+    <category>wikipedia</category>
+    <tags>wikipedia;_category:wikipedia;_pictures:yes;_videos:no;_details:yes;_ftindex:yes</tags>
+    <articleCount>5918856</articleCount>
+    <mediaCount>3677489</mediaCount>
+    <link rel="http://opds-spec.org/image/thumbnail"
+          href="/catalog/v2/illustration/207ae4ad-0ee1-868e-331b-376c7556bc24/?size=48"
+          type="image/png;width=48;height=48;scale=1"/>
+    <link type="text/html" href="https://browse.library.kiwix.org/content/wikipedia_en_top1m_maxi_2026-04" />
+    <author>
+      <name>Wikipedia</name>
+    </author>
+    <publisher>
+      <name>openZIM</name>
+    </publisher>
+    <dc:issued>2026-04-28T00:00:00Z</dc:issued>
+    <link rel="http://opds-spec.org/acquisition/open-access" type="application/x-zim" href="https://lb.download.kiwix.org/zim/wikipedia/wikipedia_en_top1m_maxi_2026-04.zim.meta4" length="49385356288" />
+  </entry>
+  <entry>
+    <id>urn:uuid:dd8a2bd2-c05b-ac6c-8074-6c30e14803fb</id>
+    <title>Wikipedia 100</title>
+    <updated>2026-08-20T00:00:00Z</updated>
+    <summary>Top one hundred Wikipedia articles</summary>
+    <language>eng</language>
+    <name>wikipedia_en_100</name>
+    <flavour></flavour>
+    <category>wikipedia</category>
+    <tags>wikipedia;_category:wikipedia;_details:yes;_ftindex:yes;_pictures:yes;_videos:yes</tags>
+    <articleCount>5056</articleCount>
+    <mediaCount>4122</mediaCount>
+    <link rel="http://opds-spec.org/image/thumbnail"
+          href="/catalog/v2/illustration/dd8a2bd2-c05b-ac6c-8074-6c30e14803fb/?size=48"
+          type="image/png;width=48;height=48;scale=1"/>
+    <link type="text/html" href="https://browse.library.kiwix.org/content/wikipedia_en_100_2026-08" />
+    <author>
+      <name>Wikipedia</name>
+    </author>
+    <publisher>
+      <name>openZIM</name>
+    </publisher>
+    <dc:issued>2026-08-20T00:00:00Z</dc:issued>
+    <link rel="http://opds-spec.org/acquisition/open-access" type="application/x-zim" href="https://lb.download.kiwix.org/zim/wikipedia/wikipedia_en_100_2026-08.zim.meta4" length="333430784" />
+  </entry>
+  <entry>
+    <id>urn:uuid:baef616d-c83f-1b8a-4331-1534faf9b910</id>
+    <title>Ray Charles</title>
+    <updated>2026-08-02T00:00:00Z</updated>
+    <summary>Wikipedia articles about Ray Charles</summary>
+    <language>eng</language>
+    <name>wikipedia_en_ray-charles</name>
+    <flavour>mini</flavour>
+    <category>wikipedia</category>
+    <tags>wikipedia;_category:wikipedia;_pictures:no;_videos:no;_details:no;_ftindex:yes</tags>
+    <articleCount>340</articleCount>
+    <mediaCount>21</mediaCount>
+    <link rel="http://opds-spec.org/image/thumbnail"
+          href="/catalog/v2/illustration/baef616d-c83f-1b8a-4331-1534faf9b910/?size=48"
+          type="image/png;width=48;height=48;scale=1"/>
+    <link type="text/html" href="https://browse.library.kiwix.org/content/wikipedia_en_ray-charles_mini_2026-08" />
+    <author>
+      <name>Wikipedia</name>
+    </author>
+    <publisher>
+      <name>openZIM</name>
+    </publisher>
+    <dc:issued>2026-08-02T00:00:00Z</dc:issued>
+    <link rel="http://opds-spec.org/acquisition/open-access" type="application/x-zim" href="https://lb.download.kiwix.org/zim/wikipedia/wikipedia_en_ray-charles_mini_2026-08.zim.meta4" length="760832" />
+  </entry>
+  <entry>
+    <id>urn:uuid:d2587312-c24f-d89f-f46d-54a4a480e3ef</id>
+    <title>Wikipédia</title>
+    <updated>2026-05-18T00:00:00Z</updated>
+    <summary>L&apos;encyclopédie libre</summary>
+    <language>fra</language>
+    <name>wikipedia_fr_all</name>
+    <flavour>maxi</flavour>
+    <category>wikipedia</category>
+    <tags>wikipedia;_category:wikipedia;_pictures:yes;_videos:no;_details:yes;_ftindex:yes</tags>
+    <articleCount>4587563</articleCount>
+    <mediaCount>4408540</mediaCount>
+    <link rel="http://opds-spec.org/image/thumbnail"
+          href="/catalog/v2/illustration/d2587312-c24f-d89f-f46d-54a4a480e3ef/?size=48"
+          type="image/png;width=48;height=48;scale=1"/>
+    <link type="text/html" href="https://browse.library.kiwix.org/content/wikipedia_fr_all_maxi_2026-05" />
+    <author>
+      <name>Wikipedia</name>
+    </author>
+    <publisher>
+      <name>openZIM</name>
+    </publisher>
+    <dc:issued>2026-05-18T00:00:00Z</dc:issued>
+    <link rel="http://opds-spec.org/acquisition/open-access" type="application/x-zim" href="https://lb.download.kiwix.org/zim/wikipedia/wikipedia_fr_all_maxi_2026-05.zim.meta4" length="55438794752" />
+  </entry>
+  <entry>
+    <id>urn:uuid:8c8b99c5-b74d-0394-e2e5-ece60123b369</id>
+    <title>Wikipédia</title>
+    <updated>2026-05-18T00:00:00Z</updated>
+    <summary>L&apos;encyclopédie libre</summary>
+    <language>fra</language>
+    <name>wikipedia_fr_all</name>
+    <flavour>nopic</flavour>
+    <category>wikipedia</category>
+    <tags>wikipedia;_category:wikipedia;_pictures:no;_videos:no;_details:yes;_ftindex:yes</tags>
+    <articleCount>4587621</articleCount>
+    <mediaCount>227460</mediaCount>
+    <link rel="http://opds-spec.org/image/thumbnail"
+          href="/catalog/v2/illustration/8c8b99c5-b74d-0394-e2e5-ece60123b369/?size=48"
+          type="image/png;width=48;height=48;scale=1"/>
+    <link type="text/html" href="https://browse.library.kiwix.org/content/wikipedia_fr_all_nopic_2026-05" />
+    <author>
+      <name>Wikipedia</name>
+    </author>
+    <publisher>
+      <name>openZIM</name>
+    </publisher>
+    <dc:issued>2026-05-18T00:00:00Z</dc:issued>
+    <link rel="http://opds-spec.org/acquisition/open-access" type="application/x-zim" href="https://lb.download.kiwix.org/zim/wikipedia/wikipedia_fr_all_nopic_2026-05.zim.meta4" length="12912823296" />
+  </entry>
+  <entry>
+    <id>urn:uuid:a8a033e2-301b-863e-3c63-85d7a32bf051</id>
+    <title>Wikipédia</title>
+    <updated>2026-05-18T00:00:00Z</updated>
+    <summary>L&apos;encyclopédie libre</summary>
+    <language>fra</language>
+    <name>wikipedia_fr_all</name>
+    <flavour>mini</flavour>
+    <category>wikipedia</category>
+    <tags>wikipedia;_category:wikipedia;_pictures:no;_videos:no;_details:no;_ftindex:yes</tags>
+    <articleCount>4587655</articleCount>
+    <mediaCount>15219</mediaCount>
+    <link rel="http://opds-spec.org/image/thumbnail"
+          href="/catalog/v2/illustration/a8a033e2-301b-863e-3c63-85d7a32bf051/?size=48"
+          type="image/png;width=48;height=48;scale=1"/>
+    <link type="text/html" href="https://browse.library.kiwix.org/content/wikipedia_fr_all_mini_2026-05" />
+    <author>
+      <name>Wikipedia</name>
+    </author>
+    <publisher>
+      <name>openZIM</name>
+    </publisher>
+    <dc:issued>2026-05-18T00:00:00Z</dc:issued>
+    <link rel="http://opds-spec.org/acquisition/open-access" type="application/x-zim" href="https://lb.download.kiwix.org/zim/wikipedia/wikipedia_fr_all_mini_2026-05.zim.meta4" length="3584080896" />
+  </entry>
+</feed>

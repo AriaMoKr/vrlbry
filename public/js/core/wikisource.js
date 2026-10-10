@@ -4,14 +4,15 @@
 // subpages ("Teeftallow" + "Teeftallow/Chapter_1"…). The index is built once per archive — a
 // structure scan, then the works' own pages (categories → genre/year, first large image →
 // cover, title-page text) and the Author: pages (which link to their works → author) — and
-// cached on disk keyed by the archive UUID. Reading a work assembles its main page and subpages
-// in table-of-contents order.
+// kept in a store (the server's .cache/, server/cache-store.js) keyed by the archive UUID. Reading
+// a work assembles its main page and subpages in table-of-contents order.
 
-import fs from 'node:fs/promises';
-import path from 'node:path';
 import { resolveHref } from './content/html.js';
+import { platform } from './platform.js';
+import { WIKISOURCE_INDEX_VERSION } from './index-versions.js';
 
-export const INDEX_VERSION = 1;
+/** Bump it in core/index-versions.js. */
+export const INDEX_VERSION = WIKISOURCE_INDEX_VERSION;
 
 /** MediaWiki namespaces that never hold works (Translation: does, so it is not listed). */
 const NS_RE = /^(Author|Portal|Wikisource|Help|Category|Template|Index|Page|File|Image|Special|Talk|User|Module|MediaWiki|Draft|Media|TimedText|Gadget|Gadget definition|Topic)(?: talk)?:/;
@@ -137,7 +138,7 @@ export function contentLinks(html, docPath) {
 }
 
 function decode(buf) {
-  return Buffer.isBuffer(buf) ? buf.toString('utf8') : String(buf);
+  return buf instanceof Uint8Array ? platform.utf8(buf) : String(buf);
 }
 
 /** Runs `fn` over items with bounded concurrency. */
@@ -263,15 +264,15 @@ export async function buildIndex(archive, { onProgress = () => {}, log = () => {
   };
 }
 
-/** Index file path for an archive. */
-export function indexPath(cacheDir, archive) {
-  return path.join(cacheDir, `wikisource-${archive.header.uuid}.v${INDEX_VERSION}.json`);
+/** The name of an archive's index in a store. */
+export function indexName(archive) {
+  return `wikisource-${archive.header.uuid}.v${INDEX_VERSION}.json`;
 }
 
-/** Loads a cached index, or null when absent/stale/corrupt. */
-export async function loadIndex(file, archive) {
+/** Loads a stored index, or null when absent/stale/corrupt. */
+export async function loadIndex(store, name, archive) {
   try {
-    const idx = JSON.parse(await fs.readFile(file, 'utf8'));
+    const idx = JSON.parse((await store.readText(name)) ?? 'null');
     if (idx?.version !== INDEX_VERSION || idx.uuid !== archive.header.uuid || !Array.isArray(idx.works)) return null;
     return idx;
   } catch {
@@ -279,12 +280,9 @@ export async function loadIndex(file, archive) {
   }
 }
 
-/** Saves an index atomically (temp file + rename). */
-export async function saveIndex(file, idx) {
-  await fs.mkdir(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.tmp`;
-  await fs.writeFile(tmp, JSON.stringify(idx));
-  await fs.rename(tmp, file);
+/** Saves an index in a store. */
+export async function saveIndex(store, name, idx) {
+  await store.writeText(name, JSON.stringify(idx));
 }
 
 /** Natural sort key: numbers compare by value ("Chapter_2" < "Chapter_10"). */

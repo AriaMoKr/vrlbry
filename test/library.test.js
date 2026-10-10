@@ -5,11 +5,14 @@ import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import zlib from 'node:zlib';
-import { blockChars } from '../server/content/html.js';
+import { blockChars } from '../public/js/core/content/html.js';
 import {
   ArchiveLibrary, Library, LibraryError, gutenbergBase, libraryIdFor, libraryTitle, parseIndexScript, splitTitle, zimUrl,
 } from '../server/library.js';
-import { writeZim } from './helpers/zimwriter.js';
+import {
+  LONG_TITLE, png, writeGenericZim, writeGutenbergZim, writeOldGutenbergZim,
+} from './helpers/zim-fixtures.js';
+import { ZimArchive } from '../public/js/core/zim/reader.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.join(HERE, '..');
@@ -23,194 +26,6 @@ before(() => {
 after(() => {
   fs.rmSync(tmp, { recursive: true, force: true });
 });
-
-// ---------------------------------------------------------------------------------------------
-// Fixture helpers
-
-/** A PNG header that imageSize() can read (not a decodable image; the server never decodes). */
-function png(w, h) {
-  const b = Buffer.alloc(33);
-  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(b, 0);
-  b.writeUInt32BE(13, 8);
-  b.write('IHDR', 12, 'latin1');
-  b.writeUInt32BE(w, 16);
-  b.writeUInt32BE(h, 20);
-  b[24] = 8;
-  b[25] = 6;
-  b.writeUInt32BE(zlib.crc32(b.subarray(12, 29)), 29);
-  return b;
-}
-
-/** Stored (uncompressed) ZIP archive. */
-function zipStore(files) {
-  const locals = [];
-  const central = [];
-  let offset = 0;
-  for (const [name, content] of files) {
-    const data = Buffer.isBuffer(content) ? content : Buffer.from(content, 'utf8');
-    const nameBuf = Buffer.from(name, 'utf8');
-    const crc = zlib.crc32(data);
-    const local = Buffer.alloc(30);
-    local.writeUInt32LE(0x04034b50, 0);
-    local.writeUInt16LE(20, 4);
-    local.writeUInt16LE(0x0800, 6);
-    local.writeUInt16LE(0, 8);
-    local.writeUInt16LE(0x21, 12);
-    local.writeUInt32LE(crc, 14);
-    local.writeUInt32LE(data.length, 18);
-    local.writeUInt32LE(data.length, 22);
-    local.writeUInt16LE(nameBuf.length, 26);
-    const cen = Buffer.alloc(46);
-    cen.writeUInt32LE(0x02014b50, 0);
-    cen.writeUInt16LE(20, 4);
-    cen.writeUInt16LE(20, 6);
-    cen.writeUInt16LE(0x0800, 8);
-    cen.writeUInt16LE(0x21, 14);
-    cen.writeUInt32LE(crc, 16);
-    cen.writeUInt32LE(data.length, 20);
-    cen.writeUInt32LE(data.length, 24);
-    cen.writeUInt16LE(nameBuf.length, 28);
-    cen.writeUInt32LE(offset, 42);
-    locals.push(local, nameBuf, data);
-    central.push(cen, nameBuf);
-    offset += 30 + nameBuf.length + data.length;
-  }
-  const cd = Buffer.concat(central);
-  const eocd = Buffer.alloc(22);
-  eocd.writeUInt32LE(0x06054b50, 0);
-  eocd.writeUInt16LE(files.length, 8);
-  eocd.writeUInt16LE(files.length, 10);
-  eocd.writeUInt32LE(cd.length, 12);
-  eocd.writeUInt32LE(offset, 16);
-  return Buffer.concat([...locals, cd, eocd]);
-}
-
-function makeEpub({ title, author }) {
-  const opf = `<?xml version="1.0"?>
-<package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="id">
-  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
-    <dc:title>${title}</dc:title><dc:creator>${author}</dc:creator><dc:language>en</dc:language>
-  </metadata>
-  <manifest>
-    <item id="c1" href="text/ch1.xhtml" media-type="application/xhtml+xml"/>
-    <item id="c2" href="text/ch2.xhtml" media-type="application/xhtml+xml"/>
-    <item id="fig" href="images/fig%201.png" media-type="image/png"/>
-  </manifest>
-  <spine><itemref idref="c1"/><itemref idref="c2"/></spine>
-</package>`;
-  const doc = (body) => `<?xml version="1.0" encoding="utf-8"?><html xmlns="http://www.w3.org/1999/xhtml"><head><title>x</title></head><body>${body}</body></html>`;
-  return zipStore([
-    ['mimetype', 'application/epub+zip'],
-    ['META-INF/container.xml', '<?xml version="1.0"?><container><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>'],
-    ['OEBPS/content.opf', opf],
-    ['OEBPS/text/ch1.xhtml', doc('<h1>Chapter One</h1><p>First chapter text.</p><img src="../images/fig%201.png" alt="Figure"/>')],
-    ['OEBPS/text/ch2.xhtml', doc('<h1>Chapter Two</h1><p>Second chapter text.</p><img src="../images/none.png" alt="Lost figure"/>')],
-    ['OEBPS/images/fig 1.png', png(300, 150)],
-  ]);
-}
-
-const js = (name, value, tail = ';\n') => `var ${name} = ${JSON.stringify(value)}${tail}`;
-
-const LONG_TITLE = 'L'.repeat(240);
-const GUTENBERG_ROWS = [
-  ['Alpha/Beta/Gamma', 'Ann Author', '110', 101, 'PE'],
-  ['One/Two/Three', 'Ann Author', '100', 102, 'PE'],
-  ['The slang dictionary : $b Etymological, historical', 'Bob  Writer', '110', 103, 'PR'],
-  [LONG_TITLE, 'Ann Author', '100', 104, 'PE'],
-  ['Epub Only Book', 'Cy Penman', '010', 105, 'PE'],
-  ['Images Book', 'Ann Author', '100', 106, 'PE'],
-  ['Ghost Book', 'Ann Author', '110', 107, 'PE'],
-  ['Alpha/Beta/Gamma (duplicate row)', 'Ann Author', '110', 101, 'PE'],
-  ['Orphan Author Book', 'Nobody Listed', '100', 108, ''],
-];
-
-const IMAGES_HTML = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Images Book</title></head><body>
-<h1>Images Book</h1>
-<p>Intro text.</p>
-<img src="106_logo.png" alt="Logo">
-<h2 id="c1">Chapter 1</h2>
-<p>Text with an image <img src="img/pic.png" alt="Pic" width="50"> inside.</p>
-<img src="missing.png" alt="Missing figure">
-<img src="gone.png">
-<img src="106_page.html" alt="Not an image">
-<img src="data:image/png;base64,${png(7, 9).toString('base64')}">
-<h2>Chapter 2</h2>
-<p>${'Lorem ipsum dolor sit amet. '.repeat(40)}</p>
-</body></html>`;
-
-function bookHtml(title, body = `<p>Body of ${title}.</p>`) {
-  return `<html><head><title>${title}</title></head><body><h1>${title}</h1>${body}</body></html>`;
-}
-
-/** New-scheme gutenberg2zim-like archive exercising the catalog rules. */
-function writeGutenbergZim(file) {
-  const entries = [
-    { ns: 'C', url: 'full_by_popularity.js', mime: 'text/javascript', content: '﻿' + js('json_data', GUTENBERG_ROWS, ';;  \n\n') },
-    { ns: 'C', url: 'authors.js', mime: 'text/javascript', content: js('authors_json_data', [['Ann Author', '7'], ['Bob Writer', '8'], ['Cy Penman', 9]]) },
-    { ns: 'C', url: 'languages.js', mime: 'text/javascript', content: js('languages_json_data', [['English', 'en', 8]]) },
-    { ns: 'C', url: 'lcc_shelves.js', mime: 'text/javascript', content: js('lcc_shelves_json_data', ['PE', 'PR']) },
-    // 101: JS semantics, only the first '/' becomes '-'.
-    { ns: 'C', url: 'Alpha-Beta/Gamma.101', mime: 'text/html', content: bookHtml('Alpha') },
-    // libzim stores already-compressed formats (EPUB, JPEG…) in uncompressed clusters.
-    { ns: 'C', url: 'Alpha-Beta/Gamma.101.epub', mime: 'application/epub+zip', content: makeEpub({ title: 'Alpha', author: 'Ann' }), compression: 'none' },
-    { ns: 'C', url: 'covers/101_cover_image.jpg', mime: 'image/jpeg', content: Buffer.from([0xff, 0xd8, 0xff, 0xd9]) },
-    // 102: only the scraper's (Python) form exists: every '/' replaced.
-    { ns: 'C', url: 'One-Two-Three.102', mime: 'text/html', content: bookHtml('One Two Three') },
-    { ns: 'C', url: 'The slang dictionary : $b Etymological, historical.103', mime: 'text/html', content: bookHtml('Slang') },
-    { ns: 'C', url: 'The slang dictionary : $b Etymological, historical.103.epub', mime: 'application/epub+zip', content: makeEpub({ title: 'Slang', author: 'Bob' }) },
-    { ns: 'C', url: `${'L'.repeat(230)}.104`, mime: 'text/html', content: bookHtml('Long') },
-    { ns: 'C', url: 'Epub Only Book.105.epub', mime: 'application/epub+zip', content: makeEpub({ title: 'Epub Only Book', author: 'Cy Penman' }) },
-    { ns: 'C', url: 'covers/105_cover_image.jpg', mime: 'image/jpeg', content: Buffer.from([0xff, 0xd8, 0xff, 0xd9]) },
-    { ns: 'C', url: 'Images Book.106', mime: 'text/html', content: IMAGES_HTML },
-    { ns: 'C', url: '106_logo.png', mime: 'image/png', content: png(120, 60), compression: 'none' },
-    { ns: 'C', url: '106_pic.png', mime: 'image/png', content: png(200, 100) },
-    { ns: 'C', url: '106_page.html', mime: 'text/html', content: '<p>not an image</p>' },
-    { ns: 'C', url: 'Orphan Author Book.108', mime: 'text/html', content: bookHtml('Orphan') },
-    { ns: 'M', url: 'Title', mime: 'text/plain', content: 'Synthetic Gutenberg' },
-    { ns: 'M', url: 'Description', mime: 'text/plain', content: 'Test library' },
-    { ns: 'M', url: 'Language', mime: 'text/plain', content: 'eng' },
-    { ns: 'M', url: 'Creator', mime: 'text/plain', content: 'gutenberg.org' },
-    { ns: 'M', url: 'Publisher', mime: 'text/plain', content: 'openZIM' },
-    { ns: 'M', url: 'Date', mime: 'text/plain', content: '2026-01-02' },
-    { ns: 'M', url: 'Name', mime: 'text/plain', content: 'synthetic_gutenberg' },
-    { ns: 'M', url: 'Illustration_48x48@1', mime: 'image/png', content: png(48, 48) },
-  ];
-  return writeZim(file, { entries, scheme: 'new' });
-}
-
-/** Old-scheme (gutenberg2zim 2.x-like) archive: index under -/js/, HTML in A, covers in I. */
-function writeOldGutenbergZim(file) {
-  const rows = [['Old Book', 'Ann Author', '110', 201, 'PE'], ['Zweites Buch', 'Hans Autor', '100', 202, 'PT']];
-  const entries = [
-    { ns: '-', url: 'js/full_by_popularity.js', mime: 'text/javascript', content: js('json_data', rows) },
-    { ns: '-', url: 'js/authors.js', mime: 'text/javascript', content: js('authors_json_data', [['Ann Author', '7']]) },
-    { ns: '-', url: 'js/languages.js', mime: 'text/javascript', content: js('languages_json_data', [['English', 'en', 1], ['Deutsch', 'de', 1]]) },
-    { ns: '-', url: 'js/lang_en_by_popularity.js', mime: 'text/javascript', content: js('json_data', [rows[0]]) },
-    { ns: '-', url: 'js/lang_de_by_popularity.js', mime: 'text/javascript', content: js('json_data', [rows[1]]) },
-    { ns: 'A', url: 'Old Book.201.html', mime: 'text/html', content: bookHtml('Old Book', '<p>Old text.</p><img src="../I/201_fig.png" alt="Fig">') },
-    { ns: '-', url: 'Old Book.201.epub', mime: 'application/epub+zip', content: makeEpub({ title: 'Old', author: 'Ann' }) },
-    { ns: 'I', url: '201_fig.png', mime: 'image/png', content: png(10, 20) },
-    { ns: 'I', url: 'covers/201_cover.jpg', mime: 'image/jpeg', content: Buffer.from([0xff, 0xd8, 0xff, 0xd9]) },
-    { ns: 'A', url: 'Zweites Buch.202', mime: 'text/html', content: bookHtml('Zweites Buch') },
-    { ns: 'M', url: 'Title', mime: 'text/plain', content: 'Old Gutenberg' },
-  ];
-  return writeZim(file, { entries, scheme: 'old', compression: 'zlib' });
-}
-
-/** A ZIM without a Gutenberg index: its HTML articles are the books. */
-function writeGenericZim(file, { creator = 'Wiki Folk' } = {}) {
-  const entries = [
-    { ns: 'C', url: 'index.html', title: 'Main Page', mime: 'text/html', content: bookHtml('Main') },
-    { ns: 'C', url: 'a.html', title: 'Article  A', mime: 'text/html', content: bookHtml('A', '<p>See <img src="img/x.png" alt="x"></p>') },
-    { ns: 'C', url: 'b.html', title: 'Article B', mime: 'text/html', content: bookHtml('B') },
-    { ns: 'C', url: 'img/x.png', mime: 'image/png', content: png(64, 32) },
-    { ns: 'C', url: 'style.css', mime: 'text/css', content: 'p{}' },
-    { ns: 'C', url: 'alias.html', redirectTo: 'C/a.html' },
-    { ns: 'M', url: 'Language', mime: 'text/plain', content: 'fra,eng' },
-    ...(creator ? [{ ns: 'M', url: 'Creator', mime: 'text/plain', content: creator }] : []),
-  ];
-  return writeZim(file, { entries, scheme: 'new', mainPage: 'C/index.html' });
-}
 
 const quietLog = () => {};
 function collectLog() {
@@ -227,7 +42,9 @@ describe('library helpers', () => {
     const lcc = { kind: 'gutenberg', title: 'Project Gutenberg Library', description: 'Slavic, Baltic and Albanian languages', name: 'gutenberg_en_lcc-pg' };
     assert.equal(libraryTitle(lcc), 'Gutenberg · Slavic, Baltic and Albanian languages (PG)');
     assert.equal(libraryTitle({ ...lcc, description: null }), 'Project Gutenberg Library', 'no class name: the ZIM’s title');
-    assert.equal(libraryTitle({ ...lcc, name: 'gutenberg_en_all' }), 'Project Gutenberg Library', 'not one class');
+    assert.equal(libraryTitle({ ...lcc, name: 'gutenberg_en_all' }), 'Gutenberg · every book (EN)', 'a whole collection, by its language');
+    assert.equal(libraryTitle({ ...lcc, name: 'gutenberg_mul_all' }), 'Gutenberg · every book in every language');
+    assert.equal(libraryTitle({ ...lcc, name: 'gutenberg_en_other' }), 'Project Gutenberg Library', 'neither: the ZIM’s title');
     assert.equal(libraryTitle({ ...lcc, kind: 'generic' }), 'Project Gutenberg Library');
     // Wikipedia editions of one topic share a title: the mini and nopic ones say what they are.
     const wp = { kind: 'wikipedia', title: 'Climate change by Wikipedia', description: 'x', name: 'wikipedia_en_climate-change' };
@@ -461,6 +278,93 @@ describe('ArchiveLibrary: synthetic Gutenberg archive', () => {
     assert.deepEqual(zlib.gunzipSync(gz), chunks[0].json);
     assert.equal(await chunks[0].gzip(), gz, 'computed once');
     assert.deepEqual(JSON.parse(chunks[0].json), { index: 0, blocks: chunks[0].blocks });
+  });
+});
+
+describe('ArchiveLibrary: a Gutenberg list longer than bookLookups (as from the web)', () => {
+  let eager;
+  let lazy;
+  let found;
+  /** Opens the file with bookLookups 0, counting the archive's lookups. */
+  const openLazy = async (file, id) => {
+    const archive = await ZimArchive.open(file);
+    const counted = [];
+    const find = archive.findEntry.bind(archive);
+    archive.findEntry = (ns, url) => { counted.push(`${ns}/${url}`); return find(ns, url); };
+    const lib = await ArchiveLibrary.open(archive, { log: quietLog, bookLookups: 0, id });
+    return { lib, counted };
+  };
+  before(async () => {
+    const file = path.join(tmp, 'lazy-gutenberg.zim');
+    writeGutenbergZim(file);
+    eager = await ArchiveLibrary.open(file, { log: quietLog, id: 'lazy-gutenberg' });
+    ({ lib: lazy, counted: found } = await openLazy(file, 'lazy-gutenberg'));
+  });
+  after(async () => {
+    await eager?.close();
+    await lazy?.close();
+  });
+
+  it('makes its books from the list alone: no book is looked up as it opens', async () => {
+    const [a, b] = [await eager.books(), await lazy.books()];
+    const listed = (x) => ({ id: x.id, title: x.title, subtitle: x.subtitle, fullTitle: x.fullTitle, author: x.author, authorId: x.authorId,
+      rank: x.rank, shelf: x.shelf, language: x.language });
+    assert.deepEqual(b.map(listed), a.map(listed));
+    assert.deepEqual(Object.keys(b[0]), Object.keys(a[0]), 'the same fields');
+    assert.deepEqual(found.filter((p) => /covers\/|\.\d{3}(\.html|\.epub)?$/.test(p)), [], `no book's files looked up: ${found.join(', ')}`);
+    // What the list says, not what is there.
+    const by = Object.fromEntries(b.map((x) => [x.id, x]));
+    assert.deepEqual(by['105'].formats, { html: false, epub: true, pdf: false });
+    assert.equal(by['107'].readable, true, 'the Ghost Book\'s list says it has HTML and an EPUB');
+    assert.equal(by['101'].cover, '/zim/lazy-gutenberg/C/covers/101_cover_image.jpg');
+    assert.equal(by['102'].cover, '/zim/lazy-gutenberg/C/covers/102_cover_image.jpg', 'its usual name, though it has none');
+    assert.equal(by['101'].epub, null, 'until it is opened');
+    assert.ok(b.every((x) => x.size === null), 'sizes unknown (a thickness from the id)');
+    assert.deepEqual((await lazy.info()).shelves, (await eager.info()).shelves);
+  });
+
+  it('looks a book\'s files up when it is first opened, and reads it as when all were looked up', async () => {
+    for (const id of ['101', '102', '103', '104', '105', '106', '108']) {
+      const [x, y] = [await eager.content(id), await lazy.content(id)];
+      assert.deepEqual(y.meta, { ...x.meta, cover: y.meta.cover }, id);
+      assert.deepEqual(y.chunks.map((c) => c.json.toString()), x.chunks.map((c) => c.json.toString()), id);
+    }
+    const [a, b] = [await eager.book('101'), await lazy.book('101')];
+    assert.equal(b.epub, a.epub, 'its EPUB found');
+    assert.deepEqual(b.formats, a.formats);
+    // A file the list promised but the archive lacks: unreadable once looked up, as before.
+    await assert.rejects(lazy.content('107'), (err) => err instanceof LibraryError && err.status === 404);
+    assert.equal((await lazy.book('107')).readable, false);
+  });
+
+  it('looks up once however many ask at once, and serves an EPUB\'s files before its text', async () => {
+    const file = path.join(tmp, 'lazy-gutenberg-2.zim');
+    writeGutenbergZim(file);
+    const { lib, counted } = await openLazy(file, 'lazy-2');
+    try {
+      const before = counted.length;
+      await Promise.all([lib.content('103'), lib.content('103'), lib.resource('103', 'OEBPS/content.opf')]);
+      assert.equal(counted.filter((p, i) => i >= before && /\.103/.test(p)).length, 2, 'its HTML and its EPUB, once each');
+      const epub = await eager.resource('105', 'OEBPS/content.opf');
+      assert.deepEqual(await lib.resource('105', 'OEBPS/content.opf'), epub, 'an EPUB-only book\'s files, never opened');
+    } finally {
+      await lib.close();
+    }
+  });
+
+  it('names an old-scheme archive\'s covers as gutenberg2zim 2.x did', async () => {
+    const file = path.join(tmp, 'lazy-old.zim');
+    writeOldGutenbergZim(file);
+    const { lib } = await openLazy(file, 'lazy-old');
+    try {
+      const [old] = await lib.books();
+      assert.equal(old.cover, '/zim/lazy-old/I/covers/201_cover.jpg');
+      assert.ok(await lib.archive.findPath('I/covers/201_cover.jpg'), 'there');
+      assert.equal((await lib.content('201')).meta.source, 'html');
+      assert.equal((await lib.book('201')).epub, '/zim/lazy-old/-/Old%20Book.201.epub');
+    } finally {
+      await lib.close();
+    }
   });
 });
 

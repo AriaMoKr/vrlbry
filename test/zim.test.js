@@ -6,8 +6,9 @@ import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import zlib from 'node:zlib';
-import { LRUCache } from '../server/util/lru.js';
-import { ZimArchive, ZimError } from '../server/zim/reader.js';
+import { nodePlatform } from '../server/platform-node.js';
+import { LRUCache } from '../public/js/core/util/lru.js';
+import { ZimArchive, ZimError } from '../public/js/core/zim/reader.js';
 import { writeZim } from './helpers/zimwriter.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -142,6 +143,34 @@ describe('LRUCache', () => {
     c.set(2, { n: 60 });
     assert.deepEqual([...c.keys()], [2]);
     assert.equal(c.bytes, 60);
+  });
+});
+
+describe('ZimArchive: from a Blob (as a browser opens a File)', () => {
+  it('reads the same entries and content as from the file', async () => {
+    const info = writeZim(tmpFile('blob.zim'), { entries: newSchemeEntries(), mainPage: 'W/mainPage', blobsPerCluster: 3 });
+    const fromFile = await ZimArchive.open(info.filePath);
+    const fromBlob = await ZimArchive.open(new File([fs.readFileSync(info.filePath)], 'blob.zim'));
+    try {
+      assert.equal(fromBlob.filePath, 'blob.zim', 'the File name, for messages');
+      assert.deepEqual(fromBlob.header, fromFile.header);
+      assert.deepEqual(fromBlob.mimeTypes, fromFile.mimeTypes);
+      // Content as bytes, or the error (without the file name) for the corrupt test entries.
+      const content = (zim, e) => zim.getContent(e).then((c) => c && Buffer.from(c.data).toString('base64'),
+        (err) => err.message.slice(zim.filePath.length));
+      for (let i = 0; i < fromFile.entryCount; i++) {
+        const [a, b] = [await fromFile.getEntryByIndex(i), await fromBlob.getEntryByIndex(i)];
+        assert.deepEqual(b, a);
+        assert.deepEqual(await content(fromBlob, b), await content(fromFile, a), a.path);
+      }
+      assert.deepEqual(await fromBlob.getMetadata(), await fromFile.getMetadata());
+      // A truncated file fails the same way.
+      const cut = new Blob([fs.readFileSync(info.filePath).subarray(0, 60)]);
+      await assert.rejects(ZimArchive.open(cut), /not a ZIM file \(too small\)/);
+    } finally {
+      await fromFile.close();
+      await fromBlob.close();
+    }
   });
 });
 
@@ -369,6 +398,25 @@ describe('ZimArchive: new namespace scheme (zstd + uncompressed clusters)', () =
       assert.equal(await fresh.getBlobSize(z3, { cheapOnly: true }), 3000, 'cluster now cached');
       assert.equal(dec.n, 1);
       assert.equal(await fresh.getBlobSize(await fresh.findPath('C/redir')), 14, 'follows redirects');
+    } finally {
+      await fresh.close();
+    }
+  });
+
+  it('getContentHead: an uncompressed blob read only as far as asked, a compressed one from its cluster', async () => {
+    const fresh = await ZimArchive.open(info.filePath);
+    try {
+      const reads = spyReads(fresh);
+      const head = await fresh.getContentHead('C/big.bin', 1000);
+      assert.equal(head.size, BIG.length);
+      assert.ok(head.data.equals(BIG.subarray(0, 1000)));
+      assert.ok(reads.every((r) => r.len <= 4096), `no read of the whole blob: ${JSON.stringify(reads)}`);
+      assert.ok((await fresh.getContentHead('C/big.bin', BIG.length * 2)).data.equals(BIG), 'all of it when shorter');
+      const z1 = await fresh.getContentHead('C/z1', 10);
+      assert.equal(z1.size, 2000);
+      assert.deepEqual([...z1.data], [...(await fresh.getContent('C/z1')).data.subarray(0, 10)]);
+      assert.equal((await fresh.getContentHead('C/redir', 4)).size, 14, 'follows redirects');
+      assert.equal(await fresh.getContentHead('C/nothing-here', 4), null);
     } finally {
       await fresh.close();
     }
@@ -733,6 +781,243 @@ describe('ZimArchive: real Gutenberg ZIM', { skip: !fs.existsSync(REAL_ZIM) && '
       }
     } finally {
       await cold.close();
+    }
+  });
+});
+
+describe('ZimArchive: directory block cache', () => {
+  /** Opens a ZIM through a source that counts its reads. */
+  async function openCounting(file, opts) {
+    const source = await nodePlatform.openFile(file);
+    const count = { reads: 0, bytes: 0 };
+    const read = source.read.bind(source);
+    source.read = (pos, len) => {
+      count.reads++;
+      count.bytes += len;
+      return read(pos, len);
+    };
+    return { zim: await ZimArchive.open(source, opts), count };
+  }
+
+  it('serves lookups from cached blocks: a read per block instead of one per search step', async () => {
+    // 3,000 entries make a directory of ~250 KB, so dirents also straddle the 64 KB block boundaries.
+    const entries = Array.from({ length: 3000 }, (_, i) => ({
+      ns: 'C', url: `article/${String(i).padStart(4, '0')}.html`, title: `Article ${i} of the test set`, mime: 'text/html', content: `<p>${i}</p>`,
+    }));
+    const info = writeZim(tmpFile('dir-cache.zim'), { entries });
+    // No parsed-entry cache, so every search step reads; the plain archive has no block cache either.
+    const cached = await openCounting(info.filePath, { direntCacheEntries: 0 });
+    const plain = await openCounting(info.filePath, { direntCacheEntries: 0, blockCacheBytes: 0 });
+    try {
+      const opened = { cached: cached.count.reads, plain: plain.count.reads };
+      for (const e of entries) {
+        const [a, b] = [await cached.zim.findEntry('C', e.url), await plain.zim.findEntry('C', e.url)];
+        assert.equal(a?.title, e.title, e.url);
+        assert.deepEqual(a, b);
+      }
+      assert.equal(await cached.zim.findEntry('C', 'article/none.html'), null);
+      assert.equal(await cached.zim.lowerBound('C', 'article/1500'), await plain.zim.lowerBound('C', 'article/1500'));
+      const lookups = { cached: cached.count.reads - opened.cached, plain: plain.count.reads - opened.plain };
+      assert.ok(lookups.plain > 30000, `without the cache, a read per search step: ${lookups.plain}`);
+      assert.ok(lookups.cached <= 12, `with it, a read per directory block: ${lookups.cached}`);
+    } finally {
+      await cached.zim.close();
+      await plain.zim.close();
+    }
+  });
+
+  it('reads a small uncompressed cluster whole (wholeClusterBytes), a big one blob by blob', async () => {
+    // Clusters of 3 uncompressed blobs: two small clusters (~60 KB) and one over the limit (300 KB).
+    const small = Array.from({ length: 6 }, (_, i) => ({ ns: 'C', url: `img/${i}.bin`, mime: 'application/octet-stream', content: bytes(20000 + i, 10 + i), compression: 'none' }));
+    const big = Array.from({ length: 3 }, (_, i) => ({ ns: 'C', url: `big/${i}.bin`, mime: 'application/octet-stream', content: bytes(100000 + i, 20 + i), compression: 'none' }));
+    const info = writeZim(tmpFile('whole-cluster.zim'), { entries: [...small, ...big], blobsPerCluster: 3 });
+    const whole = await openCounting(info.filePath, { wholeClusterBytes: 100000 });
+    const plain = await openCounting(info.filePath, { wholeClusterBytes: 0 });
+    try {
+      const data = async (zim, url) => Buffer.from((await zim.getContent(`C/${url}`)).data);
+      const reads = (c) => c.count.reads;
+      // The first blob of a cluster is read on its own; the second reads the cluster whole, and
+      // the rest of it then costs nothing.
+      const c0 = (await whole.zim.findPath('C/img/0.bin')).cluster;
+      let n = reads(whole);
+      assert.deepEqual(await data(whole.zim, 'img/0.bin'), small[0].content);
+      assert.ok(reads(whole) > n, 'the blob was read');
+      assert.equal(whole.zim._clusters.has(c0), false, 'one blob wanted: not read whole');
+      n = reads(whole);
+      assert.deepEqual(await data(whole.zim, 'img/1.bin'), small[1].content);
+      assert.ok(reads(whole) > n, 'the cluster was read');
+      assert.equal(whole.zim._clusters.has(c0), true, 'two blobs wanted: read whole');
+      n = reads(whole);
+      for (const e of [small[2], small[0]]) assert.deepEqual(await data(whole.zim, e.url), e.content);
+      assert.equal(reads(whole), n, 'the other blobs of the cluster came from the cache');
+      // A size alone never reads a cluster whole (sizing every book at open would read gigabytes).
+      const e4 = await whole.zim.findPath('C/img/4.bin');
+      assert.equal(await whole.zim.getBlobSize(e4, { cheapOnly: true }), 20004);
+      assert.equal(await whole.zim.getBlobSize(await whole.zim.findPath('C/img/5.bin'), { cheapOnly: true }), 20005);
+      assert.equal(whole.zim._clusters.has(e4.cluster), false, 'the sizes came from the offset table');
+      assert.deepEqual(await data(whole.zim, 'img/4.bin'), small[4].content);
+      assert.deepEqual(await data(whole.zim, 'img/5.bin'), small[5].content);
+      assert.equal(whole.zim._clusters.has(e4.cluster), true);
+      // Over the limit: blob by blob, each read from the file every time.
+      n = reads(whole);
+      assert.deepEqual(await data(whole.zim, 'big/1.bin'), big[1].content);
+      assert.deepEqual(await data(whole.zim, 'big/1.bin'), big[1].content);
+      assert.ok(reads(whole) - n >= 2, `each read of a big cluster's blob reads the file: ${reads(whole) - n}`);
+      assert.equal(whole.zim._clusters.has((await whole.zim.findPath('C/big/1.bin')).cluster), false);
+      // Both ways give the same bytes, and the whole-read archive makes fewer reads.
+      n = reads(whole);
+      const m = reads(plain);
+      for (const e of [...small, ...big]) assert.deepEqual(await data(whole.zim, e.url), await data(plain.zim, e.url), e.url);
+      assert.ok(reads(whole) - n < reads(plain) - m, `whole ${reads(whole) - n} reads, blob by blob ${reads(plain) - m}`);
+    } finally {
+      await whole.zim.close();
+      await plain.zim.close();
+    }
+  });
+
+  it('looks metadata, the main page and the search indexes up in the directory\'s tail, read at open', async () => {
+    const entries = [
+      ...Array.from({ length: 3000 }, (_, i) => ({ ns: 'C', url: `article/${String(i).padStart(4, '0')}.html`, title: `Article ${i} of the test set`, mime: 'text/html', content: `<p>${i}</p>` })),
+      { ns: 'M', url: 'Title', mime: 'text/plain', content: 'Tail test' },
+      { ns: 'M', url: 'Language', mime: 'text/plain', content: 'eng' },
+      { ns: 'M', url: 'Illustration_48x48@1', mime: 'image/png', content: Buffer.from([0x89, 0x50]) },
+      { ns: 'W', url: 'mainPage', redirectTo: 'C/article/0000.html' },
+      { ns: 'X', url: 'listing/titleOrdered/v1', mime: 'application/octet-stream', content: Buffer.alloc(8) },
+    ];
+    const info = writeZim(tmpFile('tail.zim'), { entries, scheme: 'new' });
+    const { zim, count } = await openCounting(info.filePath, { direntCacheEntries: 0 });
+    try {
+      const n = count.reads;
+      assert.equal(await zim.lowerBound('M', ''), info.indexOf('M/Illustration_48x48@1'));
+      assert.equal(await zim.lowerBound('N', ''), info.indexOf('W/mainPage'));
+      assert.equal((await zim.findEntry('W', 'mainPage')).index, info.indexOf('W/mainPage'));
+      assert.equal(await zim.findEntry('M', 'Creator'), null);
+      assert.equal((await zim.findPath('X/listing/titleOrdered/v1')).mime, 'application/octet-stream');
+      assert.equal(count.reads, n, 'no read: the tail was read at open');
+      assert.deepEqual(await zim.getMetadata(), { Title: 'Tail test', Language: 'eng' });
+      assert.equal((await zim.getMainEntry()).url, 'article/0000.html');
+      // Keys before the tail are searched as before, those in it too.
+      for (const e of [entries[0], entries[1499], entries[2999]]) assert.equal((await zim.findEntry('C', e.url)).title, e.title);
+      assert.equal(await zim.lowerBound('C', 'article/1500'), info.indexOf('C/article/1500.html'));
+      assert.equal(await zim.lowerBound('C', 'article/2999x'), info.indexOf('M/Illustration_48x48@1'));
+      assert.equal(await zim.lowerBound('Z', ''), zim.entryCount);
+      assert.equal(await zim.lowerBound('-', ''), 0);
+    } finally {
+      await zim.close();
+    }
+  });
+
+  it('reads scattered entries together (getEntriesByIndex): neighbours with one read, never the gaps between', async () => {
+    const entries = Array.from({ length: 3000 }, (_, i) => ({ ns: 'C', url: `e/${String(i).padStart(4, '0')}.html`, title: `Entry ${i} of the batch test`, mime: 'text/html', content: `<p>${i}</p>` }));
+    const info = writeZim(tmpFile('batch.zim'), { entries });
+    // Small blocks and no caches: every read shows.
+    const opts = { direntCacheEntries: 0, blockCacheBytes: 0, blockBytes: 4096 };
+    const batch = await openCounting(info.filePath, opts);
+    const single = await openCounting(info.filePath, opts);
+    const lengths = [];
+    const read = batch.zim._source.read.bind(batch.zim._source);
+    batch.zim._source.read = (pos, len) => {
+      lengths.push(len);
+      return read(pos, len);
+    };
+    try {
+      const near = Array.from({ length: 200 }, (_, k) => 1000 + 3 * k); // every third of 600 entries
+      const indices = [2999, ...near, 5, 1300, 5, 0];
+      const [b0, s0] = [batch.count.reads, single.count.reads];
+      const got = await batch.zim.getEntriesByIndex(indices);
+      const one = [];
+      for (const i of indices) one.push(await single.zim.getEntryByIndex(i));
+      assert.deepEqual(got.map((e) => e.index), indices, 'in the order asked, duplicates and all');
+      assert.deepEqual(got, one);
+      assert.equal(got[1].title, 'Entry 1000 of the batch test');
+      const [nb, ns] = [batch.count.reads - b0, single.count.reads - s0];
+      assert.ok(nb <= 8 && nb * 20 < ns, `together ${nb} reads, one by one ${ns}`);
+      // The 600 entries' dirents are read with one read or two; the far ones on their own.
+      assert.ok(Math.max(...lengths) < 120 * 1024, `no read spans the gaps: ${Math.max(...lengths)} bytes`);
+      await assert.rejects(batch.zim.getEntriesByIndex([0, 3000]), /out of range/);
+    } finally {
+      await batch.zim.close();
+      await single.zim.close();
+    }
+  });
+
+  it('takes the namespace scheme from the version (6.1 and later), and checks older files', async () => {
+    const entries = Array.from({ length: 3000 }, (_, i) => ({ ns: 'C', url: `p/${String(i).padStart(4, '0')}.html`, title: `Page ${i} of the scheme test`, mime: 'text/html', content: `<p>${i}</p>` }));
+    const v61 = await openCounting(writeZim(tmpFile('scheme-61.zim'), { entries, minor: 1 }).filePath);
+    const v60 = await openCounting(writeZim(tmpFile('scheme-60.zim'), { entries, minor: 0 }).filePath);
+    try {
+      assert.equal(v61.zim.newNamespaceScheme, true);
+      assert.equal(v60.zim.newNamespaceScheme, true, 'a 6.0 file with C entries: found by a search');
+      assert.ok(v61.count.reads < v60.count.reads, `6.1 opened in ${v61.count.reads} reads, 6.0 in ${v60.count.reads}`);
+    } finally {
+      await v61.zim.close();
+      await v60.zim.close();
+    }
+  });
+
+  it('reads a compressed cluster in one read with its head (wholeCompressedBytes), and copes with a wrong guess', async () => {
+    // Random bytes do not compress: each zstd cluster of two ~100 KB pages is ~200 KB.
+    const pages = Array.from({ length: 4 }, (_, i) => ({ ns: 'C', url: `page/${i}.html`, mime: 'text/html', content: bytes(100000, 30 + i) }));
+    // Text in an uncompressed cluster: a MIME type libzim compresses, stored uncompressed.
+    const plainText = Array.from({ length: 2 }, (_, i) => ({ ns: 'C', url: `text/${i}.txt`, mime: 'text/plain', content: bytes(50000, 40 + i), compression: 'none' }));
+    // A cluster last of all (its end is not known exactly: never read whole), so the others are not.
+    const filler = { ns: 'C', url: 'z/filler.bin', mime: 'application/octet-stream', content: bytes(1000, 50), compression: 'none' };
+    const info = writeZim(tmpFile('one-read.zim'), { entries: [...pages, ...plainText, filler], blobsPerCluster: 2 });
+    assert.deepEqual([...pages, ...plainText, filler].map((e) => info.clusterOf(`C/${e.url}`)), [0, 0, 1, 1, 2, 2, 3]);
+    const one = await openCounting(info.filePath, { wholeCompressedBytes: 1 << 20 });
+    const two = await openCounting(info.filePath, { wholeClusterBytes: 1 << 20 }); // uncompressed ones only
+    const small = await openCounting(info.filePath, { wholeCompressedBytes: 100000 }); // under a cluster's size
+    try {
+      const data = async (zim, url) => Buffer.from((await zim.getContent(`C/${url}`)).data);
+      const entryOf = async (zim, url) => zim.findPath(`C/${url}`);
+      for (const c of [one, two, small]) for (const e of [...pages, ...plainText]) await entryOf(c.zim, e.url); // lookups first
+      const cost = async (c, urls) => {
+        const n = c.count.reads;
+        const got = await Promise.all(urls.map((u) => data(c.zim, u)));
+        return { reads: c.count.reads - n, got };
+      };
+      // Two pages of one cluster asked for at once: one read of the cluster, head and all. (The
+      // second cluster: the first one's head lies in the block of the header, cached at open.)
+      const a = await cost(one, ['page/2.html', 'page/3.html']);
+      assert.equal(a.reads, 1, `one read: ${a.reads}`);
+      assert.deepEqual(a.got, [pages[2].content, pages[3].content]);
+      const b = await cost(two, ['page/2.html', 'page/3.html']);
+      assert.equal(b.reads, 2, `the head's block, then the cluster: ${b.reads}`);
+      const c = await cost(small, ['page/2.html']);
+      assert.equal(c.reads, 2, `a cluster over wholeCompressedBytes: head, then the rest: ${c.reads}`);
+      assert.deepEqual(c.got, [pages[2].content]);
+      // Expected compressed but stored uncompressed: read whole all the same, kept whole, right bytes.
+      const d = await cost(one, ['text/0.txt']);
+      assert.equal(d.reads, 1);
+      assert.deepEqual(d.got, [plainText[0].content]);
+      const t1 = await entryOf(one.zim, 'text/1.txt');
+      assert.equal(one.zim._clusters.has(t1.cluster), true, 'kept whole');
+      assert.deepEqual((await cost(one, ['text/1.txt'])), { reads: 0, got: [plainText[1].content] });
+      // Without a hint (an image's MIME type), nothing changes: the head first.
+      for (const e of [...pages, ...plainText]) assert.deepEqual(await data(one.zim, e.url), await data(two.zim, e.url), e.url);
+    } finally {
+      for (const c of [one, two, small]) await c.zim.close();
+    }
+  });
+});
+
+describe('ZimArchive: clusterBytes (sizes estimated without reads)', () => {
+  it('gives a cluster\'s bytes from the pointers, null for the last one before a section', async () => {
+    const lens = [1000, 2000, 3000, 4000, 5000];
+    const entries = lens.map((n, i) => ({ ns: 'C', url: `b${i}.bin`, mime: 'application/octet-stream', content: bytes(n, i), compression: 'none' }));
+    const info = writeZim(tmpFile('cluster-bytes.zim'), { entries, blobsPerCluster: 3 });
+    const zim = await ZimArchive.open(info.filePath);
+    try {
+      const c = await Promise.all(entries.map((e) => zim.findPath(`C/${e.url}`)));
+      assert.equal(c[0].cluster, c[2].cluster);
+      assert.notEqual(c[0].cluster, c[3].cluster);
+      // Compression byte, (n + 1) offsets of 4 bytes, the blobs.
+      assert.equal(zim.clusterBytes(c[0].cluster), 1 + 4 * 4 + 1000 + 2000 + 3000);
+      assert.equal(zim.clusterBytes(c[3].cluster), null, 'the last cluster runs up to the directory: unknown');
+      assert.equal(zim.clusterBytes(99), null);
+      assert.equal(zim.clusterBytes(-1), null);
+    } finally {
+      await zim.close();
     }
   });
 });

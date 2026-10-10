@@ -81,7 +81,12 @@ export class World {
    * @param {Array<{ library: object, books: object[] }>} collections
    * @param {{ sort?: 'title'|'author'|'popularity' }} [opts]
    */
-  async build(collections, { sort = 'title' } = {}) {
+  /**
+   * @param {object} [opts] emptyText: what the sign of a room without books says this time, in
+   *   place of `emptyText` (its libraries are still being indexed, say)
+   */
+  async build(collections, { sort = 'title', emptyText = null } = {}) {
+    this._emptyNow = emptyText;
     this.sort = sort;
     // Pack each library into its own run of bookcases.
     const cases = [];
@@ -213,7 +218,7 @@ export class World {
   }
 
   _emptySign() {
-    const canvas = makeSignCanvas(...this.emptyText);
+    const canvas = makeSignCanvas(...(this._emptyNow ?? this.emptyText));
     const sign = makeSign(canvas, 2, 0.5, 4);
     sign.position.set(0, 1.8, -2.5);
     this.group.add(sign);

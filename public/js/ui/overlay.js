@@ -1,12 +1,34 @@
 // DOM overlay for non-VR use (SPEC §5.6): library card, search, Enter VR, help, loading, toasts.
 // Hidden while an immersive session is running.
 
+import { imageSource } from '../api.js';
+import { EXAMPLE_ZIM, MORE_ZIMS_URL, isLocalUrl } from '../local/local.js';
+import { droppedHandles } from '../local/handles.js';
+import { KiwixDialog } from './kiwix-dialog.js';
 import { bookIndex, matchBooks, findArticles } from '../search.js';
 import { load, save } from '../util/storage.js';
 
 const ARTICLE_RESULTS = 8; // per Wikipedia library
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+/** A web address's host, for a library read from the web ("mirror.download.kiwix.org"). */
+const hostOf = (url) => { try { return new URL(url).hostname; } catch { return 'the web'; } };
+
+/** An <img>'s source attribute; a local library's image is loaded after rendering (fillLocalImages). */
+const imgSrc = (url) => (isLocalUrl(url) ? `data-local-src="${esc(url)}"` : `src="${esc(url)}"`);
+
+/** Loads the local library images rendered under `root` (blob URLs, released once loaded). */
+function fillLocalImages(root) {
+  for (const img of root.querySelectorAll('img[data-local-src]')) {
+    const url = img.dataset.localSrc;
+    img.removeAttribute('data-local-src');
+    imageSource(url).then((source) => {
+      if (!source.url) return;
+      img.onload = img.onerror = () => source.release();
+      img.src = source.url;
+    }).catch(() => {});
+  }
+}
 
 const HELP = {
   desktop: [
@@ -71,7 +93,25 @@ export class Overlay {
       <section class="ov-card" aria-label="Library">
         <header><span class="ov-brand">vrlbry</span><span class="ov-version"></span><span class="ov-tools"><button class="ov-rescan" aria-label="Rescan the ZIM folder" title="Rescan the ZIM folder">⟳</button><button class="ov-collapse" aria-label="Collapse" title="Collapse">–</button></span></header>
         <div class="ov-libs"></div>
+        <div class="ov-open">
+          <button class="ov-open-btn" title="Read ZIM files from this device, in the browser">Open ZIM files…</button>
+          <input class="ov-open-input" type="file" accept=".zim" multiple hidden>
+          <form class="ov-url" autocomplete="off">
+            <input class="ov-url-input" type="text" inputmode="url" spellcheck="false" autocapitalize="off"
+              placeholder="or the web address of a ZIM file" aria-label="Web address of a ZIM file">
+            <button type="submit" title="Read it from the web, a little at a time">Open</button>
+          </form>
+          <button class="ov-kiwix-btn" hidden title="The ZIMs this library reads well, from library.kiwix.org">Browse Kiwix's library…</button>
+          <div class="ov-reopen" hidden>Last time: <span class="ov-reopen-names"></span>
+            <button class="ov-reopen-btn">Reopen</button><button class="ov-reopen-forget" title="Forget these files">Forget</button></div>
+          <div class="ov-open-hint">No ZIM file yet? Read
+            <button class="ov-try-btn" type="button" title="Read it from Kiwix's mirror, a little at a time">${esc(EXAMPLE_ZIM.title)}</button>
+            from Kiwix, or <a href="${esc(EXAMPLE_ZIM.url)}" target="_blank" rel="noopener">download it</a>
+            (${esc(EXAMPLE_ZIM.size)}) and open it here.
+            <a href="${esc(MORE_ZIMS_URL)}" target="_blank" rel="noopener">More Gutenberg ZIMs</a>: paste one's address above.</div>
+        </div>
       </section>
+      <div class="ov-drop" hidden>Drop ZIM files, or a ZIM's link, to open them</div>
       <div class="ov-search" role="search">
         <input type="search" placeholder="Find a book, author or article…" aria-label="Find a book or article" autocomplete="off" spellcheck="false">
         <ul class="ov-results" role="listbox" hidden></ul>
@@ -100,12 +140,103 @@ export class Overlay {
         <button class="ov-update-never">Don't show again</button>
         <button class="ov-update-close" aria-label="Dismiss" title="Dismiss">×</button>
       </div>
-      <div class="ov-toasts" aria-live="polite"></div>`;
+      <div class="ov-toasts" aria-live="polite"></div>
+      <section class="ov-status" aria-label="Your ZIM files" hidden>
+        <div class="ov-status-head">
+          <span class="ov-status-text" role="status"></span>
+          <button class="ov-status-stop" hidden>Stop</button>
+          <button class="ov-status-toggle" aria-expanded="false" title="Show each file">▸</button>
+        </div>
+        <div class="ov-toast-bar"><div></div></div>
+        <ul class="ov-status-rows" hidden></ul>
+      </section>`;
     this.$ = (sel) => root.querySelector(sel);
     this.$('.ov-collapse').onclick = () => this.setCardCollapsed(!this.$('.ov-card').classList.contains('collapsed'));
     // A minimized library card stays minimized when the page is reloaded.
     if (load('card', 'open') === 'collapsed') this.setCardCollapsed(true);
     this.$('.ov-rescan').onclick = () => this._rescan?.();
+    // ZIM files from this device (the local library, step 2): a picker, or dropped on the page.
+    // A browser with the File System Access API picks through onPickFiles (handles, so the files
+    // can be reopened after a reload: local/handles.js); the file input is the fallback.
+    const picker = this.$('.ov-open-input');
+    this.$('.ov-open-btn').onclick = async () => {
+      if (this._pickFiles) {
+        try {
+          const picked = await this._pickFiles();
+          if (picked?.files.length) this._openFiles?.(picked.files, picked.handles);
+          return;
+        } catch { /* no such picker after all: the input */ }
+      }
+      picker.click();
+    };
+    picker.onchange = () => {
+      const files = [...picker.files];
+      picker.value = ''; // the same file can be picked again
+      if (files.length) this._openFiles?.(files, []);
+    };
+    // A ZIM's web address (milestone 3): read where it is, a little at a time.
+    this.$('.ov-url').onsubmit = (e) => {
+      e.preventDefault();
+      const input = this.$('.ov-url-input');
+      const typed = input.value.trim();
+      if (!typed) return input.focus();
+      input.value = '';
+      this._openUrl?.(typed);
+    };
+    this.$('.ov-try-btn').onclick = () => this._openUrl?.(EXAMPLE_ZIM.url);
+    this.$('.ov-kiwix-btn').onclick = () => this._kiwix?.show();
+    // A local library's × in the list: close it (and forget it).
+    this.$('.ov-libs').onclick = (e) => {
+      const btn = e.target.closest('.ov-lib-close');
+      if (btn) this._closeLibrary?.(btn.dataset.id);
+    };
+    this.$('.ov-reopen-btn').onclick = () => this._reopen?.();
+    this.$('.ov-reopen-forget').onclick = () => this._forget?.();
+    // The index builds' status box: its rows shown or not (remembered).
+    this._statusOpen = load('statusOpen', false) === true;
+    this.$('.ov-status-toggle').onclick = () => {
+      this._statusOpen = !this._statusOpen;
+      save('statusOpen', this._statusOpen);
+      this._renderStatus();
+    };
+    this.$('.ov-status-stop').onclick = () => this._stopOpening?.();
+    this.$('.ov-status-rows').onclick = (e) => {
+      const btn = e.target.closest('.ov-status-cancel');
+      if (btn) this._cancelIndexing?.(btn.dataset.id);
+    };
+    // Files, or a link (a ZIM's address, dragged from another page): text/uri-list.
+    const hasFiles = (e) => [...(e.dataTransfer?.types ?? [])].some((t) => t === 'Files' || t === 'text/uri-list');
+    let dragDepth = 0;
+    document.addEventListener('dragenter', (e) => {
+      if (!hasFiles(e)) return;
+      dragDepth++;
+      this.$('.ov-drop').hidden = false;
+    });
+    document.addEventListener('dragleave', (e) => {
+      if (hasFiles(e) && --dragDepth <= 0) {
+        dragDepth = 0;
+        this.$('.ov-drop').hidden = true;
+      }
+    });
+    document.addEventListener('dragover', (e) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+    });
+    document.addEventListener('drop', (e) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      dragDepth = 0;
+      this.$('.ov-drop').hidden = true;
+      const files = [...e.dataTransfer.files];
+      if (!files.length) {
+        const link = (e.dataTransfer.getData('text/uri-list') || '').split(/\r?\n/).find((l) => l && !l.startsWith('#'));
+        if (link) this._openUrl?.(link);
+        return;
+      }
+      // The handles must be asked for during the event; they arrive later.
+      droppedHandles(e.dataTransfer).then((handles) => this._openFiles?.(files, handles));
+    });
     // The debug report describes the page as it was when the help was opened: a click there (or
     // anywhere outside the search box) closes the search results, so the state is taken on
     // pointerdown, before that happens (capture phase).
@@ -208,14 +339,16 @@ export class Overlay {
     this.$('.ov-libs').innerHTML = libraries.length
       ? libraries.map((l) => `
         <div class="ov-lib">
-          ${l.illustration ? `<img src="${esc(l.illustration)}" alt="" width="40" height="40">` : ''}
-          <div><div class="ov-lib-title">${esc(l.title)}</div>
+          ${l.illustration ? `<img ${imgSrc(l.illustration)} alt="" width="40" height="40">` : ''}
+          <div class="ov-lib-body"><div class="ov-lib-title">${esc(l.title)}</div>
           <div class="ov-lib-desc">${esc(l.longDescription || (l.description && !String(l.title).includes(l.description) ? l.description : ''))}</div>
           <div class="ov-lib-meta">${l.indexing && l.indexing.stage !== 'failed'
             ? (l.indexing.stage === 'queued' ? 'waiting to index…' : `indexing… ${Math.round((l.indexing.progress || 0) * 100)}%`)
-            : `${(booksByLib[l.id]?.length || 0).toLocaleString()} ${l.kind === 'wikisource' ? 'works' : l.kind === 'wikipedia' ? `volumes (${(l.articles ?? 0).toLocaleString()} articles)` : 'books'}`} · ${esc(l.file)}</div></div>
+            : `${(booksByLib[l.id]?.length || 0).toLocaleString()} ${l.kind === 'wikisource' ? 'works' : l.kind === 'wikipedia' ? `volumes (${(l.articles ?? 0).toLocaleString()} articles)` : 'books'}`} · ${esc(l.file)}${l.url ? ` · from ${esc(hostOf(l.url))}` : ''}</div></div>
+          ${String(l.id).startsWith('~') ? `<button class="ov-lib-close" data-id="${esc(l.id)}" title="${l.url ? 'Close it (and do not reopen it)' : 'Close this file'}" aria-label="Close ${esc(l.title)}">×</button>` : ''}
         </div>`).join('') + (libraries.length > 1 ? `<div class="ov-lib-meta">${total.toLocaleString()} books in ${libraries.length} libraries</div>` : '')
-      : `<div class="ov-lib-desc">${this._static ? 'This online version has no books yet. Run vrlbry yourself (see the README) to read your own ZIM files.' : 'No .zim files were found in the server folder. Add some and reload.'}</div>`;
+      : `<div class="ov-lib-desc">${this._static ? 'This online version has no books yet. Open a ZIM file from this device or the web below, or run vrlbry yourself (see the README).' : 'No .zim files were found in the server folder. Add some and reload, or open one from this device or the web below.'}</div>`;
+    fillLocalImages(this.$('.ov-libs'));
     this._index = bookIndex(libraries, booksByLib);
     this._libraries = libraries;
   }
@@ -252,6 +385,80 @@ export class Overlay {
   /** cb(libId, { title, book, n }) for a Wikipedia article chosen in the search results. */
   onArticlePick(cb) { this._pickArticle = cb; }
   onRescan(cb) { this._rescan = cb; }
+
+  /**
+   * What the local library is doing with the files opened here, in one box at the page's foot
+   * (not a toast each: six of them covered the view, and an opening toast beside the box made
+   * two): its head line (opening files, or indexing), an overall bar, a Stop while several files
+   * open, and behind a toggle (remembered) a row per index build (a Wikipedia or Wikisource
+   * file). null hides it.
+   * @param {{ summary: string, fraction: number, stop?: { label: string, disabled?: boolean } | null,
+   *   rows: Array<{ id: string, title: string, line: string, fraction: number, waiting: boolean }> } | null} status
+   */
+  setStatus(status) {
+    this._status = status;
+    this._renderStatus();
+  }
+
+  /** fn(libId): the × of a build's row (stop it and close that file). */
+  onIndexingCancel(fn) { this._cancelIndexing = fn; }
+  /** fn(): the head's Stop (open no more of the files being opened). */
+  onStopOpening(fn) { this._stopOpening = fn; }
+
+  _renderStatus() {
+    const box = this.$('.ov-status');
+    const s = this._status;
+    box.hidden = !s;
+    if (!s) return;
+    const pct = (f) => `${Math.round(Math.min(1, Math.max(0, f)) * 100)}%`;
+    this.$('.ov-status-text').textContent = s.summary;
+    this.$('.ov-status > .ov-toast-bar > div').style.width = pct(s.fraction);
+    const stop = this.$('.ov-status-stop');
+    stop.hidden = !s.stop;
+    if (s.stop) {
+      stop.textContent = s.stop.label;
+      stop.disabled = !!s.stop.disabled;
+    }
+    const toggle = this.$('.ov-status-toggle');
+    toggle.hidden = !s.rows.length;
+    toggle.textContent = this._statusOpen ? '▾' : '▸';
+    toggle.setAttribute('aria-expanded', String(this._statusOpen));
+    toggle.title = this._statusOpen ? 'Hide the files' : 'Show each file';
+    const list = this.$('.ov-status-rows');
+    list.hidden = !this._statusOpen || !s.rows.length;
+    if (list.hidden) return;
+    list.innerHTML = s.rows.map((r) => `<li class="${r.waiting ? 'waiting' : ''}">
+      <div class="ov-status-row"><span class="ov-status-title">${esc(r.title)}</span><span class="ov-status-line">${esc(r.line)}</span>
+        <button class="ov-status-cancel" data-id="${esc(r.id)}" title="Stop and close this file" aria-label="Stop and close ${esc(r.title)}">×</button></div>
+      <div class="ov-toast-bar"><div style="width:${pct(r.fraction)}"></div></div></li>`).join('');
+  }
+
+  /** cb(files, handles): ZIM files picked or dropped (handles: the File System Access API's, or null each). */
+  onOpenFiles(cb) { this._openFiles = cb; }
+  /** fn() → { files, handles } | null: the handle-giving picker the Open button uses when set. */
+  onPickFiles(fn) { this._pickFiles = fn; }
+  /** fn(text): a ZIM's web address typed, pasted or dropped (as given: the caller checks it). */
+  onOpenUrl(fn) { this._openUrl = fn; }
+  /** fn(libId): a local library's × in the list (close it, and forget it). */
+  onCloseLibrary(fn) { this._closeLibrary = fn; }
+  /**
+   * Kiwix's library (ui/kiwix-dialog.js): the card's button shows it once this is given (the
+   * catalogue and its callbacks: see KiwixDialog).
+   */
+  setKiwix(opts) {
+    this._kiwix = new KiwixDialog(this.root, opts);
+    this.$('.ov-kiwix-btn').hidden = false;
+  }
+  /** The libraries open changed: Kiwix's list marks them. */
+  refreshKiwix() { this._kiwix?.refresh(); }
+  onReopen(fn) { this._reopen = fn; }
+  onForget(fn) { this._forget = fn; }
+  /** The files remembered from last time (names), with Reopen and Forget; none hides the line. */
+  setRemembered(names) {
+    const line = this.$('.ov-reopen');
+    line.hidden = !names.length;
+    this.$('.ov-reopen-names').textContent = names.join(', ');
+  }
   /** A build without a server (GitHub Pages): no rescan button. */
   setStatic(on) {
     this._static = !!on;
@@ -310,6 +517,7 @@ export class Overlay {
       card: this.$('.ov-card').classList.contains('collapsed') ? 'collapsed' : 'open',
       search: { q: this.$('.ov-search input').value, open: !this.$('.ov-results').hidden },
       update: !this.$('.ov-update').hidden,
+      kiwix: this._kiwix?.visible ? { ...this._kiwix._prefs() } : null,
       loading: loading.hidden || loading.classList.contains('done') ? null
         : { text: this.$('.ov-loading-text').textContent, error: loading.classList.contains('error') },
       toasts: [...this.root.querySelectorAll('.ov-toast:not(.out)')].map((t) => t.textContent),
@@ -339,15 +547,48 @@ export class Overlay {
       if (ui.search.open && input.value) this._search(input.value);
       else this.$('.ov-results').hidden = true;
     }
+    if (this._kiwix) {
+      if (ui.kiwix) {
+        this._kiwix._setPrefs({ ...this._kiwix._prefs(), ...ui.kiwix });
+        this._kiwix.show();
+      } else this._kiwix.hide();
+    }
   }
 
+  /**
+   * A short message at the bottom of the page for `ms`, or with Infinity until close(): for work
+   * under way, with kind 'busy' (a spinner) and progress(fraction) (a bar, from its first call).
+   * @returns {{ update: (msg: string) => void, progress: (fraction: number) => void, close: () => void }}
+   */
   showToast(msg, kind = 'info', ms = 3500) {
     const t = document.createElement('div');
     t.className = `ov-toast ${kind}`;
-    t.textContent = msg;
+    const text = document.createTextNode(msg);
+    t.append(text);
     this.$('.ov-toasts').appendChild(t);
-    setTimeout(() => t.classList.add('out'), ms);
-    setTimeout(() => t.remove(), ms + 500);
+    let bar = null;
+    let closed = false;
+    const close = () => {
+      if (closed) return;
+      closed = true;
+      t.classList.add('out');
+      setTimeout(() => t.remove(), 500);
+    };
+    if (Number.isFinite(ms)) setTimeout(close, ms);
+    return {
+      update: (msg2) => { text.data = msg2; },
+      progress: (f) => {
+        if (!bar) {
+          const track = document.createElement('div');
+          track.className = 'ov-toast-bar';
+          bar = document.createElement('div');
+          track.append(bar);
+          t.append(track);
+        }
+        bar.style.width = `${Math.round(Math.min(1, Math.max(0, f)) * 100)}%`;
+      },
+      close,
+    };
   }
 
   hide() { this.root.classList.add('ov-hidden'); }
@@ -387,14 +628,15 @@ export class Overlay {
     list.innerHTML = this._results.length
       ? this._results.map((e, i) => (e.article ? `
         <li role="option" data-i="${i}" class="${i === this._sel ? 'sel' : ''}">
-          ${e.lib.illustration ? `<img class="ov-r-icon" src="${esc(e.lib.illustration)}" alt="" width="34" height="34">` : '<span class="ov-nocover"></span>'}
+          ${e.lib.illustration ? `<img class="ov-r-icon" ${imgSrc(e.lib.illustration)} alt="" width="34" height="34">` : '<span class="ov-nocover"></span>'}
           <div><div class="ov-r-title">${e.article.from ? `${esc(e.article.from)} → ` : ''}${esc(e.article.title)}</div><div class="ov-r-sub">${esc(e.lib.title)} · Volume ${esc(e.article.book.slice(1))}</div></div>
         </li>` : `
         <li role="option" data-i="${i}" class="${i === this._sel ? 'sel' : ''}">
-          ${e.book.cover ? `<img src="${esc(e.book.cover)}" alt="" loading="lazy" width="34" height="48">` : '<span class="ov-nocover"></span>'}
+          ${e.book.cover ? `<img ${imgSrc(e.book.cover)} alt="" loading="lazy" width="34" height="48">` : '<span class="ov-nocover"></span>'}
           <div><div class="ov-r-title">${esc(e.book.title)}</div><div class="ov-r-sub">${esc(e.book.author || '')}${this._multi() ? ' · ' + esc(e.lib.title) : ''}</div></div>
         </li>`)).join('')
       : '<li class="ov-empty">No matching books</li>';
+    fillLocalImages(list);
     list.hidden = false;
     list.querySelectorAll('li[data-i]').forEach((li) => {
       li.onclick = () => this._choose(+li.dataset.i);

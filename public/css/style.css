@@ -61,7 +61,18 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .ov-version { flex: 1; margin: 0 8px; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ov-collapse, .ov-rescan { background: none; border: 1px solid var(--line); border-radius: 8px; width: 28px; height: 28px; line-height: 1; color: var(--muted); }
 .ov-rescan:hover, .ov-collapse:hover { color: var(--accent); border-color: var(--accent); }
-.ov-card.collapsed .ov-libs { display: none; }
+.ov-card.collapsed .ov-libs, .ov-card.collapsed .ov-open { display: none; }
+.ov-open { margin-top: 10px; }
+.ov-open-btn { padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--accent); }
+.ov-open-btn:hover { border-color: var(--accent); }
+.ov-open-hint { margin-top: 6px; color: var(--muted); font-size: 12px; line-height: 1.4; }
+.ov-reopen { margin-top: 6px; font-size: 12px; line-height: 1.6; color: var(--muted); }
+.ov-reopen-names { color: var(--text); }
+.ov-reopen button { margin-left: 6px; padding: 1px 8px; font-size: 12px; }
+.ov-open-hint a { color: var(--accent); }
+/* Shown while ZIM files are dragged over the page. */
+.ov-drop { position: fixed; inset: 16px; z-index: 30; display: flex; align-items: center; justify-content: center; border: 3px dashed var(--accent); border-radius: 18px; background: rgba(20, 16, 10, 0.72); color: var(--accent); font: 600 24px/1.3 var(--serif); pointer-events: none; }
+.ov-drop[hidden] { display: none; }
 .ov-libs { margin-top: 8px; display: grid; gap: 10px; max-height: 40vh; overflow: auto; }
 .ov-lib { display: flex; gap: 10px; align-items: flex-start; }
 .ov-lib img { border-radius: 8px; flex: none; image-rendering: auto; }
@@ -124,6 +135,23 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .ov-toast { background: var(--panel-solid); border: 1px solid var(--line); padding: 8px 16px; border-radius: 999px; box-shadow: 0 8px 20px rgba(0,0,0,.4); transition: opacity .4s, transform .4s; max-width: 90vw; }
 .ov-toast.error { border-color: var(--danger); color: #ffd9d3; }
 .ov-toast.out { opacity: 0; transform: translateY(6px); }
+.ov-toast.busy::before { content: ""; display: inline-block; width: 12px; height: 12px; margin-right: 10px; vertical-align: -2px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: ov-spin .9s linear infinite; }
+@keyframes ov-spin { to { transform: rotate(360deg); } }
+.ov-toast-bar { height: 4px; margin: 7px 0 2px; border-radius: 2px; background: var(--line); overflow: hidden; }
+.ov-toast-bar > div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+/* What the local library is doing (files opening, index builds): one box at the foot of the page, out of the view's middle. */
+.ov-status { position: fixed; right: 16px; bottom: 84px; width: min(340px, calc(100vw - 32px)); padding: 8px 12px; background: var(--panel-solid); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 8px 20px rgba(0,0,0,.4); font-size: 13px; }
+.ov-status-head { display: flex; align-items: center; gap: 8px; }
+.ov-status-head::before { content: ""; flex: none; width: 11px; height: 11px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: ov-spin .9s linear infinite; }
+.ov-status-text { flex: 1; min-width: 0; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
+.ov-status-toggle, .ov-status-stop { flex: none; padding: 0 8px; font-size: 13px; line-height: 1.6; }
+.ov-status-rows { list-style: none; margin: 8px 0 0; padding: 0; max-height: 40vh; overflow-y: auto; overflow-x: hidden; display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.ov-status-rows li.waiting { color: var(--muted); }
+.ov-status-row { display: flex; align-items: baseline; gap: 8px; }
+.ov-status-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ov-status-line { flex: none; color: var(--muted); font-size: 12px; }
+.ov-status-cancel { flex: none; padding: 0 7px; line-height: 1.4; }
+.ov-status-rows .ov-toast-bar { margin: 4px 0 0; height: 3px; }
 
 @media (max-width: 640px) {
   .ov-card { width: calc(100vw - 24px); }
@@ -131,3 +159,52 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
   .ov-results { position: absolute; bottom: 48px; width: 100%; }
   .ov-hint { display: none; }
 }
+
+/* A ZIM's web address (milestone 3), the example read online, and a local library's × */
+.ov-url { display: flex; gap: 6px; margin-top: 8px; }
+.ov-url-input { flex: 1; min-width: 0; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--text); font-size: 13px; }
+.ov-url-input:focus { outline: none; border-color: var(--accent); }
+.ov-url button { padding: 5px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--accent); }
+.ov-url button:hover { border-color: var(--accent); }
+.ov-try-btn { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; text-decoration: underline; cursor: pointer; }
+.ov-lib-body { flex: 1; min-width: 0; }
+.ov-lib-close { flex: none; width: 24px; height: 24px; padding: 0; border-radius: 6px; border: 1px solid transparent; background: none; color: var(--muted); font-size: 16px; line-height: 1; }
+.ov-lib-close:hover { border-color: var(--line); color: var(--text); }
+
+/* Kiwix's library (ui/kiwix-dialog.js, milestone 3 step 5) */
+.ov-kiwix-btn { margin-top: 8px; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--accent); }
+.ov-kiwix-btn:hover { border-color: var(--accent); }
+.ov-kiwix { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 6; }
+.ov-kiwix[hidden] { display: none; }
+.ov-kiwix-inner { background: var(--panel-solid); border: 1px solid var(--line); border-radius: var(--radius); max-width: 680px; width: 100%; height: min(85vh, 760px); display: flex; flex-direction: column; padding: 14px 20px 16px; }
+.ov-kiwix-inner header { display: flex; justify-content: space-between; align-items: center; }
+.ov-kiwix h2 { font: 600 20px var(--serif); margin: 4px 0; color: var(--accent); }
+.ov-kiwix-close { background: none; border: 0; font-size: 26px; line-height: 1; color: var(--muted); }
+.ov-kiwix-note { margin: 4px 0 10px; color: var(--muted); font-size: 13px; line-height: 1.4; }
+.ov-kiwix-note a { color: var(--accent); }
+.ov-kiwix-filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+.ov-kiwix-kinds { display: flex; gap: 4px; }
+.ov-kiwix-kinds button { padding: 5px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--text); }
+.ov-kiwix-kinds button[aria-selected="true"] { border-color: var(--accent); color: var(--accent); }
+.ov-kiwix-lang, .ov-kiwix-find { padding: 5px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--text); font-size: 13px; }
+.ov-kiwix-lang { max-width: 180px; }
+.ov-kiwix-find { flex: 1; min-width: 120px; }
+.ov-kiwix-state { color: var(--muted); font-size: 13px; padding: 6px 2px; }
+.ov-kiwix-state[hidden] { display: none; }
+.ov-kiwix-state.error { color: #e8a87c; }
+.ov-kiwix-retry { margin-left: 8px; padding: 2px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--accent); }
+.ov-kiwix-list { list-style: none; margin: 0; padding: 0; overflow: auto; flex: 1; min-height: 0; }
+.ov-kiwix-item { display: flex; gap: 10px; align-items: flex-start; padding: 8px 4px; border-top: 1px solid var(--line); }
+.ov-kiwix-item img, .ov-kiwix-noimg { flex: none; width: 40px; height: 40px; border-radius: 8px; background: rgba(255,255,255,.05); }
+.ov-kiwix-body { flex: 1; min-width: 0; }
+.ov-kiwix-title { font: 600 15px/1.25 var(--serif); }
+.ov-kiwix-summary { color: var(--muted); font-size: 13px; margin-top: 2px; }
+.ov-kiwix-meta { color: var(--muted); font-size: 12px; margin-top: 3px; opacity: .85; }
+.ov-kiwix-warn { color: #e8a87c; font-size: 12px; margin-top: 3px; }
+.ov-kiwix-open { flex: none; padding: 5px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--accent); }
+.ov-kiwix-open:hover:not(:disabled) { border-color: var(--accent); }
+.ov-kiwix-open:disabled { color: var(--muted); opacity: .7; }
+/* Where an entry's index comes from (kiwix.js indexLabel) */
+.ov-kiwix-index { display: inline-block; margin-left: 6px; padding: 0 7px; border-radius: 999px; border: 1px solid var(--line); font-size: 11px; line-height: 17px; color: var(--muted); }
+.ov-kiwix-index.here, .ov-kiwix-index.site { border-color: #6f8f4e; color: #a9c98a; }
+.ov-kiwix-index.build { border-style: dashed; }

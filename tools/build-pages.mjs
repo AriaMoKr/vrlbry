@@ -4,7 +4,12 @@
 // IWER files the client imports (followed from its imports), instead of the server mapping
 // node_modules.
 //
-//   node tools/build-pages.mjs [--out dist] [--zims <folder>]
+//   node tools/build-pages.mjs [--out dist] [--zims <folder>] [--indexes <folder>] [--zim-proxy <url>]
+//
+// --indexes builds the indexes of that folder's Wikipedia and Wikisource ZIMs into indexes/, for
+// visitors who open those files in the browser (buildIndexes).
+// --zim-proxy names the edge proxy (tools/zim-proxy/, deployed) the page reads Kiwix's files
+// through, in a meta tag (zimProxyMeta; optional: an empty value names none).
 //
 // Without --zims the site has no libraries. With it, the ZIMs in that folder are pre-rendered: the
 // real server runs in this process, and every answer the client can ask for is saved as a file
@@ -31,11 +36,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { fileName } from '../public/js/util/file-names.js';
+import { DEFAULT_VENDOR_DIRS, rewriteVendorImports, vendorFileOf, vendorUrlOf } from '../server/vendor.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PUBLIC = path.join(ROOT, 'public');
-const THREE = path.join(ROOT, 'node_modules', 'three');
-const IWER = path.join(ROOT, 'node_modules', 'iwer', 'build');
+const THREE = DEFAULT_VENDOR_DIRS.three;
+const IWER = DEFAULT_VENDOR_DIRS.iwer;
 /** Pages of public/ that need the Node server's API (book lists, chunks): left out. */
 const SERVER_ONLY = ['dev', 'reader-test.html'];
 
@@ -73,7 +79,7 @@ function resolve(spec, fromFile) {
 }
 
 /** Every file reachable through imports from `entries` (absolute paths). */
-function closure(entries) {
+function closure(entries, read = (file) => fs.readFileSync(file, 'utf8')) {
   const seen = new Set();
   const todo = [...entries];
   while (todo.length) {
@@ -81,13 +87,37 @@ function closure(entries) {
     if (seen.has(file)) continue;
     if (!fs.existsSync(file)) throw new Error(`missing module: ${path.relative(ROOT, file)}`);
     seen.add(file);
-    if (!file.endsWith('.js')) continue;
-    for (const spec of importsOf(fs.readFileSync(file, 'utf8'))) {
+    if (!/\.m?js$/.test(file)) continue;
+    for (const spec of importsOf(read(file))) {
       const dep = resolve(spec, file);
       if (dep) todo.push(dep);
     }
   }
   return [...seen];
+}
+
+/**
+ * Where a vendor package's file is in the site, under vendor/<name>/: [name, path inside] (its
+ * URL, which may differ from its file name: vendorUrlOf), or null when `file` is in no package of
+ * DEFAULT_VENDOR_DIRS but three's and IWER's (copied apart).
+ */
+function vendorPathOf(file) {
+  for (const [name, dir] of Object.entries(DEFAULT_VENDOR_DIRS)) {
+    if (name === 'three' || name === 'iwer') continue;
+    const rel = path.relative(dir, file);
+    if (!rel.startsWith('..') && !path.isAbsolute(rel)) {
+      const url = vendorUrlOf(`${name}/${rel.split(path.sep).join('/')}`);
+      return [name, url.slice(name.length + 1)];
+    }
+  }
+  return null;
+}
+
+/** A vendor file's source with its bare imports made relative (server/vendor.js). */
+function vendorSource(file) {
+  const source = fs.readFileSync(file, 'utf8');
+  const at = vendorPathOf(file);
+  return at ? rewriteVendorImports(`${at[0]}/${at[1]}`, source) : source;
 }
 
 /** Relative specifiers of imports, re-exports and dynamic imports: (head)(quote)(specifier). */
@@ -137,16 +167,18 @@ function hashFiles(files, base, extra = []) {
 function versionUrls(out) {
   const three = filesUnder(path.join(out, 'vendor', 'three'));
   const iwer = filesUnder(path.join(out, 'vendor', 'iwer'));
+  const lib = filesUnder(path.join(out, 'vendor')).filter((f) => !three.includes(f) && !iwer.includes(f));
   const app = [...filesUnder(path.join(out, 'js')), ...filesUnder(path.join(out, 'css'))];
-  const tags = { three: hashFiles(three, out), iwer: hashFiles(iwer, out) };
-  tags.app = hashFiles(app, out, [tags.three, tags.iwer]);
+  const tags = { three: hashFiles(three, out), iwer: hashFiles(iwer, out), lib: hashFiles(lib, out) };
+  tags.app = hashFiles(app, out, [tags.three, tags.iwer, tags.lib]);
   const tagFor = (file) => {
     const rel = path.relative(out, file).split(path.sep).join('/');
     if (rel.startsWith('vendor/three/')) return tags.three;
     if (rel.startsWith('vendor/iwer/')) return tags.iwer;
+    if (rel.startsWith('vendor/')) return tags.lib;
     return tags.app;
   };
-  for (const file of [...app, ...three, ...iwer].filter((f) => f.endsWith('.js'))) {
+  for (const file of [...app, ...three, ...iwer, ...lib].filter((f) => /\.m?js$/.test(f))) {
     const source = fs.readFileSync(file, 'utf8');
     const tagged = tagModuleUrls(source, (spec) => tagFor(path.resolve(path.dirname(file), spec)));
     if (tagged !== source) fs.writeFileSync(file, tagged);
@@ -175,6 +207,23 @@ function versionUrls(out) {
     });
   fs.writeFileSync(indexFile, html);
   return tags;
+}
+
+/**
+ * index.html with `<meta name="vrlbry-zim-proxy" content="<url>">` (public/js/local/zim-url.js
+ * zimProxyOf reads it): the edge proxy the page reads Kiwix's files through.
+ * @throws when the address is not an https:// one (or http:// on this machine, for trying)
+ */
+export function zimProxyMeta(html, url) {
+  const base = new URL(url);
+  if (base.protocol !== 'https:' && !(base.protocol === 'http:' && /^(?:localhost|127\.\d+\.\d+\.\d+|\[::1\])$/.test(base.hostname))) {
+    throw new Error(`--zim-proxy needs an https:// address: ${url}`);
+  }
+  const attr = base.href.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+  const tag = `<meta name="vrlbry-zim-proxy" content="${attr}">`;
+  const without = html.replace(/\s*<meta name="vrlbry-zim-proxy"[^>]*>/, '');
+  if (!/<\/head>/i.test(without)) throw new Error('index.html has no </head>');
+  return without.replace(/<\/head>/i, `${tag}\n</head>`);
 }
 
 /** When the site last changed: the last commit's time, else now. */
@@ -361,8 +410,55 @@ export async function prerender(dir, out, { log = console.log } = {}) {
   }
 }
 
+/**
+ * Builds the indexes of the Wikipedia and Wikisource ZIMs of `dir` (as the server does on first
+ * open) and writes them to `out`/indexes/<name> (the name the core keeps them under, with the
+ * ZIM's UUID), where the local library looks before building one (public/js/local/prebuilt.js):
+ * a visitor who opens such a file skips the build, minutes on a headset for a big Wikipedia.
+ * @returns {Promise<{ libraries: number, indexes: string[] }>}
+ */
+export async function buildIndexes(dir, out, { log = console.log } = {}) {
+  const { Library } = await import('../server/library.js');
+  const { indexName: wikipediaIndexName } = await import('../public/js/core/wikipedia.js');
+  const { indexName: wikisourceIndexName } = await import('../public/js/core/wikisource.js');
+  const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vrlbry-pages-indexes-'));
+  const library = await Library.scan(dir, { log: () => {}, warn: log, cacheDir });
+  const indexes = [];
+  try {
+    for (const lib of library.list()) {
+      const name = lib.kind === 'wikipedia' ? wikipediaIndexName(lib.archive) : lib.kind === 'wikisource' ? wikisourceIndexName(lib.archive) : null;
+      if (!name) continue;
+      for (let i = 0; (await lib.info()).indexing; i++) {
+        if (i % 50 === 0) log(`  indexing ${lib.id}…`);
+        await new Promise((r) => setTimeout(r, 200));
+      }
+      const from = path.join(cacheDir, name);
+      if (!fs.existsSync(from)) {
+        log(`  ${lib.id}: no index was built`);
+        continue;
+      }
+      fs.mkdirSync(path.join(out, 'indexes'), { recursive: true });
+      fs.copyFileSync(from, path.join(out, 'indexes', name));
+      indexes.push(name);
+      log(`  ${lib.id}: indexes/${name} (${(fs.statSync(from).size / 1048576).toFixed(1)} MB)`);
+    }
+    // The list of what is there (with any index written before): Kiwix's library in the page
+    // (local/kiwix.js) offers a big Wikipedia only when its index is here.
+    if (indexes.length) {
+      const { writeIndexList } = await import('./build-indexes.mjs');
+      writeIndexList(path.join(out, 'indexes'));
+    }
+    return { libraries: library.list().length, indexes };
+  } finally {
+    await library.close();
+    fs.rmSync(cacheDir, { recursive: true, force: true });
+  }
+}
+
 async function main() {
-  const { values: opts } = parseArgs({ options: { out: { type: 'string', default: 'dist' }, zims: { type: 'string' } } });
+  const { values: opts } = parseArgs({ options: {
+    out: { type: 'string', default: 'dist' }, zims: { type: 'string' }, indexes: { type: 'string' }, 'zim-proxy': { type: 'string' },
+  } });
   const OUT = path.resolve(ROOT, opts.out);
   fs.rmSync(OUT, { recursive: true, force: true });
   copyTree(PUBLIC, OUT, SERVER_ONLY);
@@ -383,12 +479,43 @@ async function main() {
       if (spec === 'three' || spec.startsWith('three/addons/')) entries.add(resolve(spec, file));
     }
   }
+  // The local library's worker has no import map: it names its vendor modules by relative URL
+  // (../../vendor/<name>/…), and their bare imports are rewritten as the server does.
+  const libEntries = new Set();
+  const vendorOut = path.join(OUT, 'vendor');
+  for (const file of clientModules) {
+    for (const spec of importsOf(fs.readFileSync(file, 'utf8'))) {
+      if (!spec.startsWith('.')) continue;
+      const rel = path.relative(vendorOut, path.resolve(path.dirname(file), spec));
+      if (rel.startsWith('..') || path.isAbsolute(rel)) continue;
+      const [name] = rel.split(path.sep);
+      if (name === 'three' || name === 'iwer' || !DEFAULT_VENDOR_DIRS[name]) {
+        throw new Error(`${path.relative(OUT, file)}: no vendor package for ${spec}`);
+      }
+      const inPackage = vendorFileOf(rel.split(path.sep).join('/')).split('/').slice(1);
+      libEntries.add(path.join(DEFAULT_VENDOR_DIRS[name], ...inPackage));
+    }
+  }
   const vendor = [
     ...closure([...entries]).map((file) => [file, path.join(OUT, 'vendor', 'three', path.relative(THREE, file))]),
     ...closure([path.join(IWER, 'iwer.module.js')]).map((file) => [file, path.join(OUT, 'vendor', 'iwer', path.relative(IWER, file))]),
   ];
   for (const [from, to] of vendor) copy(from, to);
+  const libs = closure([...libEntries], vendorSource);
+  for (const from of libs) {
+    const [name, rel] = vendorPathOf(from);
+    const to = path.join(vendorOut, name, ...rel.split('/'));
+    fs.mkdirSync(path.dirname(to), { recursive: true });
+    if (/\.m?js$/.test(from)) fs.writeFileSync(to, vendorSource(from));
+    else fs.copyFileSync(from, to);
+  }
+  vendor.push(...libs);
   const tags = versionUrls(OUT);
+  if (opts['zim-proxy']) {
+    const indexFile = path.join(OUT, 'index.html');
+    fs.writeFileSync(indexFile, zimProxyMeta(fs.readFileSync(indexFile, 'utf8'), opts['zim-proxy']));
+    console.log(`Kiwix's files are read through ${opts['zim-proxy']}`);
+  }
 
   // The API's static answers: the libraries of --zims (or none), and when the site last changed.
   const api = path.join(OUT, 'api');
@@ -399,6 +526,11 @@ async function main() {
     console.log(`  ${st.libraries} libraries, ${st.books} books, ${st.chunks} chunks, ${st.images} images`);
   } else {
     fs.writeFileSync(path.join(api, 'libraries'), JSON.stringify({ generation: 0, libraries: [], static: true }));
+  }
+  if (opts.indexes) {
+    console.log(`Building the indexes of the ZIMs in ${opts.indexes}…`);
+    const st = await buildIndexes(path.resolve(opts.indexes), OUT);
+    console.log(`  ${st.indexes.length} indexes of ${st.libraries} libraries`);
   }
   fs.writeFileSync(path.join(api, 'version'), JSON.stringify({ changed: changedAt(), file: null, static: true }));
   // Served as is (no Jekyll processing).
@@ -418,7 +550,7 @@ async function main() {
   };
   count(OUT);
   console.log(`Built ${path.relative(ROOT, OUT) || OUT}: ${files} files, ${(bytes / 1048576).toFixed(1)} MB `
-    + `(${vendor.length} vendor modules; versions: app ${tags.app}, three ${tags.three}, IWER ${tags.iwer}).`);
+    + `(${vendor.length} vendor modules; versions: app ${tags.app}, three ${tags.three}, IWER ${tags.iwer}, worker libraries ${tags.lib}).`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

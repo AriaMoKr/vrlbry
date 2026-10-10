@@ -8,62 +8,19 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { Library } from '../server/library.js';
-import { ZimArchive } from '../server/zim/reader.js';
+import { ZimArchive } from '../public/js/core/zim/reader.js';
 import {
   isWikisource, genreOf, yearOf, cleanCategories, pageCategories, coverOf, contentLinks, partTitle,
   buildIndex, collectWork, OTHER_GENRE,
-} from '../server/wikisource.js';
+} from '../public/js/core/wikisource.js';
+import { page, WS_PNG, writeWikisourceZim } from './helpers/zim-fixtures.js';
 import { writeZim } from './helpers/zimwriter.js';
 
 let tmp;
 before(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vrlbry-ws-')); });
 after(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
 
-/** An mwoffliner-shaped page: skin chrome, RLCONF categories, content area, catlinks, footer. */
-function page(title, body, cats = []) {
-  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${title}</title>
-<script>RLCONF = {"wgTitle":"${title}","wgCategories":${JSON.stringify(cats)},"wgIsArticle":true};</script></head>
-<body><div class="mw-page-container"><main id="content"><header class="mw-body-header"><h1 id="firstHeading">${title}</h1></header>
-<div id="bodyContent"><div id="contentSub"><div class="subpages">&lt; Parent</div></div>
-<div id="mw-content-text"><div class="mw-parser-output"><div class="ws-noexport">Navigation ‹ prev next ›</div>
-${body}
-<div class="licenseContainer licenseBanner"><img src="./_assets_/h/PD-icon.svg.png" width="200"><p>This work is in the public domain.</p></div>
-</div></div><div id="catlinks" class="catlinks">Categories: ${cats.join(', ')}</div><div class="zim-footer">Made with mwoffliner</div></div></main></div></body></html>`;
-}
-
-const png = Buffer.from('89504e470d0a1a0a0000000d49484452000001900000025800000000', 'hex'); // 400×600 header
-
-function writeWikisourceZim(file) {
-  const C = (url, html, extra = {}) => ({ ns: 'C', url, title: url.replace(/_/g, ' '), mime: 'text/html', content: html, ...extra });
-  const entries = [
-    C('Main_Page', page('Main Page', '<p>Welcome</p>')),
-    // A novel whose contents list links chapters out of URL order (10 before 2 would be wrong).
-    C('The_Grey_House', page('The Grey House', `<p><img src="./_assets_/h/Grey_House_cover.jpg" width="250" data-file-width="1400"></p>
-      <ul><li><a href="The_Grey_House/Chapter_1">Chapter 1</a></li><li><a href="The_Grey_House/Chapter_2">Chapter 2</a></li>
-      <li><a href="The_Grey_House/Chapter_10">Chapter 10</a></li><li><a href="Author:Ann_Example">Ann Example</a></li></ul>`,
-    ['1901 works', 'Novels', 'PD-old-80', 'Main pages with authority control data'])),
-    C('The_Grey_House/Chapter_1', page('The Grey House/Chapter 1', '<p>It was a dark night. See <a href="../The_Grey_House/Chapter_10">the end</a>.</p>')),
-    C('The_Grey_House/Chapter_2', page('The Grey House/Chapter 2', '<p>The morning came.</p>')),
-    C('The_Grey_House/Chapter_10', page('The Grey House/Chapter 10', '<p>The end.</p>')),
-    // A poetry collection with no links to its parts: natural-order fallback.
-    C('Songs_of_Dusk', page('Songs of Dusk', '<p>A collection.</p>', ['Collections of poetry', '1880 works'])),
-    C('Songs_of_Dusk/Song_2', page('Songs of Dusk/Song 2', '<p>Second song</p>')),
-    C('Songs_of_Dusk/Song_1', page('Songs of Dusk/Song 1', '<p>First song</p>')),
-    C('Songs_of_Dusk/Song_11', page('Songs of Dusk/Song 11', '<p>Eleventh song</p>')),
-    // Not works: a single page, a namespaced page, an author page, a redirect.
-    C('A_Single_Poem', page('A Single Poem', '<p>Alone.</p>', ['Poems'])),
-    C('Portal:Poetry', page('Portal:Poetry', '<p>Portal</p>')),
-    C('Author:Ann_Example', page('Author:Ann Example', '<ul><li><a href="The_Grey_House">The Grey House</a> (1901)</li></ul>')),
-    C('Author:Tom_Translator', page('Author:Tom Translator', '<ul><li><a href="The_Grey_House">The Grey House</a> (translated)</li><li><a href="Songs_of_Dusk/Song_1">Song 1</a></li></ul>')),
-    { ns: 'C', url: 'Grey_House', redirectTo: 'C/The_Grey_House' },
-    { ns: 'C', url: '_assets_/h/Grey_House_cover.jpg', mime: 'image/png', content: png },
-    { ns: 'C', url: '_assets_/h/PD-icon.svg.png', mime: 'image/png', content: png },
-    { ns: 'M', url: 'Source', mime: 'text/plain', content: 'en.wikisource.org' },
-    { ns: 'M', url: 'Title', mime: 'text/plain', content: 'Wikisource' },
-    { ns: 'M', url: 'Language', mime: 'text/plain', content: 'eng' },
-  ];
-  return writeZim(file, { entries, scheme: 'new', mainPage: 'C/Main_Page' });
-}
+const png = WS_PNG; // 400×600 header
 
 describe('wikisource helpers', () => {
   it('detects Wikisource archives by metadata', () => {

@@ -10,10 +10,13 @@ import { Panel, Label, UI } from './ui/panel.js';
 import { audio } from './audio.js';
 import { perf } from './perf.js';
 import { load, save } from './util/storage.js';
+import { progressText } from './util/progress.js';
+import { isLocal } from './local/local.js';
+import { KINDS as KIWIX_KINDS, indexLabel, sizeText } from './local/kiwix.js';
 import { letterOf, SORT_MODES, inTitleOrder, thumbIndex } from './util/books.js';
 import { PAGE_PX, READ } from './config.js';
 import {
-  ALL_PLACE, collectionsFor, currentPlace, facetsOf, groupPlaces, isFaceted, normRoom, placeBookCount, placeFor, roomLabel, sameRoom, unitOf, ROOM_CAP,
+  ALL_PLACE, capNote, collectionsFor, currentPlace, facetsOf, genreLabel, groupPlaces, isFaceted, normRoom, pagesOf, placeBookCount, placeFor, roomLabel, sameRoom, unitOf, ROOM_CAP,
 } from './rooms.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
@@ -23,6 +26,9 @@ const TOC_THUMBS_MIN = 30; // contents entries before a list in title order gets
 const TOC_THUMBS = 9; // its stops
 const SEARCH_KEYS = ['1234567890', 'qwertyuiop', "asdfghjkl'", 'zxcvbnm-.,'];
 const SEARCH_DELAY = 250; // ms after the last key before searching
+const OPENING_LINE = 'Preparing its pages'; // the inspect panel's line while a book opens (read)
+const CANCELLED = Symbol('cancelled'); // read(): Put back pressed while the book was opening
+const OPENING_BAR_MS = 200; // the opening progress bar's repaints, at most one per this long
 
 const _plane = new THREE.Plane();
 const _onPlane = new THREE.Vector3();
@@ -147,6 +153,8 @@ export class Interaction {
     const W = p.w;
     const pad = 36;
     const placesScroll = p.get('places')?.scroll; // kept across refills (indexing progress, rescans)
+    // The genre list's scroll, kept across refills of the same place's Rooms tab (_fillRoomsTab).
+    this._genresScroll = p.get('room-genres') ? { place: this._genresListFor, scroll: p.get('room-genres').scroll } : null;
     p.clear();
     p.add({ type: 'text', x: pad, y: 26, w: W - 2 * pad, h: 54, text: 'Catalogue', size: 46, weight: '600', serif: true, color: UI.accent });
     let right = W - pad;
@@ -167,11 +175,13 @@ export class Interaction {
     const hasRooms = this.libraries.length > 1 || (place && isFaceted(place, this.booksByLib[place.id]));
     if (!hasRooms && this._kioskTab === 'rooms') this._kioskTab = 'shelves';
     let y = 96;
-    const tabs = [['shelves', 'Shelves & settings'], ...(hasRooms ? [['rooms', 'Rooms']] : []), ['search', 'Search']];
+    if (!this.kiwix && this._kioskTab === 'kiwix') this._kioskTab = 'shelves';
+    const tabs = [['shelves', 'Shelves & settings'], ...(hasRooms ? [['rooms', 'Rooms']] : []), ['search', 'Search'],
+      ...(this.kiwix ? [['kiwix', 'Kiwix']] : [])];
     const tw = (W - 2 * pad - 12 * (tabs.length - 1)) / tabs.length;
     tabs.forEach(([id, label], i) => {
       p.add({
-        id: `tab-${id}`, type: 'button', x: pad + i * (tw + 12), y, w: tw, h: 54, label, size: 25,
+        id: `tab-${id}`, type: 'button', x: pad + i * (tw + 12), y, w: tw, h: 54, label, size: tabs.length > 3 ? 22 : 25,
         active: this._kioskTab === id,
         onClick: () => {
           this._kioskTab = id;
@@ -183,11 +193,31 @@ export class Interaction {
     y += 74;
     if (this._kioskTab === 'rooms') this._fillRoomsTab(p, y, pad, place, placesScroll);
     else if (this._kioskTab === 'search') this._fillSearchTab(p, y, pad);
+    else if (this._kioskTab === 'kiwix') this._fillKiwixTab(p, y, pad);
     else this._fillShelvesTab(p, y, pad, place);
+    // In VR a file cannot be picked or downloaded: say where that is done (the page's library
+    // card has the button and a link to an example ZIM). Not over the newer-version notice.
+    if (this.controls.presenting && !this._outdated) {
+      p.add({
+        id: 'own-zims', type: 'text', x: pad, y: p.h - 40, w: W - 2 * pad - 270, h: 28, size: 20, color: UI.muted, maxLines: 1,
+        text: this.kiwix ? 'More ZIMs: the Kiwix tab, or exit VR to open a file or a web address'
+          : 'More ZIMs: exit VR, then open a file or a web address on the page',
+      });
+    }
     if (this._version || this._outdated) {
       const text = this._outdated ? 'A newer version of this site is available: reload the page' : this._version;
       p.add({ id: 'version', type: 'text', x: pad, y: p.h - 40, w: W - 2 * pad, h: 28, text, size: 21, color: this._outdated ? UI.accent : UI.muted, align: 'right', maxLines: 1 });
     }
+  }
+
+  /**
+   * Kiwix's library for the kiosk's Kiwix tab (main.js): { catalog, prefs(), setPrefs(p),
+   * isOpen(url) }, and onOpenUrl(url) to open a ZIM from the web.
+   */
+  setKiwix(kiwix, onOpenUrl) {
+    this.kiwix = kiwix;
+    this.onOpenUrl = onOpenUrl;
+    this._fillKiosk();
   }
 
   /** A build without a server (GitHub Pages): nothing to rescan. */
@@ -487,10 +517,12 @@ export class Interaction {
     const room = normRoom(this.settings.rooms?.[place.id]) || { genre: null, letter: null };
     const { genres, letters } = facetsOf(books, room);
     const total = genres.reduce((n, g) => n + (!room.genre || g.name === room.genre ? g.count : 0), 0);
-    const filtered = !!(room.genre || room.letter);
+    const pages = pagesOf(total);
+    const page = Math.min(room.page ?? 0, pages - 1);
+    const filtered = !!(room.genre || room.letter || page);
     p.add({
       type: 'text', x: pad, y: y + 6, w: W - 2 * pad - (filtered ? 230 : 0), h: 34, size: 24, color: UI.text, maxLines: 1,
-      text: `Now: ${roomLabel(room)} · ${total.toLocaleString()} works${total > ROOM_CAP ? ` (first ${ROOM_CAP.toLocaleString()})` : ''}`,
+      text: `Now: ${roomLabel(room)} · ${total.toLocaleString()} works${capNote(place, total, page)}`,
     });
     if (filtered) {
       p.add({
@@ -499,24 +531,48 @@ export class Interaction {
       });
     }
     y += 54;
+    // A room holding more than the shelves take: its pages of ROOM_CAP (by popularity for Gutenberg).
+    if (pages > 1) {
+      const n = ROOM_CAP.toLocaleString();
+      const bw = 250;
+      p.add({
+        id: 'room-prev', type: 'button', x: pad, y, w: bw, h: 46, label: `◀ Previous ${n}`, size: 21,
+        disabled: page === 0, onClick: () => this.turnPage(place.id, -1),
+      });
+      p.add({
+        type: 'text', x: pad + bw + 10, y: y + 8, w: W - 2 * pad - 2 * bw - 20, h: 30, size: 21, color: UI.muted, maxLines: 1, align: 'center',
+        text: `Page ${page + 1} of ${pages}`,
+      });
+      p.add({
+        id: 'room-next', type: 'button', x: W - pad - bw, y, w: bw, h: 46, label: `Next ${n} ▶`, size: 21,
+        disabled: page >= pages - 1, onClick: () => this.turnPage(place.id, 1),
+      });
+      y += 54;
+    }
     p.add({ type: 'text', x: pad, y, w: W - 2 * pad, h: 30, text: 'Genre · tap again to remove', size: 21, color: UI.muted, maxLines: 1 });
     y += 34;
-    const cols = 3;
-    const gw = (W - 2 * pad - (cols - 1) * 10) / cols;
-    const rowsLeft = Math.max(2, Math.floor((p.h - y - 150) / 54));
-    const shown = genres.slice(0, cols * rowsLeft);
-    shown.forEach((g, i) => {
-      const r = Math.floor(i / cols);
-      const c = i % cols;
-      const active = room.genre === g.name;
-      p.add({
-        id: `room-g-${i}`, type: 'button', x: pad + c * (gw + 10), y: y + r * 54, w: gw, h: 48,
-        label: `${g.name} · ${g.count > 999 ? (g.count / 1000).toFixed(1) + 'k' : g.count}`, size: 21,
-        active, disabled: !active && !g.count,
-        onClick: () => this.toggleFilter(place.id, 'genre', g.name),
-      });
+    // Every genre in a list, named (Gutenberg's LCC classes: genreLabel), largest first: 40 for
+    // English Gutenberg, which a grid of buttons could neither show all of nor name.
+    const genreRowH = 48;
+    const genreRows = Math.max(3, Math.floor((p.h - y - 200) / genreRowH)); // below it: the letters (~146 px) and the footer
+    const activeAt = genres.findIndex((g) => g.name === room.genre);
+    const genresScroll = this._genresScroll;
+    const keepGenres = genresScroll && genresScroll.place === place.id;
+    this._genresListFor = place.id;
+    p.add({
+      id: 'room-genres', type: 'list', x: pad, y, w: W - 2 * pad, h: genreRows * genreRowH, rowH: genreRowH, size: 22,
+      scroll: keepGenres ? genresScroll.scroll : Math.max(0, activeAt - 1),
+      items: genres.map((g) => {
+        const active = room.genre === g.name;
+        return {
+          label: genreLabel(g.name),
+          right: g.count.toLocaleString(),
+          active, disabled: !active && !g.count,
+          onClick: () => this.toggleFilter(place.id, 'genre', g.name),
+        };
+      }),
     });
-    y += Math.ceil(shown.length / cols) * 54 + 8;
+    y += genreRows * genreRowH + 8;
     p.add({ type: 'text', x: pad, y, w: W - 2 * pad, h: 30, text: `Title starts with · up to ${ROOM_CAP.toLocaleString()} works are shelved`, size: 21, color: UI.muted, maxLines: 1 });
     y += 34;
     const keys = ['#', ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'];
@@ -535,10 +591,114 @@ export class Interaction {
     });
   }
 
+  /**
+   * Kiwix's library in VR (milestone 3 step 5; local/kiwix.js), where no file can be picked and no
+   * address typed: the ZIMs this library reads well, by kind and language; a row opens one from
+   * the web (onOpenUrl). `this.kiwix` is given by main.js: { catalog, prefs(), setPrefs(p),
+   * isOpen(url) }. The page's dialog (ui/kiwix-dialog.js) is the same list.
+   */
+  _fillKiwixTab(p, y0, pad) {
+    const W = p.w;
+    const k = this.kiwix;
+    const { kind, lang } = k.prefs();
+    const key = `${kind}|${lang}`;
+    // Read when the kind or language changes; again in the background (the shown list stays) when
+    // the libraries changed (their Open marks, and an index now kept here).
+    if (this._kiwixView?.key !== key || this._kiwixView.stale) {
+      const shown = this._kiwixView?.key === key ? this._kiwixView.view : null;
+      this._kiwixView = shown ? { key, view: shown } : { key, loading: true };
+      k.catalog.view(kind, lang).then((view) => ({ key, view }), (err) => ({ key, error: err.message })).then((st) => {
+        if (this._kiwixView?.key !== key) return;
+        this._kiwixView = st;
+        if (this._kioskTab === 'kiwix') this._fillKiosk();
+      });
+    }
+    const st = this._kiwixView;
+    let y = y0;
+    const bw = (W - 2 * pad - 10 * (KIWIX_KINDS.length - 1)) / KIWIX_KINDS.length;
+    KIWIX_KINDS.forEach((kd, i) => {
+      p.add({
+        id: `kiwix-kind-${kd.id}`, type: 'button', x: pad + i * (bw + 10), y, w: bw, h: 50, label: kd.label, size: 24,
+        active: kind === kd.id,
+        onClick: () => {
+          this._kiwixPicking = false;
+          k.setPrefs({ kind: kd.id, lang });
+          this._fillKiosk();
+        },
+      });
+    });
+    y += 62;
+    const langName = st.view?.languages.find((l) => l.code === lang)?.name ?? lang;
+    p.add({ type: 'text', x: pad, y: y + 8, w: W - 2 * pad - 250, h: 34, text: `Language: ${langName}`, size: 24, color: UI.text, maxLines: 1 });
+    p.add({
+      id: 'kiwix-lang', type: 'button', x: W - pad - 240, y, w: 240, h: 48, size: 22, disabled: !st.view,
+      label: this._kiwixPicking ? 'Back to the list' : 'Change language',
+      onClick: () => {
+        this._kiwixPicking = !this._kiwixPicking;
+        this._fillKiosk();
+      },
+    });
+    y += 62;
+    const listH = Math.max(140, p.h - y - 64);
+    if (st.loading) {
+      p.add({ type: 'text', x: pad, y, w: W - 2 * pad, h: 40, text: "Reading Kiwix's catalogue…", size: 24, color: UI.muted });
+      return;
+    }
+    if (st.error) {
+      p.add({ type: 'text', x: pad, y, w: W - 2 * pad, h: 100, size: 24, color: UI.muted, maxLines: 3,
+        text: `Kiwix's catalogue cannot be reached (${st.error}). Outside VR a ZIM's web address can still be typed, or a file opened.` });
+      p.add({ id: 'kiwix-retry', type: 'button', x: pad, y: y + 110, w: 200, h: 48, label: 'Try again', size: 22,
+        onClick: () => { this._kiwixView = null; this._fillKiosk(); } });
+      return;
+    }
+    if (this._kiwixPicking) {
+      const rowH = 58;
+      const current = st.view.languages.findIndex((l) => l.code === lang);
+      p.add({
+        id: 'kiwix-langs', type: 'list', x: pad, y, w: W - 2 * pad, h: Math.floor(listH / rowH) * rowH, rowH, size: 24,
+        scroll: Math.max(0, current - 1),
+        items: st.view.languages.map((l) => ({
+          label: l.name, right: String(l.count), active: l.code === lang,
+          onClick: () => {
+            this._kiwixPicking = false;
+            k.setPrefs({ kind, lang: l.code });
+            this._fillKiosk();
+          },
+        })),
+      });
+      return;
+    }
+    const entries = st.view.entries;
+    if (!entries.length) {
+      p.add({ type: 'text', x: pad, y, w: W - 2 * pad, h: 70, size: 24, color: UI.muted, maxLines: 2,
+        text: `No ${KIWIX_KINDS.find((x) => x.id === kind)?.label ?? ''} ZIMs in this language: change it above.` });
+      return;
+    }
+    const rowH = 72;
+    p.add({
+      id: 'kiwix-list', type: 'list', x: pad, y, w: W - 2 * pad, h: Math.floor(listH / rowH) * rowH, rowH, size: 24,
+      items: entries.map((e) => {
+        const open = k.isOpen(e.url);
+        return {
+          label: e.title,
+          // Where its index comes from first (a Wikipedia or Wikisource; "needs an index" is on the right).
+          sub: [e.needsIndex ? '' : indexLabel(e)?.text, e.date, e.about].filter(Boolean).join(' · '),
+          right: open ? 'open' : e.needsIndex ? 'needs an index' : sizeText(e.size),
+          active: open, disabled: open || e.needsIndex,
+          onClick: () => {
+            this.notice(`Opening ${e.title}`, "Read from Kiwix's mirror, a little at a time", 5);
+            this.onOpenUrl?.(e.url);
+          },
+        };
+      }),
+    });
+  }
+
   /** Library info changed without a rebuild (e.g. indexing progress): refresh the kiosk text. */
   updateLibraries(libraries) {
     this.libraries = libraries;
-    if (this._kioskTab === 'rooms') this._fillKiosk();
+    if (this._kiwixView?.view) this._kiwixView.stale = true;
+    if (this._kioskTab === 'rooms' || this._kioskTab === 'kiwix') this._fillKiosk();
   }
 
   /**
@@ -574,7 +734,14 @@ export class Interaction {
   toggleFilter(libId, key, value) {
     const room = normRoom(this.settings.rooms?.[libId]) || { genre: null, letter: null };
     room[key] = room[key] === value ? null : value;
+    delete room.page; // another room: from its first page
     return this.setRoom(libId, room);
+  }
+
+  /** Shelves the next (`delta` 1) or previous (-1) page of a large library's room. */
+  turnPage(libId, delta) {
+    const room = normRoom(this.settings.rooms?.[libId]) || { genre: null, letter: null };
+    return this.setRoom(libId, normRoom({ ...room, page: Math.max(0, (room.page ?? 0) + delta) }) ?? room);
   }
 
   /** Makes sure a book is on the shelves, switching library / room if needed. */
@@ -594,7 +761,13 @@ export class Interaction {
     this.holder.add(p.mesh);
   }
 
-  _fillInspect(book) {
+  /**
+   * The inspect panel: the book's details, then its buttons. While it is being opened (`opening`:
+   * the line under "Opening…", which _showOpening counts up, with a progress bar once there is
+   * progress) only Put back, which cancels; with `error`, why it could not be opened, under the
+   * buttons.
+   */
+  _fillInspect(book, { opening = null, error = null } = {}) {
     const p = this.inspectPanel;
     const W = p.w;
     const pad = 34;
@@ -613,6 +786,16 @@ export class Interaction {
     p.add({ type: 'text', x: pad, y, w: W - 2 * pad, h: 64, text: meta, size: 24, color: UI.muted, maxLines: 2 });
     const pos = load(`pos:${book.libId}:${book.id}`, null);
     const by = p.h - 230;
+    if (opening) {
+      p.add({ type: 'text', x: pad, y: by, w: W - 2 * pad, h: 44, text: 'Opening…', size: 32, weight: '600', maxLines: 1 });
+      p.add({ id: 'opening', type: 'text', x: pad, y: by + 46, w: W - 2 * pad, h: 34, text: opening, size: 24, color: UI.muted, maxLines: 1 });
+      // A progress bar, once the conversion reports how far it is (local books only).
+      p.add({ id: 'opening-track', type: 'rect', x: pad, y: by + 86, w: W - 2 * pad, h: 10, radius: 5, color: 'rgba(255,255,255,0.12)', hidden: true });
+      p.add({ id: 'opening-bar', type: 'rect', x: pad, y: by + 86, w: 0, h: 10, radius: 5, color: UI.accent, hidden: true });
+      p.add({ type: 'button', x: pad, y: by + 108, w: W - 2 * pad, h: 60, label: 'Put back', size: 26, onClick: () => this._cancelOpening?.() });
+      return;
+    }
+    if (error) p.add({ type: 'text', x: pad, y: by + 158, w: W - 2 * pad, h: 64, text: error, size: 22, color: '#e2a08f', maxLines: 2 });
     if (!book.readable) {
       p.add({ type: 'text', x: pad, y: by, w: W - 2 * pad, h: 80, text: 'This book has no readable text in the archive.', size: 26, color: '#e2a08f', maxLines: 2 });
     } else if (pos) {
@@ -622,6 +805,27 @@ export class Interaction {
       p.add({ type: 'button', x: pad, y: by, w: W - 2 * pad, h: 80, label: 'Read', size: 34, color: '#6b4f27', onClick: () => this.read() });
     }
     p.add({ type: 'button', x: pos && book.readable ? pad + (W - 2 * pad + 12) / 2 : pad, y: by + (pos && book.readable ? 80 : 92), w: pos && book.readable ? (W - 2 * pad - 12) / 2 : W - 2 * pad, h: 60, label: 'Put back', size: 26, onClick: () => this.putBack() });
+  }
+
+  /**
+   * Per frame while a book opens (read): the seconds so far and the progress bar on the inspect
+   * panel. The bar is repainted at most every OPENING_BAR_MS (each repaint uploads the panel).
+   */
+  _showOpening(o) {
+    const p = this.inspectPanel;
+    const now = performance.now();
+    const s = Math.floor((now - o.t0) / 1000);
+    if (s >= 1 && s !== o.shown) { // once a second: the seconds so far and about how long is left
+      o.shown = s;
+      // Only a local book's conversion reports progress, so only there is an estimate coming.
+      p.set('opening', { text: OPENING_LINE + progressText(now - o.t0, o.f, { estimating: isLocal(this.book.libId) }) });
+    }
+    if (o.f !== null && o.f !== o.drawnF && (now - o.drawnAt >= OPENING_BAR_MS || o.f >= 1)) {
+      o.drawnF = o.f;
+      o.drawnAt = now;
+      const track = p.set('opening-track', { hidden: false });
+      p.set('opening-bar', { hidden: false, w: Math.max(track.h, Math.round(track.w * Math.min(1, o.f))) });
+    }
   }
 
   _buildToolbar() {
@@ -746,7 +950,8 @@ export class Interaction {
   _hitTest(pointer) {
     const rc = pointer.raycaster;
     let best = null;
-    const panels = [this.kiosk, this.inspectPanel, this.toolbar, this.tocPanel].filter((p) => p.visible && p.mesh.parent);
+    const panels = (this.state === 'opening' ? [this.inspectPanel] : [this.kiosk, this.inspectPanel, this.toolbar, this.tocPanel])
+      .filter((p) => p.visible && p.mesh.parent);
     const ph = rc.intersectObjects(panels.map((p) => p.mesh), false)[0];
     if (ph) best = { kind: 'panel', panel: ph.object.userData.panel, uv: ph.uv, distance: ph.distance };
     if (this.book3d && (this.state === 'read' || this.state === 'inspect')) {
@@ -842,7 +1047,7 @@ export class Interaction {
       // The list under the pointer, else the tab's own list.
       const el = this.kiosk.hover;
       const id = el?.type === 'list' && el.id ? el.id
-        : { rooms: 'places', search: 'search-results', shelves: 'recent' }[this._kioskTab];
+        : { rooms: 'places', search: 'search-results', shelves: 'recent', kiwix: this._kiwixPicking ? 'kiwix-langs' : 'kiwix-list' }[this._kioskTab];
       this.kiosk.scrollList(id, Math.sign(deltaY));
     }
   }
@@ -870,6 +1075,8 @@ export class Interaction {
       if (key === 'Enter' || key === ' ') {
         if (this.book.readable) this.read();
       } else if (key === 'Escape' || key === 'Backspace') this.putBack();
+    } else if (this.state === 'opening' && (key === 'Escape' || key === 'Backspace')) {
+      this._cancelOpening?.();
     }
   }
 
@@ -879,6 +1086,7 @@ export class Interaction {
       if (this.tocPanel.visible) this.toggleToc(false);
       else this.closeBook();
     } else if (this.state === 'inspect') this.putBack();
+    else if (this.state === 'opening') this._cancelOpening?.();
   }
 
   // ===========================================================================================
@@ -1008,25 +1216,46 @@ export class Interaction {
    */
   async read({ fromStart = false, at = null, side = null } = {}) {
     if (this.state !== 'inspect' || !this.book.readable) return;
-    this.state = 'busy';
-    this.inspectPanel.visible = false;
     const book = this.book;
     const b3 = this.book3d;
     const reader = new BookReader({ libId: book.libId, book, fontScale: this.settings.fontScale, theme: this.settings.theme });
     this.reader = reader;
     this.toolbar.set('label', { text: 'Opening…' });
+    // Preparing a book can take a while (a big one from a ZIM file opened on a Quest took half a
+    // minute), so meanwhile the inspect panel says so, counting the seconds, and its Put back
+    // cancels. In 'opening' only that panel takes input.
+    this.state = 'opening';
+    this._opening = { t0: performance.now(), shown: 0, f: null, drawnF: null, drawnAt: 0 };
+    const opening = this._opening;
+    this._fillInspect(book, { opening: OPENING_LINE });
+    const cancelled = new Promise((resolve) => { this._cancelOpening = () => resolve(CANCELLED); });
+    const t0 = performance.now();
     let startRef;
+    let failure = null;
     try {
-      await reader.load();
-      const pos = at ?? (!fromStart && load(`pos:${book.libId}:${book.id}`, null));
-      startRef = pos ? await reader.refForAnchor(pos) : reader.firstRef();
+      startRef = await Promise.race([cancelled, (async () => {
+        await reader.load({ onProgress: (f) => { opening.f = f; } });
+        const pos = at ?? (!fromStart && load(`pos:${book.libId}:${book.id}`, null));
+        return pos ? reader.refForAnchor(pos) : reader.firstRef();
+      })()]);
     } catch (err) {
-      console.error(err);
-      this.overlay?.showToast(`Could not open this book: ${err.message}`, 'error');
+      failure = err;
+    }
+    this._opening = null;
+    this._cancelOpening = null;
+    if (failure || startRef === CANCELLED) {
+      reader.dispose();
+      this.reader = null;
       this.state = 'inspect';
-      this.inspectPanel.visible = true;
+      if (!failure) return this.putBack();
+      console.error(failure);
+      this.overlay?.showToast(`Could not open this book: ${failure.message}`, 'error');
+      this._fillInspect(book, { error: `Could not open this book: ${failure.message}` });
       return;
     }
+    perf.event('book-load', { t: t0, ms: performance.now() - t0, chunks: reader.chunkCount });
+    this.state = 'busy';
+    this.inspectPanel.visible = false;
 
     // Reading pose: in front of the eyes, a little below, facing them. On a flat screen the book
     // sits higher and further so that it and its toolbar fit the (narrower) field of view.
@@ -1387,6 +1616,7 @@ export class Interaction {
   async setCatalog(libraries, booksByLib) {
     this.libraries = libraries;
     this.booksByLib = booksByLib;
+    if (this._kiwixView?.view) this._kiwixView.stale = true; // Kiwix's list: its Open marks and index labels
     if (this.state !== 'browse') {
       this._pendingCatalog = true;
       return false;
@@ -1414,7 +1644,10 @@ export class Interaction {
       this._highlightUntil = 0;
       this.tooltip.visible = false;
       const collections = collectionsFor(this.libraries, this.booksByLib, this.settings);
-      const built = this.world.build(collections, { sort: this.settings.sort });
+      // A room with no books yet because its libraries are being indexed says so.
+      const emptyText = !collections.length && this.libraries.some((l) => l.indexing)
+        ? ['Indexing…', 'The shelves fill as each library is ready'] : null;
+      const built = this.world.build(collections, { sort: this.settings.sort, emptyText });
       t.built = performance.now(); // the synchronous part: packing, geometry, signs
       await built; // the low atlases from the worker
       t.ready = performance.now();
@@ -1708,6 +1941,7 @@ export class Interaction {
       }
     }
     this.book3d?.update(dt);
+    if (this._opening) this._showOpening(this._opening);
     this._updateExitHold(dt);
 
     if (this._grab) {

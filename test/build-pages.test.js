@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { blockImages, importsOf, prerender, relativeUrls, staticFile, staticPath, staticUrl, storableName, tagModuleUrls } from '../tools/build-pages.mjs';
+import { blockImages, buildIndexes, importsOf, prerender, relativeUrls, staticFile, staticPath, staticUrl, storableName, tagModuleUrls } from '../tools/build-pages.mjs';
 import { fileName } from '../public/js/util/file-names.js';
 import { writeZim } from './helpers/zimwriter.js';
 
@@ -128,6 +128,29 @@ describe('GitHub Pages build', () => {
     assert.ok(tagged.includes(`new URL('./w.js?v=a1', import.meta.url)`));
     assert.ok(tagged.includes(`new URL('../', import.meta.url)`) && tagged.includes(`'from here'`));
     assert.equal(tagModuleUrls(src, () => null), src);
+  });
+});
+
+describe('GitHub Pages build: prebuilt indexes (--indexes)', () => {
+  it('writes the index of each Wikipedia or Wikisource ZIM under indexes/, by the name the local library asks for', async () => {
+    const zims = fs.mkdtempSync(path.join(os.tmpdir(), 'vrlbry-pages-idx-zims-'));
+    const site = fs.mkdtempSync(path.join(os.tmpdir(), 'vrlbry-pages-idx-site-'));
+    try {
+      writeDocsZim(path.join(zims, 'docs.zim'));
+      writeWikipediaZim(path.join(zims, 'wp.zim'));
+      const st = await buildIndexes(zims, site, { log: () => {} });
+      assert.equal(st.libraries, 2);
+      assert.equal(st.indexes.length, 1, 'the generic ZIM has none');
+      assert.match(st.indexes[0], /^wikipedia-[0-9a-f]{32}\.v\d+\.json$/);
+      const idx = JSON.parse(fs.readFileSync(path.join(site, 'indexes', st.indexes[0]), 'utf8'));
+      assert.equal(idx.count, 4, 'this file\'s fixture has 4 articles');
+      assert.deepEqual(fs.readdirSync(site), ['indexes'], 'nothing else is written');
+      // …and the list of them, for Kiwix's library in the page (local/kiwix.js).
+      assert.deepEqual(JSON.parse(fs.readFileSync(path.join(site, 'indexes', 'list.json'), 'utf8')), { indexes: st.indexes });
+    } finally {
+      fs.rmSync(zims, { recursive: true, force: true });
+      fs.rmSync(site, { recursive: true, force: true });
+    }
   });
 });
 

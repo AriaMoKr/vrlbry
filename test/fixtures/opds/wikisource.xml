@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom"
+      xmlns:dc="http://purl.org/dc/terms/"
+      xmlns:opds="https://specs.opds.io/opds-1.2"
+      xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/">
+  <id>7c34cfff-bb8d-499e-a4ad-86e9bafde4bb</id>
+
+  <link rel="self"
+        href="/catalog/v2/entries?category=wikisource&amp;count=-1"
+        type="application/atom+xml;profile=opds-catalog;kind=acquisition"/>
+  <link rel="start"
+        href="/catalog/v2/root.xml"
+        type="application/atom+xml;profile=opds-catalog;kind=navigation"/>
+  <link rel="up"
+        href="/catalog/v2/root.xml"
+        type="application/atom+xml;profile=opds-catalog;kind=navigation"/>
+
+  <title>Filtered Entries (category=wikisource&amp;count=-1)</title>
+  <updated>2026-10-10T04:12:20Z</updated>
+  <totalResults>2</totalResults>
+  <startIndex>0</startIndex>
+  <itemsPerPage>132</itemsPerPage>
+  <entry>
+    <id>urn:uuid:e291b2f1-52cd-92a1-4cdc-c955aed4a954</id>
+    <title>Wikisource</title>
+    <updated>2026-09-08T00:00:00Z</updated>
+    <summary>Wikisource is an library of public domain texts</summary>
+    <language>eng</language>
+    <name>wikisource_en_all</name>
+    <flavour>maxi</flavour>
+    <category>wikisource</category>
+    <tags>wikisource;_category:wikisource;_pictures:yes;_videos:no;_details:yes;_ftindex:yes</tags>
+    <articleCount>857535</articleCount>
+    <mediaCount>222489</mediaCount>
+    <link rel="http://opds-spec.org/image/thumbnail"
+          href="/catalog/v2/illustration/e291b2f1-52cd-92a1-4cdc-c955aed4a954/?size=48"
+          type="image/png;width=48;height=48;scale=1"/>
+    <link type="text/html" href="https://browse.library.kiwix.org/content/wikisource_en_all_maxi_2026-09" />
+    <author>
+      <name>Wikisource</name>
+    </author>
+    <publisher>
+      <name>openZIM</name>
+    </publisher>
+    <dc:issued>2026-09-08T00:00:00Z</dc:issued>
+    <link rel="http://opds-spec.org/acquisition/open-access" type="application/x-zim" href="https://lb.download.kiwix.org/zim/wikisource/wikisource_en_all_maxi_2026-09.zim.meta4" length="8615937024" />
+  </entry>
+  <entry>
+    <id>urn:uuid:322c01de-c325-7aad-87fe-9a3cd3cd4a3c</id>
+    <title>Wikisource</title>
+    <updated>2026-09-08T00:00:00Z</updated>
+    <summary>Wikisource is an library of public domain texts</summary>
+    <language>eng</language>
+    <name>wikisource_en_all</name>
+    <flavour>nopic</flavour>
+    <category>wikisource</category>
+    <tags>wikisource;_category:wikisource;_pictures:no;_videos:no;_details:yes;_ftindex:yes</tags>
+    <articleCount>857535</articleCount>
+    <mediaCount>12306</mediaCount>
+    <link rel="http://opds-spec.org/image/thumbnail"
+          href="/catalog/v2/illustration/322c01de-c325-7aad-87fe-9a3cd3cd4a3c/?size=48"
+          type="image/png;width=48;height=48;scale=1"/>
+    <link type="text/html" href="https://browse.library.kiwix.org/content/wikisource_en_all_nopic_2026-09" />
+    <author>
+      <name>Wikisource</name>
+    </author>
+    <publisher>
+      <name>openZIM</name>
+    </publisher>
+    <dc:issued>2026-09-08T00:00:00Z</dc:issued>
+    <link rel="http://opds-spec.org/acquisition/open-access" type="application/x-zim" href="https://lb.download.kiwix.org/zim/wikisource/wikisource_en_all_nopic_2026-09.zim.meta4" length="3905589248" />
+  </entry>
+</feed>

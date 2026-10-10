@@ -528,6 +528,30 @@ describe('HTTP API (synthetic library)', () => {
     }
   });
 
+  it('serves the local library worker\'s modules, with bare imports made relative', async () => {
+    // htmlparser2's Tokenizer imports "entities/decode": a module worker has no import map.
+    const tokenizer = await get('/vendor/htmlparser2/dist/Tokenizer.js');
+    assert.equal(tokenizer.status, 200);
+    assert.equal(tokenizer.headers['content-type'], 'text/javascript; charset=utf-8');
+    const source = tokenizer.body.toString();
+    assert.match(source, /from ["']\.\.\/\.\.\/entities\/dist\/decode\.js["']/);
+    assert.doesNotMatch(source, /from ["']entities\/decode["']/);
+    assert.equal(Number(tokenizer.headers['content-length']), tokenizer.body.length);
+    const decode = await get('/vendor/entities/dist/decode.js', { method: 'HEAD' });
+    assert.equal(decode.status, 200);
+    // fzstd's .mjs module is served under a .js name; fflate's browser build as it is.
+    const fzstd = await get('/vendor/fzstd/esm/index.js');
+    assert.equal(fzstd.status, 200);
+    assert.equal(fzstd.headers['content-type'], 'text/javascript; charset=utf-8');
+    assert.deepEqual(fzstd.body, fs.readFileSync(path.join(REPO, 'node_modules/fzstd/esm/index.mjs')));
+    assert.equal((await get('/vendor/fflate/esm/browser.js', { method: 'HEAD' })).status, 200);
+    // An unchanged module keeps its validators.
+    const parser = await get('/vendor/htmlparser2/dist/Parser.js');
+    assert.equal(parser.status, 200);
+    assert.ok(parser.headers.etag);
+    assert.equal((await get('/vendor/htmlparser2/dist/Parser.js', { headers: { 'if-none-match': parser.headers.etag } })).status, 304);
+  });
+
   it('rejects path traversal and never serves files outside the roots', async () => {
     const attempts = [
       '/..%2f..%2fpackage.json',

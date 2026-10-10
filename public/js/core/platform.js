@@ -1,0 +1,84 @@
+// What the shared core (public/js/core: ZIM reading, conversion, catalogues) needs from where it
+// runs, filled in once with provide(): on Node by server/platform-node.js (zlib, crypto, files,
+// htmlparser2, and Buffers, so the server keeps Buffer's speed and its callers get Buffers), in a
+// browser by the local library's worker (public/js/local/). Core modules import nothing from
+// node: and no bare specifiers: a module worker has no import map.
+//
+// The defaults below work anywhere (plain Uint8Array, TextDecoder); the codecs and the HTML
+// parser have none, and using one that was not provided throws.
+
+const decoder = new TextDecoder();
+const latin1Decoder = new TextDecoder('latin1');
+const encoder = new TextEncoder();
+
+const missing = (name) => () => {
+  throw new Error(`platform: ${name} was not provided (call provide() from server/platform-node.js or the browser worker)`);
+};
+
+export const platform = {
+  /** n uninitialised bytes (every byte is written before it is read). */
+  alloc: (n) => new Uint8Array(n),
+  /** A copy of `bytes` (that does not pin a larger buffer). */
+  copy: (bytes) => bytes.slice(),
+  /** UTF-8 text of bytes[start, end). */
+  utf8: (bytes, start = 0, end = bytes.length) => decoder.decode(bytes.subarray(start, end)),
+  /** Latin-1 text of bytes[start, end) (one character per byte). */
+  latin1: (bytes, start = 0, end = bytes.length) => latin1Decoder.decode(bytes.subarray(start, end)),
+  /** Lower-case hex of bytes[start, end). */
+  hex: (bytes, start = 0, end = bytes.length) => {
+    let s = '';
+    for (let i = start; i < end; i++) s += (bytes[i] < 16 ? '0' : '') + bytes[i].toString(16);
+    return s;
+  },
+  /** UTF-8 bytes of a string. */
+  encodeUtf8: (text) => encoder.encode(text),
+  /** Bytes of a base64 (or base64url) string; other characters are skipped, as Node does. */
+  fromBase64: (text) => {
+    const clean = String(text).replace(/[-_]/g, (c) => (c === '-' ? '+' : '/')).replace(/[^A-Za-z0-9+/]/g, '');
+    return Uint8Array.from(atob(clean + '='.repeat((4 - (clean.length % 4)) % 4)), (c) => c.charCodeAt(0));
+  },
+  /** Base64 of bytes. */
+  toBase64: (bytes) => {
+    let s = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    return btoa(s);
+  },
+  /** Position of the byte sequence `needle` in `hay` from `from`, or -1. */
+  indexOf: (hay, needle, from = 0) => {
+    const n = needle.length;
+    if (n === 0) return Math.min(from, hay.length);
+    const first = needle[0];
+    for (let i = hay.indexOf(first, from); i >= 0 && i <= hay.length - n; i = hay.indexOf(first, i + 1)) {
+      let k = 1;
+      while (k < n && hay[i + k] === needle[k]) k++;
+      if (k === n) return i;
+    }
+    return -1;
+  },
+  /** zstd-decompressed bytes; a truncated input rejects with code 'Z_BUF_ERROR'. */
+  zstd: missing('zstd'),
+  /** zlib-decompressed bytes (ZIM clusters of compression 2); truncated input: code 'Z_BUF_ERROR'. */
+  inflate: missing('inflate'),
+  /** Raw-deflate-decompressed bytes, synchronously (zip/EPUB entries). */
+  inflateRaw: missing('inflateRaw'),
+  /** CRC-32 (IEEE), or null: xz.js then uses its own table. */
+  crc32: null,
+  /** SHA-256 digest bytes, or null: xz's SHA-256 checks are then skipped. */
+  sha256: null,
+  /** htmlparser2's Parser class. */
+  Parser: null,
+  /** gzip of bytes (a chunk's HTTP body; Node only). */
+  gzip: missing('gzip'),
+  /** A strong HTTP validator of bytes (Node only). */
+  etag: missing('etag'),
+  /** A byte source for a file path (Node only; ZimArchive.open with a string). */
+  openFile: missing('openFile'),
+};
+
+/** The platform as it starts, before provide(): what a browser uses for all but the codecs. */
+export const defaults = Object.freeze({ ...platform });
+
+/** Fills in what this environment provides (see `platform`). */
+export function provide(impl) {
+  Object.assign(platform, impl);
+}

@@ -151,44 +151,369 @@ is the maxi flavour (with images). A Wikipedia is its own room of encyclopedia v
 - **Volumes** are runs of 1,000 consecutive articles (`VOLUME_SIZE`) in the app's title order
   (`titleKey` + a default `Intl.Collator`, as `util/books.js` sorts book titles), numbered
   1–N. Each article starts on a fresh page, as its own chunk.
-- The index (`server/wikipedia.js`) reads no article text. It scans the directory (the candidates
+- The index (`core/wikipedia.js`) reads no article text. It scans the directory (the candidates
   in typed arrays), then reads each candidate's HTML size, decompressing every cluster once in
   cluster order, from the cluster and blob the scan found (`archive.clusterBlobs`, no directory
   entry re-read), several clusters at once: each page's first 4 KB give away the redirect pages
   and the pages of other namespaces, and the sizes estimate article lengths (its progress counts
   clusters, one decompression each, not pages: redirect pages are tiny and stored together at
-  the end). Then it sorts the titles and cuts the volumes. The size pass keeps its
-  progress in a checkpoint (`.cache/wikipedia-<uuid>.v<N>.part.json` / `.part.bin`: the sizes in
-  cluster order, appended as they finish), so a stopped build resumes it after a new scan; the
-  checkpoint fits only the same scan (count and a fingerprint) and is deleted once the index is
-  saved. It is built in the background on first open and cached as
-  `.cache/wikipedia-<uuid>.v<INDEX_VERSION>.json`: the entry indices in title order and their
+  the end). Then it sorts the titles and cuts the volumes. The size pass keeps its progress in a
+  checkpoint in the store (§3; on the server `.cache/wikipedia-<uuid>.v<N>.part.json` /
+  `.part.bin`: the sizes in cluster order, appended as they finish), so a stopped build resumes
+  it after a new scan; the checkpoint fits only the same scan (count and a fingerprint) and is
+  deleted once the index is saved. It is built in the background on first open and kept in the
+  store as `.cache/wikipedia-<uuid>.v<INDEX_VERSION>.json`: the entry indices in title order and their
   HTML sizes (both base64 `Uint32Array`s), and each volume's first and last title. Wikipedia
   100 takes under a second, Simple English 56 s.
 
-## 3. Server
+### 2.6 ZIM files opened in the browser (the local library)
+
+Step 2 of the online version (TODO): ZIMs someone opens on their own device, read in the browser
+by the same code as the server's (§3, `public/js/core/`), in a module worker
+(`public/js/local/worker.js`) over `File.slice`, so even a file of many gigabytes is never read
+whole. It works on GitHub Pages (no server) and beside a server's own libraries.
+
+- **Opening:** "Open ZIM files…" under the library list (a file input, several at once) or a drop
+  on the page (`ui/overlay.js` → `main.js` `openLocalFiles`); `__vrlbry.openZim(file)` does the
+  same for scripted tests. The status box at the page's foot (below, with the index builds:
+  one box for all the local library's work, not a toast beside it) reads "Opening <file>…",
+  "(2 of 3)" for several, then "· 12 s · about 40 s left" (the seconds so far and, from the
+  fraction done, about how long is left, "· estimating…" until there is enough to tell,
+  `util/progress.js` `progressText`) and "· N to index", with a bar from the worker's progress
+  (how much of the catalogue is built, Gutenberg books looked up or generic entries scanned,
+  `ArchiveLibrary.open`'s `onProgress`), until every file is open, however long that takes;
+  then the catalogue's "New library" toast or the file's error follows. With several files the
+  box's head has a Stop: no more files are opened (`openFiles`' `stopped`; "Stopped: N files
+  not opened."). Several files opened together go to the "Opened here" place (§5.6), one to its
+  own room. Under the
+  button, a line links an example to download
+  (`EXAMPLE_ZIM` in `local/local.js`: Gutenberg LCC-P, 37 MB, from tools/demo-set.txt, which a
+  test checks) and Kiwix's Gutenberg folder. In a headset, files are picked before entering VR;
+  in VR the kiosk's footer says so ("Your own ZIM files: exit VR, then …"). Opened files last
+  until the page is reloaded; a saved place naming a local library that is gone falls back as
+  for a removed ZIM. Where the browser gives file handles (the File System Access API: desktop
+  Chrome and Edge, Quest Browser; `local/handles.js`), the Open button picks through
+  `showOpenFilePicker` and a drop asks `getAsFileSystemHandle`, the handles of the files that
+  opened are kept in IndexedDB (`vrlbry-files`, by file name), and the card then offers "Last
+  time: <names> · Reopen · Forget": Reopen asks each handle for permission (the browser
+  prompts, once per file and load) and opens the files again; one that is refused or gone is
+  reported and forgotten. Other browsers pick the file again.
+- **What opens:** Gutenberg, generic, Wikipedia and Wikisource ZIMs. The last two need a full
+  index pass (§2.4, §2.5): the worker runs the same build as the server (`ArchiveLibrary` with
+  an `IndexQueue`) in the background, but one at a time whatever the size, the smallest first
+  (`smallBytes: 0`: builds share the worker's one thread, so at once each only ended later),
+  and while a batch of files opens it holds the queue (`hold` / `release` requests), so the
+  smallest goes first rather than the first opened. Meanwhile the catalogue entry says so
+  (`indexing`, `'queued'` while waiting, as for the server's) and has no books, and a room
+  without books because of it says "Indexing…" (`World.build`'s `emptyText`). The builds show
+  in the status box at the page's foot (`overlay.setStatus`), not a toast each (six covered
+  the view): once no file is opening, its head line is the summary ("Indexing 6 files · 2 ready ·
+  Chemistry: 4 s · about 3 s left · 3 waiting") with an overall bar, and behind a toggle
+  (remembered) a row per file with its
+  bar, its time ("waiting" while queued, the time counted from its start) and a × that stops
+  the build and closes the file (`close`: the archive's reads then fail and the build ends
+  silently; a closed library tells no more, `_setIndexing`), forgetting it for Reopen. The index is
+  kept in IndexedDB (`local/idb-store.js`: the store interface of `server/cache-store.js`, one
+  object store, name → string or `Uint8Array`; `appendBytes` and `truncate` read and write
+  back in one transaction), named by the ZIM's UUID like the server's, so a file is indexed
+  once however it is called or picked; the checkpoint (§2.5) lets an interrupted build resume.
+  Without IndexedDB (site data blocked) the index is kept in memory, for the page's life
+  (`memoryStore`). Before building, the worker asks the site for the index, `indexes/<name>`
+  beside the app (`local/prebuilt.js` `withPrebuilt`: a store whose `readText` fetches an index
+  it lacks, once, and keeps it; only index names, never checkpoints): a site that ships a
+  ZIM's index spares its visitors the build, minutes on a headset for a big Wikipedia (Simple
+  English about 10 min with the page rendering, the top 1M about an hour). `tools/build-pages.mjs
+  --indexes <folder>` builds the indexes of a folder's Wikipedia and Wikisource ZIMs into
+  `indexes/` (the standalone workflow's "demo indexes" does it for the demo set), and their
+  names in `indexes/list.json` (`{ "indexes": [names] }`, with any written before), by which
+  Kiwix's library (below) knows which big Wikipedias open here.
+- **Prebuilt indexes** (milestone 3 step 6, optional; `tools/build-indexes.mjs`): the big
+  editions' indexes, for those opened from the web. `tools/indexes.txt` lists the ZIMs by file
+  name without the date (`wikipedia_en_top1m_maxi`): the English Wikipedias and Wikisources over
+  256 MB, 49 in October 2026. The tool finds each one's current edition in Kiwix's catalogue
+  (`currentEditions`, through `parseEntries`), keeps an index already in `--out` (named by the
+  edition's UUID, so a new edition gets a new one), and builds a missing one as the server
+  does, from a copy in `--zims` (the same file name) or, with `--web`, read from Kiwix's mirror
+  (64 KB blocks, compressed clusters in one read, 8 requests at once). A build works in
+  `<out>/.work`, its store, so a Wikipedia stopped at `--hours` resumes its sizes pass from the
+  checkpoint next time; `--hours` is a hard stop (no build starts after it, and one running
+  stops, as "missing", not "failed"). `--prune` deletes the indexes of editions no longer
+  current (not with `--only`); `--publish <dir>` copies them into a site's `indexes/`; both
+  folders get `list.json` (`writeIndexList`, which `build-pages.mjs --indexes` uses too). The
+  cloud site's workflow (`pages-cloud.yml`) ships on every run what it has: the indexes kept in
+  the Actions cache by earlier runs and the assets of the release "indexes" (built on a PC from
+  local copies, then `gh release upload indexes .indexes/*.json --clobber`), less old editions;
+  with "prebuilt indexes" ticked it first builds the missing ones from the mirror (up to 5 h,
+  then the cache is saved). Measured: from local copies, Wikipedia 100 in 2 s, Simple English
+  (3.1 GB) 28 s and a 2.9 MB index, Wikisource (8.6 GB) 119 s and 3.4 MB, the top 1M 396 s and
+  10.7 MB (5.6 MB compressed), the full English Wikipedia (maxi, 7.2 M articles) 32 min and
+  77 MB (39 MB compressed); over the web from here, Cricket (379 MB) read 0.20 GB in 232 s. On a
+  Quest the full English Wikipedia opens from the web with its index in 24 s.
+  The list without the three full English Wikipedias reads about 60 GB of the mirror once, then
+  only new editions; those three about 110 GB more (each index about 75 MB), so they are best
+  built from local copies. None of it is needed: without an index a big Wikipedia from the web
+  is listed as needing one, and every ZIM still opens from a file.
+- **From the web** (milestone 3): a ZIM's web address, typed or pasted into the card's field
+  under the Open button, a link dropped on the page (`text/uri-list`), the example's "read it
+  online" button, or `__vrlbry.openUrl(url)`. `local/zim-url.js` `zimUrl` makes the address one
+  the page can read: `https://` added when no scheme is typed, Kiwix's download links
+  (`download.kiwix.org`, `lb.download.kiwix.org`, and the catalogue's `.meta4` / `.torrent` /
+  `.sha256` / `.md5` side files) turned into the same file on `mirror.download.kiwix.org`, the
+  only Kiwix mirror that sends CORS headers; it refuses what is not a `.zim` address and, from an
+  https page, an http one (mixed content; this machine's excepted). The worker opens it with an
+  `HttpSource` (§3.1) as it opens a File, with what step 2 of the milestone measured best:
+  `blockBytes` 8 KB, no whole uncompressed clusters, `wholeCompressedBytes` 4 MB,
+  `checkImages: false`, `maxIndexBuildBytes` 256 MB and `bookLookups` 500 (§3.6); same ids, catalogue, indexing
+  and status box. Its catalogue entry carries `url`, and the card shows "from <host>". A
+  server's refusal is the open's error: "HTTP 404 (not found)", "the server does not serve parts
+  of the file", or, unreachable, "cannot reach the server (…); if it is another site, it may not
+  allow this page to read it (CORS)", to which an address on another Kiwix mirror adds the same
+  file's address on Kiwix's own. An address already open is not opened twice. The addresses
+  that opened are kept in localStorage (`zimUrls`: `[{ url, name }]`) and reopen as the page
+  starts, in the background (no permission is needed, unlike files); the place saved last time
+  comes back once its library is open, unless the person has gone elsewhere meanwhile (the
+  first build fell back from it). One that does not reopen stays remembered (the network may be
+  down): "Not reopened: …", and the card's "Last time" line offers it with the kept files
+  (Reopen, Forget). Nothing else is required: no proxy, no block store, no prebuilt index for a
+  Gutenberg ZIM or a small Wikipedia.
+- **Kiwix's library** (milestone 3 step 5, optional; `local/kiwix.js`, `ui/kiwix-dialog.js`, the
+  kiosk's Kiwix tab): the ZIMs this app reads well (Gutenberg, Wikipedia, Wikisource) as Kiwix's
+  OPDS catalogue lists them (`opds.library.kiwix.org`, CORS `*`), to open from the web without
+  typing an address, in VR too (no file picker or keyboard there). Read live, one feed per kind
+  with every language (`/catalog/v2/entries?category=<kind>&count=-1`: 100 KB to 1.5 MB, about
+  100 KB compressed, revalidated by its ETag), kept for the page's life, a language chosen
+  without another request; the languages' own names from `/catalog/v2/languages`. The feed is
+  machine-written and read with patterns (`parseEntries`; no DOMParser in a worker or Node).
+  Each entry: its UUID, name, kind, languages, flavour, size, date, article count, thumbnail
+  and the ZIM's address (through `zimUrl`: Kiwix's mirror), its title as the app shows a
+  library (`libraryTitle`, moved to `util/library-title.js` for the page), its summary unless
+  the title says it (`about`).
+  Listed by title, a topic's editions together (the fullest first), and those that open here
+  first. Each Wikipedia or Wikisource has an index state (`indexState`), by its index name
+  (`core/index-versions.js` `indexNameFor`: kind, UUID and the current version, as the core
+  names it, so an old version counts as none) and labelled (`indexLabel`): "Indexed here" (in
+  this browser's store, `local/idb-store.js` `names()`, read again each time the list is shown),
+  "Index ready" (in the site's `indexes/list.json`), "Indexed on first open (under a minute /
+  about N min)" (up to 256 MB, `URL_INDEX_BUILD_BYTES`: built in the browser; the time from its
+  size, at about 70 % of the file read at 1 MB/s) or, over 256 MB and nowhere, "Needs an index":
+  it cannot be opened from the list (43 of the 65 English Wikipedias once the site's indexes
+  were published). The dialog shows the label as a badge after the size and date (its meaning
+  on hover; for "needs an index" the reason, under it); the kiosk at the start of the row's
+  second line ("needs an index" on the right). When the libraries change the list is read again
+  quietly (the dialog's `refresh`, the kiosk's stale view), so an index finished shows. The card's "Browse Kiwix's library…" opens
+  the dialog: kind tabs, a language menu (with counts), a filter, rows with thumbnail, title,
+  summary, size, date and Open (closing the dialog; "Open ✓" for one already open). The kiosk's
+  Kiwix tab is the same list: kind buttons, "Change language" (a list of languages, most
+  entries first), rows that open their ZIM with a notice in the headset; in VR an error is a
+  notice too. The kind and language are remembered (`settings.kiwix`, the browser's language
+  at first). Unreachable, the dialog and the tab say so, with Retry; addresses and files still
+  open. The dialog's state is in the debug report (`uiState().kiwix`).
+- **Kept from the web** (milestone 3 step 4, optional; `local/block-cache.js`): what is read
+  from a web address is kept in IndexedDB (`vrlbry-blocks`: the reads, their sizes and when they
+  were written, and the total), so a library, book or search read once costs no network again,
+  after a reload too. The worker wraps each web source (`blockCache().wrap(httpSource)`), and
+  every read goes through it: a hit is the kept bytes; a miss reads from the source and is kept
+  in the background (a copy: the caller may transfer its bytes). A read is kept under the file's
+  edition (address, size and Last-Modified from the probe: a new edition at the same address
+  never meets the old one's bytes; without Last-Modified the source is not wrapped) and its
+  position and length: ZimArchive's reads repeat exactly on a second visit (aligned blocks,
+  whole clusters, blob ranges). At most 256 MB (`BLOCK_CACHE_BYTES`), the oldest written going
+  first (down to 90 %); reads over 8 MB are not kept. Read-through: no IndexedDB (no cache), a
+  failed request (a miss), and after 5 failures in a row the cache stands aside; a database of
+  that name without its stores gets them one version up. On a Quest a second visit to the top
+  1M took 0.1 s for a search instead of 8.6, 0.0 s for a volume's titles instead of 2.1: the
+  browser's HTTP cache serves the reads made one at a time (opens, binary searches) but only
+  queues the ones made together (§3.1), which this serves. The probe still goes to the network
+  (it says which edition is there). Clearing the site's data clears it.
+- **Through an edge proxy** (milestone 3 step 7, optional; `tools/zim-proxy/`): a Cloudflare
+  Worker (`worker.js`) that answers range reads of Kiwix's files from the mirror nearest the
+  visitor, with the CORS headers only Kiwix's own mirror sends. `GET /zim/<folder>/<file>.zim`
+  with `Range: bytes=<start>-<end>`: the mirrors are tried in an order per continent (Cloudflare's
+  `request.cf.continent`: the Americas and Oceania the US mirrors first, Europe and Africa
+  Kiwix's, Asia India's; Kiwix's, which holds everything, always among them); one without the
+  file (404), failing, slower than 8 s to answer or sending the whole file is passed over for the
+  next, and for that file for 10 minutes. Every mirror has the same size and Last-Modified for a
+  file (rsync'd; checked on all seven), so the page's edition check holds whichever answers. It
+  relays only that: no Range, an open range, more than 64 MB, another path or method is refused
+  (no whole files, no other sites: it fetches from its seven mirrors only). Only the pages of the
+  origins in `ALLOWED_ORIGINS` (`wrangler.toml`: `https://ariamokr.github.io`, which the three
+  Pages sites share, and this machine's servers on any port; `allowOrigin`) may use it, so no
+  other site spends its requests (Cloudflare's free plan: 100,000 a day; over them it answers an
+  error and the page reads Kiwix's mirror directly); a request without an allowed `Origin` gets
+  403, an allowed one its origin back (`Vary: Origin`). Preflights get `Range` allowed for a day. The page uses it
+  only when the site names it: `<meta name="vrlbry-zim-proxy" content="<base>">` in the built
+  page (`build-pages.mjs --zim-proxy <url>`; the cloud workflow passes the repository variable
+  `ZIM_PROXY`), or `?zimproxy=<base>` in the page's address to try one (`off`: none); https only
+  (http on this machine). `local/zim-url.js` `zimProxyOf` reads it and `proxiedUrl` maps an
+  address on Kiwix's mirror to the proxy's (others are read directly); `open({ url, via })` reads
+  through it (§3.1 `via`) while it works and from `url` for good once it fails, with one
+  warning. The library stays the file's: its catalogue `url`, the remembered addresses and the
+  block cache's edition all name Kiwix's mirror, so switching the proxy on or off loses
+  nothing. `tools/zim-proxy/serve.mjs` runs it on this machine (port 8090) for trying. Deployed
+  at `https://vrlbry-zim-proxy.vrlbry.workers.dev`. Measured from California through it (TODO,
+  milestone 3 step 7): the top 1M opens in 0.9 s instead of 3.5-4.4 s and finds Albert Einstein
+  in 4.4 s instead of 7.5 s.
+- **Closing:** a local library's × in the card's list closes it (stopping its index build) and
+  forgets it: its file handle, or its web address (so it does not reopen).
+- **Ids:** `~` + `libraryIdFor(file name)` (then `-2`, `-3` … for the same name twice):
+  `libraryIdFor` never makes a `~`, so they cannot clash with a server's; `~` is URL-safe.
+- **Requests:** `local/local.js` (page) ↔ `local/local-handler.js` (worker) by `postMessage`:
+  `open`, `catalog`, `books`, `articles` (a Wikipedia's article search, §2.5, as the server's
+  route), `meta`, `chunk` (the chunk's JSON bytes, transferred), `image` (bytes and MIME type
+  of a URL), `close`, `hold` and `release` (the index queue, around a batch of files). Before
+  its answer an `open` or a `meta` may send
+  `{ id, progress }` (a fraction, at most 10 a second), for the page's progress bars; and the
+  worker sends of its own `{ indexing: { id, file, stage, progress } }` as a library's index
+  build moves on (at most 4 a second per library; `{ id, file, done }` once ready, `error` with
+  stage 'failed'; `local.onIndexing`: the status box above. The page keeps the last word per
+  build, and once a batch is open makes a row only for builds not yet done: a small file's
+  build can end while the next files open, and a row made from its open-time snapshot then
+  stood at 0 % for good, issue #1) and `{ changed }` when a library's index finished
+  (`local.onChange`: the page refreshes its catalogue at once rather than at the next 10 s
+  poll; a refresh asked for while one is applied runs right after it, never dropped). `api.js`
+  sends the requests of `~` libraries there;
+  `getCatalog()` (and a rescan's answer) lists the local libraries after the server's, with
+  generation `"<server>+<local>"` so the poll notices either changing. A local Wikipedia's
+  article search (`api.searchArticles`) goes to the worker's `articles`, so the search box and
+  the kiosk's Search tab list its articles like a server's.
+- **Images:** their URLs are the core's (`/zim/~id/…`, `/api/libraries/~id/books/<id>/res/…`),
+  never fetched: `api.imageSource(url)` turns a local one into a blob URL, released once the
+  image has loaded (the decoded image stays). The reader's page images, covers and the volume
+  emblem load through it; the overlay renders a local `<img>` with `data-local-src` and fills it
+  in afterwards.
+- **The browser's platform** (`local/browser-platform.js`, made from the libraries the worker
+  loads from `/vendor/`): fzstd for zstd (the input cut at the end of its frame, since the last
+  cluster is read with whatever follows it), fflate for zlib and raw deflate, htmlparser2's
+  Parser; truncated input rejects with `code: 'Z_BUF_ERROR'`, as on Node, so the reader's
+  growing tail window works. No SHA-256 (xz SHA-256 checks are skipped).
+- **Memory:** converted books share a 64 MB cache, each archive keeps 32 MB of clusters (a
+  headset has far less memory than the PC).
+
+## 3. Server and shared core
+
+The code that reads ZIMs runs on the server and in a browser (§2.6): it lives in
+`public/js/core/`, which imports nothing from `node:` and no bare specifiers (a module worker has
+no import map). What differs goes through `core/platform.js`: `provide({...})` fills in the
+codecs (`zstd`, `inflate`, `inflateRaw`, `crc32`, `sha256`), htmlparser2's `Parser`, byte
+helpers (`alloc`, `copy`, `utf8`, `latin1`, `hex`, `encodeUtf8`, `fromBase64`, `toBase64`,
+`indexOf`), `gzip` / `etag` (chunk bodies, server only) and `openFile`. On Node,
+`server/platform-node.js` provides zlib, crypto, files and Buffers, so the server keeps Buffer's
+speed and every caller still gets Buffers; core code itself uses only `Uint8Array` features,
+`platform.*` and `core/util/bytes.js`. Node code using core modules directly (tests) imports
+`server/platform-node.js` first.
 
 ```
-server/
-  index.js            CLI entry (shebang). Parses args, scans dir, starts HTTP(S), prints URLs.
-  http.js             createServer(library, opts) → node:http(s) request handler + routes + static.
-  library.js          Library / ArchiveLibrary: catalog building, content conversion + caching,
-                      folder rescans.
-  wikisource.js       Wikisource works index (build/cache), genres, work assembly (§2.4, §3.8).
-  zim/reader.js       ZimArchive: low-level ZIM reading.
+public/js/core/       shared by the server and the browser's local library
+  platform.js         what differs between them (above)
+  zim/reader.js       ZimArchive: low-level ZIM reading from a byte source.
+  zim/blob-source.js  A Blob or File as a byte source (File.slice).
   zim/xz.js           Pure-JS .xz (LZMA2) decoder.
   content/html.js     HTML → blocks, chunking, TOC, image size sniffing.
   content/epub.js     ZIP + EPUB parsing (for EPUB-only books).
-  util/lru.js         Byte-budgeted LRU cache (shared helper; create if you need it).
+  library.js          ArchiveLibrary: catalog building, content conversion + caching.
+  wikisource.js       Wikisource works index (build, store), genres, work assembly (§2.4, §3.8).
+  wikipedia.js        Wikipedia article index (build, store, search) (§2.5).
+  util/lru.js         Byte-budgeted LRU cache.
+  util/index-queue.js Index builds one at a time, the smallest archive first (§4).
+  util/bytes.js       Little-endian integers and byte comparisons on Uint8Arrays.
+public/js/local/      the local library (§2.6): worker.js, local-handler.js, local.js,
+                      browser-platform.js
+server/
+  index.js            CLI entry (shebang). Parses args, scans dir, starts HTTP(S), prints URLs.
+  http.js             createApp(library, opts) → request handler + routes + static + /vendor/.
+  library.js          Library: a folder's archives (scan, rescans, watch, the index queue);
+                      ArchiveLibrary opened from files, its indexes kept in .cache/; re-exports
+                      the core's helpers.
+  platform-node.js    The core's platform on Node.
+  cache-store.js      Where derived indexes are kept: .cache/ (fileStore).
+  vendor.js           The /vendor/ packages; bare imports made relative for module workers.
 ```
 
-### 3.1 `server/zim/reader.js`
+Derived indexes (Wikisource works, Wikipedia articles and its checkpoint) go through a **store**
+(`readText`, `writeText` (atomic), `readBytes`, `writeBytes`, `appendBytes`, `truncate`,
+`remove`, by name; a missing name reads as `null`): the core's `ArchiveLibrary.open` takes
+`store`, the server's turns `cacheDir` into `fileStore(cacheDir)`, which keeps the file names
+the server has always used. With no store an index is built on every open and kept in memory
+(`_built`).
+
+### 3.1 `core/zim/reader.js`
+
+`ZimArchive.open(input)` takes a file path (opened by `platform.openFile`: Node only), an
+http(s) URL (`HttpSource`, below), a `Blob` or `File` (`BlobSource`), or any byte source
+`{ name, size, read(position, length), close() }` whose `read` resolves with `length` bytes,
+fewer only at the end. `filePath` is the path or the file's name, for messages.
+
+**HTTP sources** (`core/zim/http-source.js`, milestone 3: ZIMs read straight from Kiwix's
+mirror, never downloaded whole): every read is a GET with a `Range` header and nothing else
+(Kiwix's mirror, the only one that allows CORS, allows no other request header, not
+`If-Range`). Opening reads bytes 0–79: a server answering 200 (no ranges) or 404 is refused
+with an `HttpSourceError` (`status`) saying so; the size comes from `Content-Range`, or a
+HEAD's `Content-Length` when a page may not read the former. Every later answer must be a 206
+starting at the position asked for, with the same total size and `Last-Modified` as the first:
+otherwise the file changed on the server (a new edition at the same URL) and the read fails
+("open it again"), never mixing two editions. At most `maxInFlight` requests at once (6, a
+browser's limit per host over HTTP/1.1); network errors, timeouts (`timeoutMs`, 30 s) and
+408/425/429/5xx are tried again (`retries`, 3, waiting 0.5, 1, 2 s); a CORS refusal looks
+like a network error to a page, so the final message says it may be one. `close()` aborts the
+requests and rejects the queued reads. A browser keeps range answers in its HTTP cache (the
+mirror sends Last-Modified and no Cache-Control), but once it holds a URL it serializes range
+requests on it: 8 at once took 1.3 s instead of 0.17 s. So a request made while others of the
+source run asks for `cache: 'no-store'`, and one on its own uses the cache: a second visit
+opens from it (the top 1M in 1.2 s on a Quest) while searches keep their reads at once.
+`stats` counts reads, bytes and retries (`viaReads` of them through a proxy). With `via` (the
+same file through an edge proxy, §2.6) the probe and the reads go there first, the probe once
+and a read twice; on a failure that is not a changed file (unreachable, an error status, no
+ranges, no size, a wrong range) the source drops it for good (`via` null, `viaError` the
+reason, `onFallback(err)` called once) and reads `url`. A changed file (`HttpSourceError`
+`edition: true`) is thrown as ever: the proxy is not to blame. `url`, `name`, `size` and
+`lastModified` stay the file's. Pass options
+as `ZimArchive.open(url, { http: { … } })`. A URL needs nothing else: no proxy, no cached
+index, no block store (those are optional speed-ups, TODO milestone 3).
+
+Every read under `blockBytes` (64 KB by default; dirents and URL pointers for lookups, a
+binary search reading one dirent per step; cluster heads and offset tables; small blobs) comes
+from a cache of aligned blocks of that size (`blockCacheBytes`, 8 MB by default; the local
+library gives each file 16 MB, §2.6), each block read once while cached. Over a network a read
+costs a round trip whatever its size, so a remote archive may want bigger blocks. On a `File` in a browser a read costs about the same
+however small (on a Quest 3 ~65 ms alone, ~11 ms each when 8 or more run at once, a 4 MB read
+87 ms), so the number of reads is what counts: opening a 4.5 GB Gutenberg ZIM made 3,200
+dirent reads over 1.7 MB of directory. Scans (`entries()`) read in batches and bypass it; so
+do big reads. A scan's first batch is 512 entries and each next one twice as big, up to 8,192:
+one that stops early (a redirect search) reads little, and a whole directory's few batches cost
+a few round trips each (over the network the Chemistry mini's 58,000 entries took 38 s in
+batches of 512, 15 s growing). With `wholeClusterBytes` (0 by default; the local library sets 4 MB) an
+uncompressed cluster up to that big is read whole into the cluster cache once a second blob of
+it is wanted (a book's pictures usually share a few clusters; the first blob is read on its
+own, so a book with one picture per cluster reads no more than before), never for a size alone
+(`getBlobSize`). With `wholeCompressedBytes` (0 by default; the local library sets 4 MB) a
+cluster up to that big that is expected to be compressed (the entry's MIME type is one libzim
+compresses: `text/*`, `+xml`, `+json`, JavaScript, JSON; or `clusterBlobs(…, { compressed:
+true })`, the Wikipedia index's pass over HTML) is read in one read, head and all, instead of
+its head first and then the rest (a round trip over the network, a ~65 ms read of a File on a
+Quest); one wrongly expected is kept whole in the cluster cache. Only a cluster whose end is
+exactly known (not the last before a section). The two are apart because over the network
+bytes cost time: a compressed cluster is read whole anyway, but reading a 4 MB cluster of
+pictures for two of them takes seconds.
+
+`getEntriesByIndex(indices)` reads several entries at once (a Wikipedia volume's 1,000
+articles): their pointers together, then the dirents lying near each other with one read
+(within 256 KB, no gap wider than a block), the groups at once, as `entries()` does.
+
+Opening reads the header, the MIME list, the cluster pointers and the directory's last 64
+entries (`TAIL_ENTRIES`: their pointers and dirents, one or two reads). Metadata (`M`), the
+main page link (`W`) and the search indexes (`X`) lie there in every libzim file (the metadata
+13 to 17 entries from the end), so a binary search for a key after the first of them searches
+only these (`_lowerBoundKey`): `getMetadata()` and the illustration and main page lookups cost
+no directory reads. The namespace scheme comes from the version as in libzim (6.1 and later:
+new); only older files are checked with a search for `C`. Over the network this took the top
+1M Wikipedia's open from 61 reads (39 s) to 8 (10 s). `ArchiveLibrary` likewise looks for a
+Gutenberg index only when the metadata does not say Wikipedia or Wikisource.
 
 ```js
 export class ZimError extends Error {}
 export class ZimArchive {
   /** Opens and validates a ZIM file. Reads header, MIME list, pointer lists (lazily or eagerly). */
-  static async open(filePath, { clusterCacheBytes = 256 * 1024 * 1024 } = {}): Promise<ZimArchive>
+  static async open(input, { clusterCacheBytes = 256 * 1024 * 1024, direntCacheEntries = 50000, blockCacheBytes = 8 * 1024 * 1024, blockBytes = 65536, wholeClusterBytes = 0, wholeCompressedBytes = 0, http = {} } = {}): Promise<ZimArchive>
   async close()
   filePath: string
   header: { major, minor, uuid /* 32-char hex */, entryCount, clusterCount, mainPage /* index|null */,
@@ -197,11 +522,16 @@ export class ZimArchive {
   newNamespaceScheme: boolean       // true when content lives in namespace 'C'
   entryCount: number
   async getEntryByIndex(index): Promise<Entry>
+  async getEntriesByIndex(indices): Promise<Entry[]>   // several at once, neighbours with one read
   async findEntry(ns, url): Promise<Entry|null>          // exact match, binary search
   async findPath(path): Promise<Entry|null>              // 'C/foo/bar' → ns 'C', url 'foo/bar'
   async findContentPath(url, namespaces = ['C','A','I','-']): Promise<Entry|null> // first hit
   async resolveRedirect(entry, maxHops = 16): Promise<Entry>   // follows redirect chains; throws on loop
   async getContent(entryOrPath): Promise<{ entry, mime, data: Buffer } | null> // follows redirects
+  async getContentHead(entryOrPath, length): Promise<{ entry, mime, data, size } | null>
+       // the first `length` bytes and the whole size: an uncompressed blob read only that far
+       // (unless its cluster is cached or read whole: wholeClusterBytes), a compressed one from
+       // its cluster. Pictures are sized from their first 16 KB (all of it when that does not say).
   async getBlobSize(entry, { cheapOnly = false } = {}): Promise<number|null>
        // uncompressed cluster: reads 2 offsets only. Compressed: decompresses (or returns
        // null when cheapOnly and the cluster is not already cached).
@@ -229,7 +559,7 @@ Requirements:
   ~log2(n) entries.
 - Bad magic / truncated file / out-of-range index → `ZimError` with a clear message.
 
-### 3.2 `server/zim/xz.js`
+### 3.2 `core/zim/xz.js`
 
 ```js
 export function xzDecompress(input: Uint8Array): Buffer   // throws Error on corrupt data
@@ -244,7 +574,7 @@ decoding, distances incl. align bits. Must be fast enough for multi-MB clusters 
 no per-byte allocations; pre-size output when the block header gives the uncompressed size,
 otherwise grow geometrically).
 
-### 3.3 `server/content/html.js`
+### 3.3 `core/content/html.js`
 
 ```js
 /** Converts one HTML (or XHTML) document into reader blocks (§3.5). */
@@ -319,7 +649,7 @@ Conversion rules:
   internal link targets; optional).
 - `title`: `<title>` text if present.
 
-### 3.4 `server/content/epub.js`
+### 3.4 `core/content/epub.js`
 
 ```js
 /** Minimal ZIP reader (central directory; methods 0 store and 8 deflate via zlib.inflateRawSync; ZIP64 not required). */
@@ -372,7 +702,40 @@ Chunking: walk blocks accumulating `blockChars`; close a chunk when it reaches `
 at `maxBlocks` blocks. Never split a block. `start` = cumulative chars before the chunk.
 An empty book yields one chunk with one paragraph block `"(This book has no readable text.)"`.
 
-### 3.6 `server/library.js`
+### 3.6 `core/library.js` (and `server/library.js`)
+
+`Library` is the server's (`server/library.js`); `ArchiveLibrary` is the core's, whose
+`open(input, { store, … })` takes a path, a `Blob`/`File` (§3.1) or an open `ZimArchive` (taken
+over: the local library opens the file once, for the metadata that decides whether to go on),
+and a store (§3; none: the browser). The server's `ArchiveLibrary` subclass takes `cacheDir`
+instead (default `<project>/.cache`, as `fileStore`). With `estimateSizes` (the local library)
+books' sizes, which only set their thickness on the shelf (logarithmic), are not read but
+estimated from the cluster pointers: a cluster's bytes (`ZimArchive.clusterBytes`) shared
+among the books whose size entry lies in it; on a Quest the reads cost 8 s of a 4.5 GB
+Gutenberg ZIM's open. With `checkImages: false` (for remote archives) a Wikipedia's or
+Wikisource's image whose size the HTML gives, and every inline image, is not looked up in the
+archive when an article is converted: each lookup is a binary search, ~6 round trips over the
+network (Albert Einstein's 38 images: 39 s of the top 1M's article), and mwoffliner's images are
+all there. A missing one then shows as the reader's placeholder instead of its alt text.
+Gutenberg books (whose image paths may need their fallback) and EPUBs are checked as before,
+each picture sized from its first 16 KB (`getContentHead`; all of it only when they do not
+say): over the network a whole picture cost its every byte (Pride and Prejudice's 164: 25.7 MB,
+now 3.1 MB).
+With `maxIndexBuildBytes` (the local library's web addresses: 256 MB) a Wikipedia or Wikisource
+whose index is found nowhere (the store, the site's `indexes/`) is indexed only up to that size:
+over the network a build reads most of the file (12.7 GB for the top 1M). A bigger one gets
+`indexing: { stage: 'failed', error }` at once, saying why (no index, its size, download it
+instead), once, and has no books. With `bookLookups` (the local library's web addresses: 500) a
+Gutenberg ZIM listing more books than that makes them from its list alone: each book's
+files are not looked up as it opens (a binary search each, three per book: the largest,
+`gutenberg_mul_all` with 75,962 books, had not opened after 10 minutes), its formats are its
+list's flags, its cover the usual name (`C/covers/<id>_cover_image.jpg`, old scheme
+`I/covers/<id>_cover.jpg`; not looked up: one that is missing loads as nothing and the page
+keeps the made cover) and its size unknown (a thickness from its id). A book's files are
+looked up when it is first opened (`_resolveBook`: its HTML and EPUB, once however many ask;
+`formats`, `readable` and `epub` then say what was found, a missing one is unreadable as
+before). `gutenberg_mul_all` then opens from the web in about 10 s. Chunks keep their JSON as bytes (`Uint8Array`, a Buffer on Node), with `gzip()` and `etag`
+from the platform (the server's).
 
 ```js
 export class Library {
@@ -456,7 +819,7 @@ node server/index.js [--dir <path>] [--port 8080] [--host 0.0.0.0] [--https] [--
   (`http(s)://localhost:port` plus each LAN IPv4) with a hint about HTTPS for headsets. Graceful shutdown on SIGINT/SIGTERM.
 - Never crash on a bad request: catch everything, respond 500 JSON, log.
 
-### 3.8 `server/wikisource.js`
+### 3.8 `core/wikisource.js`
 
 ```js
 export function isWikisource(meta): boolean
@@ -464,9 +827,9 @@ export function genreOf(categories): string        // first matching GENRES rule
 export function yearOf(categories): number | null  // from "1926 works"
 export function cleanCategories(categories)        // drops maintenance/licensing categories
 export async function buildIndex(archive, { onProgress(stage, fraction), log }): Promise<Index>
-export function indexPath(cacheDir, archive)       // <cacheDir>/wikisource-<uuid>.v<N>.json
-export async function loadIndex(file, archive)     // null when absent / stale / other archive
-export async function saveIndex(file, index)       // atomic (temp file + rename)
+export function indexName(archive)                 // wikisource-<uuid>.v<N>.json, a name in a store (§3)
+export async function loadIndex(store, name, archive) // null when absent / stale / other archive
+export async function saveIndex(store, name, index)   // store.writeText: atomic on disk
 export async function collectWork(archive, rootUrl, { maxParts = 1200, maxBytes = 36e6, expectedParts })
     : Promise<{ parts: [{ url, path, html, depth }], truncated, total }>
 // Index = { version, uuid, works: [[url, title, entryIndex, parts, coverPath|null, year|null, categories[], author|null]] }
@@ -531,7 +894,9 @@ with 400/404/500. Unknown `/api/*` → 404 JSON.
 (`illustration` null when absent; missing metadata fields are `null`.) `title` is what a library is
 shown by (`libraryTitle`), `zimTitle` the ZIM's own: they differ for Kiwix's Gutenberg ZIMs of one
 Library of Congress class (name `gutenberg_<lang>_lcc-<code>`, all titled "Project Gutenberg
-Library"), named "Gutenberg · <description> (<CODE>)", and for Wikipedia editions of one topic,
+Library"), named "Gutenberg · <description> (<CODE>)", for Kiwix's whole Gutenberg collections
+(`gutenberg_<lang>_all`), "Gutenberg · every book (<LANG>)" and, for `gutenberg_mul_all`,
+"Gutenberg · every book in every language", and for Wikipedia editions of one topic,
 told apart by `flavour` (the ZIM's Flavour): "<title> (introductions)" for mini, "(no pictures)" for
 nopic, the plain title for maxi. Signs and the library card leave out a description the title
 already contains. `generation` changes when
@@ -542,12 +907,16 @@ re-fetch. Wikisource libraries (`"kind": "wikisource"`) add `"genres": [{ "name"
 waits for its turn, see below).
 
 A folder's index builds (Wikisource, Wikipedia) go through one `IndexQueue`
-(`server/util/index-queue.js`): archives over 1 GB are indexed one at a time, the smallest
+(`core/util/index-queue.js`): archives over 1 GB are indexed one at a time, the smallest
 first, and smaller ones at once. Builds share the main thread and libuv's four threads, so
 together they only slow each other down: 8 Wikipedias re-indexed at once took 52 min, Simple
 English 20 min instead of about 1. A folder scan holds the queue until it has opened every new
 archive, so the order does not depend on the file names. `ArchiveLibrary.open` without a queue
-builds at once.
+builds at once. A queued job is the whole build: its index kept and its checkpoint removed
+included, so the next starts after them. When its turn comes, a build first looks in the store
+again: an index made meanwhile under the same name (a copy of the ZIM, which has the same UUID,
+or the same file opened twice) is taken, not built again ("index found (made meanwhile for a
+copy of this file)"). Copies once shared a checkpoint: one's removal ran while the other built.
 
 **`POST /api/rescan`** → rescans the ZIM folder now: `{ "generation", "added": [ids],
 "removed": [ids], "reopened": [ids], "failed": [file names], "libraries": [ … ] }`. `GET` → 405.
@@ -597,13 +966,15 @@ accepts it (recommended: large chunks compress ~4×).
 otherwise) → `{ "library": lib, "articles": [ { "title", "book": "v<N>", "n", "from"? } ] }`:
 articles whose title starts with `q` in title order (matched by `titleKey`, so case, accents, a
 leading "The" and punctuation are ignored), the one titled exactly `q` first; `book` is the volume
-and `n` the article's chunk in it. A binary search over the sorted index reads ~20 directory
-entries (a few ms on 1 M articles). Articles are also found by their other names, the ZIM's
+and `n` the article's chunk in it. A binary search over the sorted index, started within the
+volume that the volumes' first and last titles (in memory) point to, reads ~10 directory
+entries (a few ms on 1 M articles; each a round trip over the network); the results are read
+together (`getEntriesByIndex`). Articles are also found by their other names, the ZIM's
 redirects ("NYC" → "New York City", `from` = the redirect's title): a prefix search over the
 URL index (Wikipedia URLs are titles with "_" for spaces; URLs are case-sensitive, so `q` is tried
 as typed, with a capital first letter, in capitals and in title case; at most 400 entries per
 spelling), each redirect resolved to its article's position in the index (`searchRedirects` in
-`wikipedia.js`). Title matches come first, except that another name typed in full leads; an
+`wikipedia.js`; the spellings searched at once, a spelling's redirects resolved 8 at a time). Title matches come first, except that another name typed in full leads; an
 article appears once. `limit` defaults to 12, at most 50. Empty while indexing.
 
 **`GET /zim/:lib/<archivePath>`** → raw entry content. `<archivePath>` is `ns/url` with each
@@ -645,7 +1016,7 @@ public/
     xr/controls.js       input: XR controllers/hands, desktop mouse+keyboard, touch; locomotion.
     ui/panel.js          canvas-texture UI panels with buttons/text, hover & click via UV.
     ui/overlay.js        DOM overlay: library info, search, help (non-VR); setReading(bool) fades it while a book is open.
-    interaction.js       app state machine: browse → inspect → read; wires everything.
+    interaction.js       app state machine: browse → inspect → opening → read; wires everything.
     rooms.js             which books are shelved: the current place (one library, or one room of a huge one).
     audio.js             tiny WebAudio synth: page turn, book slide/thud, UI click.
     perf.js              ?perf recorder (frame timing, events, segments), a no-op unless started (§5.7).
@@ -923,15 +1294,26 @@ export class Panel {
 
 ### 5.6 Interaction (`interaction.js`) — the state machine
 
-States: `browse` → `inspect` → `read` (and back).
+States: `browse` → `inspect` → `opening` → `read` (and back), plus `busy` during animations.
 - **browse:** pointers raycast shelves + panels. Hover a book → `shelves.setHighlight`, tooltip
   panel near the book with title / author. Select → book leaves its slot (`hideBook`, a `Book3D`
   at its slot transform) and flies (~0.5 s ease) to ~0.45 m in front of the viewer at chest height,
   turning to show the cover → **inspect**.
 - **inspect:** info panel beside the book: title, subtitle, author, library, "Read" /
   "Continue (p. N)" / "Put back" buttons. In XR the book can be grabbed with squeeze and turned
-  in the hand (bonus). Select on the book or "Read" → **read**. "Put back"/B/Esc → flies back to
-  the slot, `showBook`, → **browse**.
+  in the hand (bonus). Select on the book or "Read" → **opening** → **read**. "Put back"/B/Esc →
+  flies back to the slot, `showBook`, → **browse**.
+- **opening:** while the book's metadata loads (`BookReader.load`: the server's or the worker's
+  conversion; a big book from a ZIM file opened on a Quest took half a minute), the info panel
+  stays and shows "Opening…" with "Preparing its pages · 12 s · about 40 s left" (the seconds so
+  far, once a second, and, for a local book, about how long is left, from the fraction done,
+  "· estimating…" until there is enough to tell: `util/progress.js` `progressText`, shared with
+  the toast above; a book from the server reports no progress, so its line has the seconds
+  alone), for a local book a progress
+  bar (the worker's conversion reports how far it is, `content()`'s `onProgress`: a tenth for
+  the text, the rest per image looked up; repainted at most 5× a second), and only "Put back"
+  (also B/Esc), which cancels and puts the book back. Only that panel takes input. On failure →
+  **inspect**, with the error on the panel (and a toast).
 - **read:** book moves to the reading pose (§`config.READ`), opens, shows the saved or first spread.
   Toolbar panel under the book: ◀ ▶, progress bar (click to jump), Contents, A− A+, theme, Close.
   Contents opens a scrollable TOC panel at the entry being read (highlighted). A list of more
@@ -989,7 +1371,10 @@ States: `browse` → `inspect` → `read` (and back).
   (`settings.place = '*'`), that shelves every library in one hall, with no filters (not when every
   library is the demo set's, as on the GitHub Pages site, where it would be the Demo set again: a
   saved `'*'` opens the Demo set). Wikipedia
-  volumes keep their own order and sign there too. Likewise `DEMO_PLACE` (`settings.place =
+  volumes keep their own order and sign there too. `LOCAL_PLACE` (`settings.place = 'local'`,
+  "Opened here") shelves the libraries opened in this browser (ids starting with `~`, §2.6)
+  together once there are two or more; opening several files at once goes there, and `'*'` is
+  not offered when every library was opened here (a saved `'*'` opens this place). Likewise `DEMO_PLACE` (`settings.place =
   'demo'`, "Demo set") shelves the demo set's libraries together whenever at least one is present:
   those whose id is an entry of `DEMO_LIBRARIES` (`gutenberg_en_lcc-p_`,
   `wikipedia_en_mathematics_mini_`, `wikipedia_en_physics_mini_`, `wikipedia_en_chemistry_mini_`,
@@ -1014,9 +1399,21 @@ States: `browse` → `inspect` → `read` (and back).
 - A library is further browsed by rooms when `kind === 'wikisource'` or it has more
   than 3,000 books. It then shelves one room at a time, `{ genre, letter }` (each a string or
   null): the works of that genre whose title starts with that letter, either filter alone, or —
-  both null — all works. A room is sorted by the current sort and capped at `ROOM_CAP` = 3,000
-  books (the section sign says "(first 3,000)"). The default room is Novels if present, else the
-  largest genre that fits. The current room per library is saved in `settings.rooms`; rooms
+  both null — all works. A room is sorted by the current sort and capped at `ROOM_CAP` = 10,000
+  books (3,000 until 2026-10-10; measured on a Quest in VR, TODO milestone 3; `?roomcap=<n>`
+  for measuring): a Gutenberg ZIM's room shelves its 10,000 most read (by `rank`, its
+  popularity, from the cached popularity order) in the current sort (the section sign and the
+  kiosk say "(the 10,000 most read)": `capNote`); other libraries' rank is no popularity, so
+  theirs shelves the first 10,000 in the sort ("(first 10,000)"). A room holding more is
+  shelved a page at a time (`room.page`, kept only past the first; the kiosk's "◀ Previous /
+  Next ▶" and "Page 2 of 7"; a Gutenberg ZIM's pages by popularity: "(most read
+  10,001–20,000)"); changing a filter goes back to the first page. The default room is Novels if present (Wikisource),
+  else all works: a big Gutenberg ZIM opened on its largest genre under the cap, class A
+  (encyclopedias, periodicals). Gutenberg's genres are Library of Congress classes, shown by
+  name (`genreLabel`, `LCC_NAMES` in `rooms.js`: Kiwix's names for its ZIM of each class, E and F
+  told apart, C and PZ in plainer words), kept by code in rooms and settings. The kiosk's Rooms
+  tab lists every genre (a scrolling list, largest first: 40 for English Gutenberg, which its
+  former grid of 18 buttons could neither show nor name). The current room per library is saved in `settings.rooms`; rooms
   saved in the earlier `{ type: 'genre' | 'letter', value }` shape are converted (`normRoom`).
   Ordinary libraries are shelved whole. Search results and "Recently read" entries that are not
   on the shelves first switch to the book's place and room (`placeFor` / `roomFor`: its genre,
@@ -1049,7 +1446,8 @@ States: `browse` → `inspect` → `read` (and back).
   `settings.updateNotices = false` (no banner, no VR notice; the kiosk's note stays), and the help
   dialog's "Tell me when this site has been updated" checkbox turns it back on.
 - DOM overlay (non-VR): see `ui/overlay.js` — title with the same "Updated …" stamp, library
-  cards (with indexing progress or "waiting to index"), a ⟳ rescan button, search box (filters by title / author across *all* books of all libraries;
+  cards (with indexing progress or "waiting to index"), a ⟳ rescan button, "Open ZIM files…"
+  under the cards and a drop target over the page (local library, §2.6), search box (filters by title / author across *all* books of all libraries;
   picking a result = switch room if needed, teleport to it and select it; for Wikipedia
   libraries it also asks the server for articles by title, 150 ms after typing stops, listed
   after up to 6 books; picking an article takes its volume off the shelf and opens it at that

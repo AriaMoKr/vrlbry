@@ -1,0 +1,142 @@
+# Publishes the vrlbry-cloud branch (AriaMoKr/vrlbry-cloud: milestone 3, ZIMs read straight from
+# Kiwix's mirror) to GitHub Pages, https://ariamokr.github.io/vrlbry-cloud/: the static site
+# (tools/build-pages.mjs) where visitors open their own ZIM files in the browser (the local
+# library, SPEC §2.6). On every push to the branch, the app alone (~4 MB, a minute or two). Run it
+# by hand (Actions → Pages (cloud) → Run workflow) with "demo indexes" ticked to also ship the
+# demo set's Wikipedia indexes (a few MB: a visitor who opens one of those files skips its index
+# build), or with "demo set" ticked to pre-render the ZIMs of tools/demo-set.txt, like the main
+# site (~605 MB, ~10 min).
+#
+# Prebuilt indexes (milestone 3 step 6, tools/build-indexes.mjs, tools/indexes.txt): the big
+# Wikipedias and Wikisources a visitor opens from the web (Kiwix's library) need one, as building
+# it in the browser would read most of the file. Every run ships what it has under indexes/ (with
+# indexes/list.json): those kept in the Actions cache by earlier runs, and those published as
+# assets of the release "indexes" (built on a PC from local copies of the ZIMs:
+# node tools/build-indexes.mjs --zims <folder>, then gh release upload indexes .indexes/*.json
+# --clobber). With "prebuilt indexes" ticked, the missing ones are built here, read from Kiwix's
+# mirror (hours, and tens of GB of the mirror's bandwidth for the biggest: hence by hand only);
+# one not finished in time keeps its progress for the next run. None of this is needed: without
+# an index the site still opens every ZIM, a big Wikipedia from the web just stays unindexed.
+#
+# The edge proxy (milestone 3 step 7, tools/zim-proxy/, optional): once it is deployed (a
+# Cloudflare Worker), set the repository variable ZIM_PROXY (Settings → Secrets and variables →
+# Actions → Variables) to its address, and the page reads Kiwix's files through it, from the
+# mirror nearest each visitor (Kiwix's own directly when it fails). Unset: no proxy.
+#
+# One-time setup in the repository: Settings → Pages → Build and deployment → Source: GitHub
+# Actions. (The main site, https://ariamokr.github.io/vrlbry/, deploys from main of
+# AriaMoKr/vrlbry with pages.yml, and https://ariamokr.github.io/vrlbry-standalone/ from
+# vrlbry-standalone with pages-standalone.yml; this branch has neither.)
+name: Pages (cloud)
+
+on:
+  push:
+    branches: [vrlbry-cloud]
+  workflow_dispatch:
+    inputs:
+      demo_indexes:
+        description: Also ship the demo set's Wikipedia indexes (tools/demo-set.txt; a few MB)
+        type: boolean
+        default: false
+      demo_set:
+        description: Also pre-render the demo set (tools/demo-set.txt, ~10 min, ~605 MB site)
+        type: boolean
+        default: false
+      prebuilt_indexes:
+        description: Also build the missing prebuilt indexes (tools/indexes.txt) from Kiwix's mirror (up to 5 hours)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time; a newer push waits rather than cancelling one in progress.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 345
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      # The demo set (tools/demo-set.txt, one ZIM URL per line), cached until the list changes.
+      - if: inputs.demo_set || inputs.demo_indexes
+        uses: actions/cache@v4
+        with:
+          path: .demo
+          key: demo-set-${{ hashFiles('tools/demo-set.txt') }}
+      - name: Download the demo set
+        if: inputs.demo_set || inputs.demo_indexes
+        run: |
+          mkdir -p .demo
+          while read -r url; do
+            [ -n "$url" ] || continue
+            file=".demo/$(basename "$url")"
+            [ -f "$file" ] || curl -fsSL --retry 3 -o "$file" "$url"
+          done < tools/demo-set.txt
+          ls -l .demo
+      - name: Build the site
+        env:
+          ZIM_PROXY: ${{ vars.ZIM_PROXY }}
+        run: npm run build:pages -- ${{ inputs.demo_set && '--zims .demo' || '' }} ${{ inputs.demo_indexes && '--indexes .demo' || '' }} ${ZIM_PROXY:+--zim-proxy "$ZIM_PROXY"}
+      # Prebuilt indexes: the cache of earlier runs, the release's assets, and (by hand) new builds.
+      - uses: actions/cache/restore@v4
+        with:
+          path: .indexes
+          key: indexes-${{ github.run_id }}
+          restore-keys: indexes-
+      - name: Prebuilt indexes published as release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p .indexes
+          gh release download indexes --repo "$GITHUB_REPOSITORY" --dir .indexes --pattern '*.v*.json' --skip-existing \
+            || echo "No release \"indexes\" (or nothing new in it)."
+      # Optional: a build that fails (or Kiwix's catalogue out of reach) does not stop the deploy.
+      - name: Build the missing prebuilt indexes from Kiwix's mirror
+        if: inputs.prebuilt_indexes
+        continue-on-error: true
+        run: node tools/build-indexes.mjs --out .indexes --web --hours 5
+      - name: Drop the indexes of editions no longer current
+        continue-on-error: true
+        run: node tools/build-indexes.mjs --out .indexes --prune
+      - if: inputs.prebuilt_indexes && !cancelled()
+        uses: actions/cache/save@v4
+        with:
+          path: .indexes
+          key: indexes-${{ github.run_id }}
+      - name: Ship the prebuilt indexes
+        run: |
+          shopt -s nullglob
+          files=(.indexes/wikipedia-*.json .indexes/wikisource-*.json)
+          if [ ${#files[@]} -gt 0 ]; then
+            mkdir -p dist/indexes
+            cp "${files[@]}" dist/indexes/
+            node -e "import('./tools/build-indexes.mjs').then((m) => console.log(m.writeIndexList('dist/indexes').length, 'indexes'))"
+            du -sh dist/indexes
+          else
+            echo "No prebuilt indexes."
+          fi
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

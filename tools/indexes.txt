@@ -1,0 +1,60 @@
+# Prebuilt indexes (tools/build-indexes.mjs, milestone 3 step 6): the ZIMs whose index this site
+# publishes under indexes/, one file name without its date per line, built for the edition that
+# Kiwix's catalogue lists now. These are the English Wikipedias and Wikisources over 256 MB, which
+# the browser does not index itself (a build reads most of the file). The most used first; the
+# three full English Wikipedias last (an index of about 75 MB each, and tens of GB of HTML to read).
+
+# Broad selections
+wikipedia_en_top1m_maxi                    # 49.4 GB
+wikipedia_en_top1m_nopic                   # 17.1 GB
+wikipedia_en_top1m_mini                    # 3.0 GB
+wikipedia_en-simple_all_maxi               # 3.1 GB
+wikipedia_en-simple_all_nopic              # 1.1 GB
+wikipedia_en-simple_all_mini               # 0.5 GB
+wikipedia_en_top_maxi                      # 7.0 GB
+wikipedia_en_top_nopic                     # 2.7 GB
+wikipedia_en_top_mini                      # 0.3 GB
+wikipedia_en_100                           # 0.3 GB
+wikipedia_en_medicine_maxi                 # 2.2 GB
+wikipedia_en_medicine_nopic                # 0.9 GB
+wikisource_en_all_maxi                     # 8.6 GB
+wikisource_en_all_nopic                    # 3.9 GB
+
+# Topics
+wikipedia_en_astronomy_maxi                # 1.8 GB
+wikipedia_en_astronomy_nopic               # 0.4 GB
+wikipedia_en_baseball_maxi                 # 0.9 GB
+wikipedia_en_baseball_nopic                # 0.5 GB
+wikipedia_en_basketball_maxi               # 0.5 GB
+wikipedia_en_basketball_nopic              # 0.3 GB
+wikipedia_en_chemistry_maxi                # 0.5 GB
+wikipedia_en_comics_maxi                   # 0.7 GB
+wikipedia_en_comics_nopic                  # 0.3 GB
+wikipedia_en_computer_maxi                 # 0.9 GB
+wikipedia_en_computer_nopic                # 0.5 GB
+wikipedia_en_cricket_maxi                  # 0.4 GB
+wikipedia_en_football_maxi                 # 4.0 GB
+wikipedia_en_football_nopic                # 2.6 GB
+wikipedia_en_geography_maxi                # 1.5 GB
+wikipedia_en_geography_nopic               # 0.6 GB
+wikipedia_en_history_maxi                  # 2.4 GB
+wikipedia_en_history_nopic                 # 0.7 GB
+wikipedia_en_ice-hockey_maxi               # 0.6 GB
+wikipedia_en_ice-hockey_nopic              # 0.3 GB
+wikipedia_en_indian-cinema_maxi            # 0.4 GB
+wikipedia_en_mathematics_maxi              # 1.0 GB
+wikipedia_en_mathematics_nopic             # 0.4 GB
+wikipedia_en_molcell_maxi                  # 1.0 GB
+wikipedia_en_molcell_nopic                 # 0.3 GB
+wikipedia_en_movies_maxi                   # 5.3 GB
+wikipedia_en_movies_nopic                  # 2.5 GB
+wikipedia_en_physics_maxi                  # 1.3 GB
+wikipedia_en_physics_nopic                 # 0.3 GB
+wikipedia_en_sociology_maxi                # 0.6 GB
+wikipedia_en_tennis_maxi                   # 0.5 GB
+wikipedia_en_tennis_nopic                  # 0.4 GB
+
+# The whole English Wikipedia
+wikipedia_en_all_mini                      # 14.4 GB
+wikipedia_en_all_nopic                     # 52.7 GB
+wikipedia_en_all_maxi                      # 127.4 GB

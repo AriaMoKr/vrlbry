@@ -5,7 +5,8 @@ import path from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import zlib from 'node:zlib';
-import { xzDecompress } from '../server/zim/xz.js';
+import '../server/platform-node.js';
+import { xzDecompress } from '../public/js/core/zim/xz.js';
 import { xzStore } from './helpers/zimwriter.js';
 
 const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'xz');

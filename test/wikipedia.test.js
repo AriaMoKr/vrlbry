@@ -10,70 +10,25 @@ import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { ArchiveLibrary, Library } from '../server/library.js';
 import { createApp } from '../server/http.js';
-import { ZimArchive } from '../server/zim/reader.js';
-import { isWikipedia, buildIndex, volumeTitle, removeCheckpoint } from '../server/wikipedia.js';
+import { fileStore } from '../server/cache-store.js';
+import { IndexQueue } from '../public/js/core/util/index-queue.js';
+import { ZimArchive } from '../public/js/core/zim/reader.js';
+import { isWikipedia, buildIndex, volumeTitle, removeCheckpoint, searchIndex } from '../public/js/core/wikipedia.js';
+import { titleKey } from '../public/js/util/books.js';
+import { article, redirectPage, WIKI_PNG, writeWikipediaZim } from './helpers/zim-fixtures.js';
 import { writeZim } from './helpers/zimwriter.js';
 
 let tmp;
 before(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vrlbry-wp-')); });
 after(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
 
-/**
- * An mwoffliner 2-shaped article: first heading (chrome), a sidebar, an infobox, a lead with a
- * formula, a collapsible section, an image.
- */
-function article(title, lead) {
-  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${title}</title></head><body>
-<div class="mw-body"><h1 id="firstHeading">${title}</h1><div id="mw-content-text"><div class="mw-parser-output">
-<table class="sidebar nomobile"><tr><td>Series box</td></tr></table>
-<table class="infobox"><tr><td colspan="2"><img src="./_assets_/pic.png" width="200" height="300"></td></tr><tr><th>Kind</th><td>Thing</td></tr></table>
-<p>${lead} <span class="mwe-math-element"><img src="./_assets_/f.svg" class="mwe-math-fallback-image-inline mw-invert" style="vertical-align: -0.5ex; width:2ex; height:2ex;" alt="x"></span>.</p>
-<details data-level="2" open><summary class="section-heading"><h2 id="History">History</h2></summary>
-<p>The history of ${title}.</p><figure><img src="./_assets_/pic.png" width="200" height="300" alt="A picture"></figure></details>
-<div class="navbox">Navigation box</div>
-</div></div></div></body></html>`.padEnd(1500, ' ');
-}
-
-/** mwoffliner's redirect to a section: a tiny HTML page with a meta refresh. */
-const redirectPage = (title, target) => `<html><head><title>${title}</title><meta http-equiv="refresh" content="0;URL='./${target}'" /></head><body><a href="./${target}">${title}</a></body></html>`;
-
-const png = Buffer.from('89504e470d0a1a0a0000000d49484452000000c80000012c00000000', 'hex'); // 200×300 header
-
-/** @param {number} [padding] bytes of an extra (uncompressed) file, to make the archive bigger */
-function writeWikipediaZim(file, padding = 0) {
-  const A = (url, title, lead) => ({ ns: 'C', url, title, mime: 'text/html', content: article(title, lead) });
-  const entries = [
-    A('Main_Page', 'Main Page', 'Welcome to Wikipedia.'),
-    A('Zebra', 'Zebra', 'Zebras are striped.'),
-    A('The_Beatles', 'The Beatles', 'A band from Liverpool.'),
-    A('Apple', 'apple', 'A fruit.'),
-    A('Éclair', 'Éclair', 'A pastry.'),
-    A('Banana', 'Banana', 'A yellow fruit.'),
-    A('2001:_A_Space_Odyssey', '2001: A Space Odyssey', 'A film.'),
-    A('Ant', 'Ant', 'A small insect.'),
-    { ns: 'C', url: 'Beatles', redirectTo: 'C/The_Beatles' },
-    { ns: 'C', url: 'Yellow_fruit', title: 'Yellow fruit', redirectTo: 'C/Banana' },
-    { ns: 'C', url: 'Apple_story', title: 'Apple story', redirectTo: 'C/Apples' }, // to a redirect page
-    { ns: 'C', url: 'Apples', title: 'Apples', mime: 'text/html', content: redirectPage('Apples', 'Apple#History') },
-    { ns: 'C', url: 'Zebra_stripes', title: 'Zebra stripes', mime: 'text/html', content: redirectPage('Zebra stripes', 'Zebra#History') },
-    { ns: 'C', url: '_assets_/pic.png', mime: 'image/png', content: png },
-    { ns: 'C', url: '_assets_/style.css', mime: 'text/css', content: 'body{}' },
-    { ns: 'C', url: '_assets_/f.svg', mime: 'image/svg+xml', content: '<svg xmlns="http://www.w3.org/2000/svg" width="2ex" height="2ex"/>' },
-    { ns: 'M', url: 'Source', mime: 'text/plain', content: 'en.wikipedia.org' },
-    { ns: 'M', url: 'Title', mime: 'text/plain', content: 'Wikipedia Test' },
-    { ns: 'M', url: 'Language', mime: 'text/plain', content: 'eng' },
-    { ns: 'M', url: 'Creator', mime: 'text/plain', content: 'Wikipedia' },
-    { ns: 'M', url: 'Illustration_48x48@1', mime: 'image/png', content: png },
-  ];
-  if (padding) entries.push({ ns: 'C', url: '_assets_/pad.bin', mime: 'application/octet-stream', content: Buffer.alloc(padding, 7), compression: 'none' });
-  return writeZim(file, { entries, scheme: 'new', mainPage: 'C/Main_Page' });
-}
+const png = WIKI_PNG; // 200×300 header
 
 /** The articles in the app's title order (digits first; "The" and case and accents ignored). */
 const ORDER = ['2001: A Space Odyssey', 'Ant', 'apple', 'Banana', 'The Beatles', 'Éclair', 'Zebra'];
 
 async function waitForBooks(lib) {
-  for (let i = 0; i < 200; i++) {
+  for (let i = 0; i < 1500; i++) { // up to 30 s: the suite's files run at once, and a build can wait for the CPU
     const books = await lib.books();
     if (books.length) return books;
     await new Promise((r) => setTimeout(r, 20));
@@ -90,6 +45,83 @@ describe('wikipedia', () => {
     assert.equal(isWikipedia({}), false);
     assert.equal(volumeTitle(['Ant', 'Zebra']), 'Ant – Zebra');
     assert.equal(volumeTitle(['Zebra', 'Zebra']), 'Zebra');
+  });
+
+  it('opens a Wikipedia without looking for a Gutenberg index (its metadata says what it is)', async () => {
+    const file = path.join(tmp, 'kind.zim');
+    writeWikipediaZim(file);
+    const z = await ZimArchive.open(file);
+    const looked = [];
+    const findEntry = z.findEntry.bind(z);
+    z.findEntry = (ns, url) => {
+      looked.push(`${ns}/${url}`);
+      return findEntry(ns, url);
+    };
+    const lib = await ArchiveLibrary.open(z, { cacheDir: path.join(tmp, 'kind-cache'), volumeSize: 3, log: () => {} });
+    try {
+      assert.equal(lib.kind, 'wikipedia');
+      assert.deepEqual(looked.filter((p) => p.endsWith('full_by_popularity.js')), []);
+    } finally {
+      await lib.close();
+    }
+  });
+
+  it('converts articles without looking sized images up when told not to check them (remote archives)', async () => {
+    const file = path.join(tmp, 'check-images.zim');
+    writeWikipediaZim(file);
+    const open = async (checkImages) => {
+      const lib = await ArchiveLibrary.open(file, { cacheDir: path.join(tmp, 'check-images-cache'), volumeSize: 3, log: () => {}, checkImages });
+      await waitForBooks(lib);
+      const looked = [];
+      const zimImage = lib._zimImage.bind(lib);
+      lib._zimImage = (p, opts) => {
+        looked.push(p);
+        return zimImage(p, opts);
+      };
+      return { lib, looked };
+    };
+    const checked = await open(true);
+    const trusted = await open(false);
+    try {
+      for (const b of await checked.lib.books()) {
+        const meta = (await checked.lib.content(b.id)).meta;
+        assert.deepEqual((await trusted.lib.content(b.id)).meta, meta);
+        for (let c = 0; c < meta.chunks.length; c++) {
+          const [x, y] = [await checked.lib.chunk(b.id, c), await trusted.lib.chunk(b.id, c)];
+          assert.equal(new TextDecoder().decode(y.json), new TextDecoder().decode(x.json), `${b.id} chunk ${c}`);
+        }
+      }
+      assert.ok(checked.looked.some((p) => p.endsWith('_assets_/pic.png')), 'checked: the picture is looked up');
+      assert.ok(checked.looked.some((p) => p.endsWith('_assets_/f.svg')), 'checked: the formula too');
+      assert.deepEqual(trusted.looked, [], 'not checked: sized pictures and formulas are not looked up');
+    } finally {
+      await checked.lib.close();
+      await trusted.lib.close();
+    }
+  });
+
+  it('finds titles within the volume their first and last titles point to, as a search of all would', async () => {
+    const file = path.join(tmp, 'bounds.zim');
+    writeWikipediaZim(file);
+    const z = await ZimArchive.open(file);
+    try {
+      for (const volumeSize of [1, 2, 3, 7, 100]) {
+        const idx = await buildIndex(z, { volumeSize });
+        // Every prefix of every title (and some between and around them), against a plain filter.
+        const queries = new Set(['', '0', '1', '2', 'a', 'an', 'b', 'c', 'e', 'é', 'the', 'the b', 'z', 'zz', '~', 'yellow']);
+        for (const t of ORDER) for (let n = 1; n <= t.length; n++) queries.add(t.slice(0, n));
+        for (const q of queries) {
+          const qk = titleKey(q.replace(/\s+/g, ' ').trim());
+          const expected = qk ? ORDER.map((title, position) => ({ title, position })).filter((a) => titleKey(a.title).startsWith(qk)) : [];
+          const typed = q.replace(/\s+/g, ' ').trim().toLowerCase();
+          const exact = expected.findIndex((a) => a.title.toLowerCase() === typed);
+          if (exact > 0) expected.unshift(...expected.splice(exact, 1));
+          assert.deepEqual(await searchIndex(z, idx, q, 50), expected, `"${q}", volumes of ${volumeSize}`);
+        }
+      }
+    } finally {
+      await z.close();
+    }
   });
 
   it('indexes articles only, in title order, cut into volumes', async () => {
@@ -202,7 +234,9 @@ describe('wikipedia', () => {
   it('resumes an interrupted index build from its checkpoint, and ignores one of another scan', async () => {
     const file = path.join(tmp, 'wp-resume.zim');
     writeWikipediaZim(file);
-    const base = path.join(tmp, 'resume-cache', 'wp.part');
+    const store = fileStore(path.join(tmp, 'resume-cache'));
+    const name = 'wp.part';
+    const base = path.join(store.dir, name); // its files, for the checks
     const plain = (idx) => ({ ...idx, order: [...idx.order], sizes: [...idx.sizes] });
     let z = await ZimArchive.open(file);
     const clean = plain(await buildIndex(z, { volumeSize: 3 }));
@@ -216,7 +250,7 @@ describe('wikipedia', () => {
       if (++calls > 2) throw new Error('interrupted');
       return read(...args);
     };
-    await assert.rejects(buildIndex(z, { volumeSize: 3, checkpoint: base, checkpointEvery: 1, lanes: 1 }), /interrupted/);
+    await assert.rejects(buildIndex(z, { volumeSize: 3, store, checkpoint: name, checkpointEvery: 1, lanes: 1 }), /interrupted/);
     await z.close();
     const kept = fs.statSync(`${base}.bin`).size / 4;
     assert.ok(kept >= 2, `sizes were checkpointed (${kept})`);
@@ -230,7 +264,7 @@ describe('wikipedia', () => {
       return read2(c, ...args);
     };
     const logs = [];
-    const resumed = plain(await buildIndex(z, { volumeSize: 3, checkpoint: base, checkpointEvery: 1, lanes: 2, log: (m) => logs.push(m) }));
+    const resumed = plain(await buildIndex(z, { volumeSize: 3, store, checkpoint: name, checkpointEvery: 1, lanes: 2, log: (m) => logs.push(m) }));
     await z.close();
     assert.match(logs.join('\n'), new RegExp(`resuming: ${kept} of \\d+ page sizes`));
     assert.equal(calls, 3, 'the interrupted build read two clusters, the third failed');
@@ -242,12 +276,12 @@ describe('wikipedia', () => {
     fs.writeFileSync(`${base}.json`, JSON.stringify({ ...meta, fingerprint: 'other' }));
     z = await ZimArchive.open(file);
     const logs2 = [];
-    const fresh = plain(await buildIndex(z, { volumeSize: 3, checkpoint: base, log: (m) => logs2.push(m) }));
+    const fresh = plain(await buildIndex(z, { volumeSize: 3, store, checkpoint: name, log: (m) => logs2.push(m) }));
     await z.close();
     assert.ok(!logs2.some((m) => m.includes('resuming')), 'not resumed');
     assert.deepEqual(fresh, clean);
     assert.equal(JSON.parse(fs.readFileSync(`${base}.json`, 'utf8')).fingerprint, meta.fingerprint, 'rewritten for this scan');
-    await removeCheckpoint(base);
+    await removeCheckpoint(store, name);
     assert.ok(!fs.existsSync(`${base}.json`) && !fs.existsSync(`${base}.bin`));
   });
 
@@ -348,8 +382,9 @@ describe('wikipedia', () => {
     const logs = [];
     const library = await Library.scan(dir, { log: (m) => logs.push(m), cacheDir: path.join(tmp, 'queue-cache'), indexQueue: { smallBytes: 0 } });
     try {
+      // Read at once: info() reads the archive, and meanwhile the small index can be finished.
       const big = library.get('a_big');
-      assert.deepEqual((await big.info()).indexing, { stage: 'queued', progress: 0 }, 'waits for its turn');
+      assert.deepEqual(big._indexing, { stage: 'queued', progress: 0 }, 'waits for its turn');
       await waitForBooks(big);
       await waitForBooks(library.get('b_small'));
       const started = logs.filter((m) => /indexing Wikipedia articles/.test(m)).map((m) => m.split(':')[0]);
@@ -359,6 +394,28 @@ describe('wikipedia', () => {
       assert.ok(logs.some((m) => /a_big\.zim: waiting to index Wikipedia articles/.test(m)));
     } finally {
       await library.close();
+    }
+  });
+
+  it('builds the index of two copies of a ZIM once: the second finds it when its turn comes', async () => {
+    const file = path.join(tmp, 'copy.zim');
+    writeWikipediaZim(file);
+    const logs = [];
+    const store = fileStore(path.join(tmp, 'copies-cache'));
+    const indexQueue = new IndexQueue({ smallBytes: 0 });
+    indexQueue.hold(); // as a folder scan or a batch of files: both open before either builds
+    const open = (id) => ArchiveLibrary.open(file, { id, store, indexQueue, volumeSize: 3, log: (m) => logs.push(`${id}: ${m}`) });
+    const [a, b] = [await open('a'), await open('b')];
+    indexQueue.release();
+    try {
+      const [booksA, booksB] = [await waitForBooks(a), await waitForBooks(b)];
+      assert.deepEqual(booksB.map((x) => x.title), booksA.map((x) => x.title));
+      assert.equal(logs.filter((m) => /indexing Wikipedia articles in the background/.test(m)).length, 1, logs.join('\n'));
+      assert.ok(logs.some((m) => /index found \(made meanwhile for a copy of this file\)/.test(m)), logs.join('\n'));
+      assert.deepEqual(fs.readdirSync(path.join(tmp, 'copies-cache')).filter((n) => /\.part/.test(n)), [], 'no checkpoint left');
+    } finally {
+      await a.close();
+      await b.close();
     }
   });
 
