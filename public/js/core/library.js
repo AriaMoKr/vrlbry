@@ -39,6 +39,8 @@ const IMAGE_PROBE_CONCURRENCY = 8;
 const GZIP_RESERVE = 0.35;
 
 const INDEX_FILE = 'full_by_popularity.js';
+/** How much of a picture is read to learn its size (_zimImage): a JPEG's frame header is usually in its first few KB. */
+const IMAGE_HEAD_BYTES = 16 * 1024;
 const INDEX_NAMESPACES = ['C', 'A', '-', 'J'];
 const INDEX_PREFIXES = ['', 'js/'];
 const METADATA_FIELDS = {
@@ -1279,8 +1281,15 @@ export class ArchiveLibrary {
       if (target && target.mime && /^image\//i.test(target.mime)) {
         if (!size) info = { ok: true, sized: false };
         else {
-          const content = await this.archive.getContent(target).catch(() => null);
-          if (content) info = { ok: true, sized: true, ...(imageSize(content.data) ?? {}) };
+          // Its size from its first bytes (where every format but SVG keeps it), all of it when
+          // they do not say (a JPEG with a big EXIF block, an SVG).
+          const head = await this.archive.getContentHead(target, IMAGE_HEAD_BYTES).catch(() => null);
+          let dims = head && imageSize(head.data);
+          if (head && !dims && head.size > head.data.length) {
+            const content = await this.archive.getContent(target).catch(() => null);
+            dims = content && imageSize(content.data);
+          }
+          if (head) info = { ok: true, sized: true, ...(dims ?? {}) };
         }
       }
     }

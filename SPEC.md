@@ -528,6 +528,10 @@ export class ZimArchive {
   async findContentPath(url, namespaces = ['C','A','I','-']): Promise<Entry|null> // first hit
   async resolveRedirect(entry, maxHops = 16): Promise<Entry>   // follows redirect chains; throws on loop
   async getContent(entryOrPath): Promise<{ entry, mime, data: Buffer } | null> // follows redirects
+  async getContentHead(entryOrPath, length): Promise<{ entry, mime, data, size } | null>
+       // the first `length` bytes and the whole size: an uncompressed blob read only that far
+       // (unless its cluster is cached or read whole: wholeClusterBytes), a compressed one from
+       // its cluster. Pictures are sized from their first 16 KB (all of it when that does not say).
   async getBlobSize(entry, { cheapOnly = false } = {}): Promise<number|null>
        // uncompressed cluster: reads 2 offsets only. Compressed: decompresses (or returns
        // null when cheapOnly and the cluster is not already cached).
@@ -713,7 +717,10 @@ Wikisource's image whose size the HTML gives, and every inline image, is not loo
 archive when an article is converted: each lookup is a binary search, ~6 round trips over the
 network (Albert Einstein's 38 images: 39 s of the top 1M's article), and mwoffliner's images are
 all there. A missing one then shows as the reader's placeholder instead of its alt text.
-Gutenberg books (whose image paths may need their fallback) and EPUBs are checked as before.
+Gutenberg books (whose image paths may need their fallback) and EPUBs are checked as before,
+each picture sized from its first 16 KB (`getContentHead`; all of it only when they do not
+say): over the network a whole picture cost its every byte (Pride and Prejudice's 164: 25.7 MB,
+now 3.1 MB).
 With `maxIndexBuildBytes` (the local library's web addresses: 256 MB) a Wikipedia or Wikisource
 whose index is found nowhere (the store, the site's `indexes/`) is indexed only up to that size:
 over the network a build reads most of the file (12.7 GB for the top 1M). A bigger one gets

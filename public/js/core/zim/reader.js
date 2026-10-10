@@ -652,6 +652,32 @@ export class ZimArchive {
   }
 
   /**
+   * The first `length` bytes of an entry's content (redirects followed), and its whole size: all
+   * that sniffing a picture's size needs. A blob of an uncompressed cluster is read only that
+   * far (over the network a picture whole cost its every byte: Pride and Prejudice's took 25 MB),
+   * unless the cluster is cached or read whole anyway (_readWhole: the local library's Files);
+   * a compressed one is decompressed as for getContent.
+   * @param {Entry|string} entryOrPath
+   * @param {number} length
+   * @returns {Promise<{ entry: Entry, mime: string, data: Uint8Array, size: number } | null>}
+   */
+  async getContentHead(entryOrPath, length) {
+    const start = typeof entryOrPath === 'string' ? await this.findPath(entryOrPath) : entryOrPath;
+    if (!start) return null;
+    const entry = await this.resolveRedirect(start);
+    if (entry.cluster === null) return null;
+    const info = await this._getClusterInfo(entry.cluster, COMPRESSIBLE_MIME.test(entry.mime ?? ''));
+    if (!info.compressed && !this._clusters.get(entry.cluster) && !this._readWhole(info, entry.blob)) {
+      const [a, b] = await this._uncompressedBlobRange(info, entry.blob);
+      const n = Math.max(0, Math.min(b - a, length));
+      const data = n ? await this._read(a, n) : platform.alloc(0);
+      return { entry, mime: entry.mime, data: n < this._blockBytes ? platform.copy(data) : data, size: b - a };
+    }
+    const data = await this._readBlob(entry.cluster, entry.blob, info.compressed);
+    return { entry, mime: entry.mime, data: data.length > length ? data.subarray(0, length) : data, size: data.length };
+  }
+
+  /**
    * Size in bytes of an entry's content (redirects followed).
    * Uncompressed clusters: reads two offsets only. Compressed clusters: decompresses the cluster,
    * unless `cheapOnly` is set and it is not cached, in which case null is returned.

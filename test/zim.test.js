@@ -403,6 +403,25 @@ describe('ZimArchive: new namespace scheme (zstd + uncompressed clusters)', () =
     }
   });
 
+  it('getContentHead: an uncompressed blob read only as far as asked, a compressed one from its cluster', async () => {
+    const fresh = await ZimArchive.open(info.filePath);
+    try {
+      const reads = spyReads(fresh);
+      const head = await fresh.getContentHead('C/big.bin', 1000);
+      assert.equal(head.size, BIG.length);
+      assert.ok(head.data.equals(BIG.subarray(0, 1000)));
+      assert.ok(reads.every((r) => r.len <= 4096), `no read of the whole blob: ${JSON.stringify(reads)}`);
+      assert.ok((await fresh.getContentHead('C/big.bin', BIG.length * 2)).data.equals(BIG), 'all of it when shorter');
+      const z1 = await fresh.getContentHead('C/z1', 10);
+      assert.equal(z1.size, 2000);
+      assert.deepEqual([...z1.data], [...(await fresh.getContent('C/z1')).data.subarray(0, 10)]);
+      assert.equal((await fresh.getContentHead('C/redir', 4)).size, 14, 'follows redirects');
+      assert.equal(await fresh.getContentHead('C/nothing-here', 4), null);
+    } finally {
+      await fresh.close();
+    }
+  });
+
   it('caches decompressed clusters and shares concurrent decompressions', async () => {
     const fresh = await ZimArchive.open(info.filePath);
     try {

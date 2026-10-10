@@ -461,7 +461,23 @@
            over a directory of 5.3 M entries. Now a list longer than 500 books from the web is
            made from the list alone, each book looked up when first opened (SPEC §3.6
            `bookLookups`): `gutenberg_mul_all` opens in 9.2 s in the browser (63 reads), a book
-           in 1.8-5.1 s. The biggest Wikipedia stays the full English one: 7,230 volumes. Left for later: the items under steps 6 and 7 (a more
+           in 1.8-5.1 s. The biggest Wikipedia stays the full English one: 7,230 volumes.
+           *English first* (decided 2026-10-10): other languages come after the focused
+           features. *On the Quest* (live site, through the proxy): `gutenberg_en_all_2025-11`
+           (60,366 books) opened in 10.9 s, shelves included (genre A, 2,927 books on 27
+           bookcases), 3.0 s again from the block cache; frames stayed at 90 Hz in the 2D view
+           (450 in 5 s, none over 25 ms); the page's process grew from 237 to 512 MB; its
+           book list arrived in 354 ms, the search index of 60,366 books built in 81 ms and a
+           search took 10 ms; Moby Dick opened in 2.1 s, Pride and Prejudice in 11.7 s. That one
+           has 164 pictures, each read whole to learn its size (25.7 MB); now sized from its
+           first 16 KB (3.1 MB). It still makes 234 reads: from Node through the proxy 8.5 s
+           with 6 requests in flight (HttpSource maxInFlight), 6.8-7.0 s with 12, 6.3 s with
+           16, while sizing 8, 16 or 32 pictures at once made no difference. Six was for
+           HTTP/1.1, but Kiwix's mirror and the proxy speak HTTP/2: worth measuring more in
+           flight in a browser and on the Quest. *Seen there, to decide:* a library this big
+           opens on genre "A" (General works: encyclopedias, periodicals; the biggest genre
+           under the 3,000-book cap), and the genre buttons show bare LCC codes ("PS · 11.2k",
+           "PR · 9.7k"). Left for later: the items under steps 6 and 7 (a more
            compact index, other languages, keeping popular reads at the edge, CORS on the
            mirrors, then following Kiwix's redirect).
     - *Keep files across reloads (done 2026-10-08):* where the browser gives file handles (the
