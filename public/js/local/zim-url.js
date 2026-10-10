@@ -51,6 +51,52 @@ export function onKiwixMirror(url) {
 }
 
 /**
+ * The edge proxy the site names (milestone 3 step 7, optional; tools/zim-proxy/): the page's
+ * `<meta name="vrlbry-zim-proxy" content="<base>">` (tools/build-pages.mjs --zim-proxy), or the
+ * page address's `?zimproxy=<base>` to try one (`?zimproxy=off`: none). Null when none is named
+ * or it is not an address this page may read.
+ * @param {{ document?: Document, location?: Location }} [where]
+ * @returns {string|null} the base, ending in '/'
+ */
+export function zimProxyOf({ document = globalThis.document, location = globalThis.location } = {}) {
+  let named = null;
+  try {
+    named = new URL(location?.href ?? '').searchParams.get('zimproxy');
+  } catch {
+    // no page address (a worker, Node)
+  }
+  if (named === 'off' || named === '') return null;
+  named ??= document?.querySelector?.('meta[name="vrlbry-zim-proxy"]')?.getAttribute('content') ?? null;
+  if (!named) return null;
+  try {
+    const base = new URL(named, location?.href);
+    if (base.protocol !== 'https:' && !(base.protocol === 'http:' && LOOPBACK.test(base.hostname))) return null;
+    base.search = '';
+    base.hash = '';
+    if (!base.pathname.endsWith('/')) base.pathname += '/';
+    return base.href;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The same file through the proxy (`<base>zim/<folder>/<file>`) for one on Kiwix's mirror (the
+ * proxy serves Kiwix's files only), or null.
+ */
+export function proxiedUrl(url, base) {
+  if (!base) return null;
+  let u;
+  try {
+    u = new URL(url);
+  } catch {
+    return null;
+  }
+  const m = /^\/zim\/([^/]+\/[^/]+\.zim)$/i.exec(u.pathname);
+  return u.hostname === KIWIX_MIRROR && u.protocol === 'https:' && m ? new URL(`zim/${m[1]}`, base).href : null;
+}
+
+/**
  * A ZIM's address made readable: https:// added when no scheme is typed, Kiwix's download links
  * (download.kiwix.org, lb.download.kiwix.org, and their .meta4 / .torrent / .sha256 / .md5 side
  * files) turned into the same file on Kiwix's mirror, the fragment dropped.

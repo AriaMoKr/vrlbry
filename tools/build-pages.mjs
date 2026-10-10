@@ -4,10 +4,12 @@
 // IWER files the client imports (followed from its imports), instead of the server mapping
 // node_modules.
 //
-//   node tools/build-pages.mjs [--out dist] [--zims <folder>] [--indexes <folder>]
+//   node tools/build-pages.mjs [--out dist] [--zims <folder>] [--indexes <folder>] [--zim-proxy <url>]
 //
 // --indexes builds the indexes of that folder's Wikipedia and Wikisource ZIMs into indexes/, for
 // visitors who open those files in the browser (buildIndexes).
+// --zim-proxy names the edge proxy (tools/zim-proxy/, deployed) the page reads Kiwix's files
+// through, in a meta tag (zimProxyMeta; optional: an empty value names none).
 //
 // Without --zims the site has no libraries. With it, the ZIMs in that folder are pre-rendered: the
 // real server runs in this process, and every answer the client can ask for is saved as a file
@@ -205,6 +207,23 @@ function versionUrls(out) {
     });
   fs.writeFileSync(indexFile, html);
   return tags;
+}
+
+/**
+ * index.html with `<meta name="vrlbry-zim-proxy" content="<url>">` (public/js/local/zim-url.js
+ * zimProxyOf reads it): the edge proxy the page reads Kiwix's files through.
+ * @throws when the address is not an https:// one (or http:// on this machine, for trying)
+ */
+export function zimProxyMeta(html, url) {
+  const base = new URL(url);
+  if (base.protocol !== 'https:' && !(base.protocol === 'http:' && /^(?:localhost|127\.\d+\.\d+\.\d+|\[::1\])$/.test(base.hostname))) {
+    throw new Error(`--zim-proxy needs an https:// address: ${url}`);
+  }
+  const attr = base.href.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+  const tag = `<meta name="vrlbry-zim-proxy" content="${attr}">`;
+  const without = html.replace(/\s*<meta name="vrlbry-zim-proxy"[^>]*>/, '');
+  if (!/<\/head>/i.test(without)) throw new Error('index.html has no </head>');
+  return without.replace(/<\/head>/i, `${tag}\n</head>`);
 }
 
 /** When the site last changed: the last commit's time, else now. */
@@ -437,7 +456,9 @@ export async function buildIndexes(dir, out, { log = console.log } = {}) {
 }
 
 async function main() {
-  const { values: opts } = parseArgs({ options: { out: { type: 'string', default: 'dist' }, zims: { type: 'string' }, indexes: { type: 'string' } } });
+  const { values: opts } = parseArgs({ options: {
+    out: { type: 'string', default: 'dist' }, zims: { type: 'string' }, indexes: { type: 'string' }, 'zim-proxy': { type: 'string' },
+  } });
   const OUT = path.resolve(ROOT, opts.out);
   fs.rmSync(OUT, { recursive: true, force: true });
   copyTree(PUBLIC, OUT, SERVER_ONLY);
@@ -490,6 +511,11 @@ async function main() {
   }
   vendor.push(...libs);
   const tags = versionUrls(OUT);
+  if (opts['zim-proxy']) {
+    const indexFile = path.join(OUT, 'index.html');
+    fs.writeFileSync(indexFile, zimProxyMeta(fs.readFileSync(indexFile, 'utf8'), opts['zim-proxy']));
+    console.log(`Kiwix's files are read through ${opts['zim-proxy']}`);
+  }
 
   // The API's static answers: the libraries of --zims (or none), and when the site last changed.
   const api = path.join(OUT, 'api');

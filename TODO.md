@@ -235,8 +235,8 @@
       (206, `Content-Range`), but only mirror.download.kiwix.org sends CORS headers (`*`, `Range`
       allowed, `Content-Range` exposed): from a page in a browser the other six, and
       download.kiwix.org's redirect, are blocked. Its first read took 731 ms from California.
-      Using the others would need a CORS proxy (a small worker forwarding range requests), or
-      their operators adding CORS (a few lines of nginx). The big editions' prebuilt indexes
+      Using the others needs a CORS proxy (step 7: `tools/zim-proxy/`, a Worker forwarding
+      range requests), or their operators adding CORS (a few lines of nginx). The big editions' prebuilt indexes
       (`indexes/<name>`, `local/prebuilt.js`) belong here too. *Measured from a browser here
       (2026-10-10):* a 64 KB range read from mirror.download.kiwix.org takes 0.5–0.8 s (mostly
       waiting), 8 at once 3 s (about 3× better than in turn), 1 MB 4.4 s (235 KB/s), 4 × 1 MB at
@@ -385,9 +385,32 @@
            one origin, ariamokr.github.io, so they share localStorage (settings, the remembered
            web addresses) and IndexedDB (indexes, the block cache); harmless so far (only the cloud
            site reads `zimUrls`), but a key prefix per site would keep them apart.
-        7. Speed, if step 2 says so (optional): an edge proxy (e.g. a Cloudflare Worker) adding
-           CORS and reading from the nearest mirror (a US one from here), or asking mirror
-           operators to add CORS. Used only when configured; the direct URL otherwise.
+        7. *Done (2026-10-10, not deployed yet):* an edge proxy (`tools/zim-proxy/`, SPEC §2.6
+           "Through an edge proxy"), measured first. *From here (California), on a warm
+           connection:* a read from Kiwix's mirror takes 160-180 ms (curl and the browser alike,
+           no preflight per read; HTTP/2), from the US mirrors 85-110 ms (Wisconsin 80-90),
+           the Netherlands 300-380, India 290-310; 1 MB arrives at 1.0 MB/s from Kiwix's,
+           1.8-2.0 MB/s from Wisconsin, New York and Wikimedia's. A TLS handshake costs two
+           round trips more (Kiwix's 335-355 ms). Cloudflare's nearest edge is Los Angeles,
+           35-45 ms away. All seven mirrors give a file the same size and Last-Modified;
+           Wikimedia's and your.org have no Gutenberg. *The workload of step 2* (Node, cold, 8
+           KB blocks, no image checks), Kiwix's mirror against Wisconsin's, two rounds each:
+           LCC-P opens in 4.2-4.7 s against 1.8-1.9 s; Chemistry opens in 2.0-3.5 s against
+           0.8, searches in 3.7 against 1.8; the top 1M opens in 2.4-4.3 s against 0.7-0.8,
+           finds Albert Einstein in 7.3-7.5 s against 3.3-3.4, his volume's contents in 1.5-2.6
+           s against 0.4 and the article in 1.2-3.0 s against 0.2. Through the proxy run here
+           (`serve.mjs`, reading Wisconsin's): the same as Wisconsin's directly (top 1M 0.8 s
+           and 3.4 s); from the browser, a fresh Gutenberg ZIM (LCC-PM, 11 reads) opened in 1.6
+           s. Through Cloudflare a read should cost the edge's 40 ms more. So it pays for
+           visitors far from France (the Americas, Asia, Oceania), and the page picks nothing:
+           the Worker chooses by continent. *To do:* deploy it (a Cloudflare account: `npx
+           wrangler deploy` in `tools/zim-proxy/`, then the repository variable `ZIM_PROXY`)
+           and measure it on a Quest. *Later:* keeping popular reads at the edge (the Cache
+           API, which needs a custom domain, not workers.dev; a 206 would be kept as a 200
+           under a key of its own); asking the mirrors' operators for CORS (a few lines of
+           nginx), which would make the proxy unnecessary for the US ones; Cloudflare's free
+           plan allows 100,000 requests a day (an article costs 20-40 reads, an index build
+           over the web thousands).
         8. Quest checks and docs (SPEC §2.6 remote sources, README).
     - *Keep files across reloads (done 2026-10-08):* where the browser gives file handles (the
       File System Access API: desktop Chrome/Edge, and Quest Browser has it too) they are kept

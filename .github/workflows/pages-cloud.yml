@@ -18,6 +18,11 @@
 # one not finished in time keeps its progress for the next run. None of this is needed: without
 # an index the site still opens every ZIM, a big Wikipedia from the web just stays unindexed.
 #
+# The edge proxy (milestone 3 step 7, tools/zim-proxy/, optional): once it is deployed (a
+# Cloudflare Worker), set the repository variable ZIM_PROXY (Settings → Secrets and variables →
+# Actions → Variables) to its address, and the page reads Kiwix's files through it, from the
+# mirror nearest each visitor (Kiwix's own directly when it fails). Unset: no proxy.
+#
 # One-time setup in the repository: Settings → Pages → Build and deployment → Source: GitHub
 # Actions. (The main site, https://ariamokr.github.io/vrlbry/, deploys from main of
 # AriaMoKr/vrlbry with pages.yml, and https://ariamokr.github.io/vrlbry-standalone/ from
@@ -81,7 +86,9 @@ jobs:
           done < tools/demo-set.txt
           ls -l .demo
       - name: Build the site
-        run: npm run build:pages -- ${{ inputs.demo_set && '--zims .demo' || '' }} ${{ inputs.demo_indexes && '--indexes .demo' || '' }}
+        env:
+          ZIM_PROXY: ${{ vars.ZIM_PROXY }}
+        run: npm run build:pages -- ${{ inputs.demo_set && '--zims .demo' || '' }} ${{ inputs.demo_indexes && '--indexes .demo' || '' }} ${ZIM_PROXY:+--zim-proxy "$ZIM_PROXY"}
       # Prebuilt indexes: the cache of earlier runs, the release's assets, and (by hand) new builds.
       - uses: actions/cache/restore@v4
         with:

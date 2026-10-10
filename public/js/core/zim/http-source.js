@@ -10,12 +10,19 @@
 // requests on it: 8 reads at once took 1.3 s instead of 0.17 s (Chrome and Quest Browser, the
 // Kiwix mirror). So a request made while others run bypasses the cache (`no-store`); one on its
 // own (an open, a binary search's step) uses it, and the next visit is served from it.
+//
+// Through a proxy (`via`, optional: tools/zim-proxy/, which reads the mirror nearest the visitor):
+// the same reads go there first, and on the first failure (unreachable, an error, no ranges, a
+// wrong answer) to the file's own address for good. The source stays the file's (`url`, its name,
+// the edition checked against the first answer): the block cache and the page see no difference.
 
 /** Thrown for what an HTTP source cannot do: no ranges, a changed file, a failing server. */
 export class HttpSourceError extends Error {
-  constructor(message, { status = null, cause } = {}) {
+  constructor(message, { status = null, cause, edition = false } = {}) {
     super(message, { cause });
     this.status = status;
+    /** True when the file changed on the server (another edition): reading it elsewhere would not help. */
+    this.edition = edition;
   }
 }
 
@@ -42,9 +49,12 @@ export class HttpSource {
   /**
    * Opens a URL: one small ranged read learns its size and that ranges work.
    * @param {string} url
-   * @param {{ fetch?: typeof fetch, maxInFlight?: number, retries?: number, timeoutMs?: number }} [opts]
+   * @param {{ fetch?: typeof fetch, maxInFlight?: number, retries?: number, timeoutMs?: number,
+   *   via?: string|null, onFallback?: (err: Error) => void }} [opts]
    *   fetch: for tests; maxInFlight: requests at once (browsers allow 6 per host over HTTP/1.1);
-   *   retries: per read, on network errors, timeouts and 408/429/5xx, with growing waits
+   *   retries: per read, on network errors, timeouts and 408/429/5xx, with growing waits; via: the
+   *   same file through a proxy, read first (the open's probe once, a read twice, then `url` for
+   *   good); onFallback: called once, when the proxy is given up
    * @returns {Promise<HttpSource>}
    * @throws {HttpSourceError} when the server does not serve ranges or the file is not there
    */
@@ -54,15 +64,21 @@ export class HttpSource {
     return source;
   }
 
-  constructor(url, { fetch: fetchImpl = globalThis.fetch, maxInFlight = 6, retries = 3, timeoutMs = 30000 } = {}) {
+  constructor(url, {
+    fetch: fetchImpl = globalThis.fetch, maxInFlight = 6, retries = 3, timeoutMs = 30000, via = null, onFallback = null,
+  } = {}) {
     if (typeof fetchImpl !== 'function') throw new HttpSourceError('no fetch() here');
     this.url = url;
     this.name = nameOf(url);
     this.size = 0;
     /** Last-Modified of the first answer: every later one must match (the same edition). */
     this.lastModified = null;
-    /** Reads made and bytes received (for measurements). */
-    this.stats = { reads: 0, bytes: 0, retries: 0 };
+    /** The proxy read through, or null (none, or given up: `viaError` says why). */
+    this.via = via ? String(via) : null;
+    this.viaError = null;
+    /** Reads made (`viaReads` of them through the proxy) and bytes received (for measurements). */
+    this.stats = { reads: 0, bytes: 0, retries: 0, viaReads: 0 };
+    this._onFallback = onFallback;
     // Called as a plain function: a browser's fetch throws "Illegal invocation" when called as
     // another object's method (this._fetch(…)).
     this._fetch = (input, init) => fetchImpl(input, init);
@@ -78,7 +94,11 @@ export class HttpSource {
   async _probe() {
     // The ZIM header's first bytes: a server that ignores Range answers 200 with the whole file
     // (gigabytes), which is cancelled at once.
-    const { bytes, range, total } = await this._get(0, 80, { probe: true });
+    let { bytes, range, total } = await this._get(0, 80, { probe: true });
+    if (this.via && !(total ?? range?.total)) { // a proxy that hides the size: the file's own address may not
+      this._giveUpVia(this.via, new HttpSourceError(`${this.name}: the proxy does not say how big the file is`));
+      ({ bytes, range, total } = await this._get(0, 80, { probe: true }));
+    }
     this.size = total ?? range?.total ?? null;
     if (!this.size) throw new HttpSourceError(`${this.name}: the server does not say how big the file is`);
     if (bytes.length === 0) throw new HttpSourceError(`${this.name}: the file is empty`);
@@ -112,29 +132,57 @@ export class HttpSource {
     this._queue.shift()?.resolve();
   }
 
-  /** One ranged GET with retries: { bytes, range, total }. */
+  /** One ranged GET with retries, through the proxy while there is one: { bytes, range, total }. */
   async _get(position, length, { probe = false } = {}) {
     if (this._closed) throw new HttpSourceError(`${this.name}: closed`);
     await this._slot();
     try {
-      for (let attempt = 0; ; attempt++) {
+      const via = this.via;
+      if (via) {
         try {
-          return await this._once(position, length, probe);
+          const got = await this._attempts(via, position, length, probe, probe ? 0 : 1);
+          this.stats.viaReads++;
+          return got;
         } catch (err) {
-          // Network errors and timeouts (also while the body arrives) are tried again; a closed
-          // source, a refusal or a changed file are not.
-          const retry = !this._closed && attempt < this._retries && (err.retry || !(err instanceof HttpSourceError));
-          if (!retry) throw err instanceof HttpSourceError ? err : new HttpSourceError(`${this.name}: ${err.message}`, { cause: err });
-          this.stats.retries++;
-          await sleep(500 * 2 ** attempt);
+          // Whatever went wrong there, the file's own address may do better, unless the file
+          // itself changed (or this source is closed).
+          if (this._closed || err.edition) throw err;
+          this._giveUpVia(via, err);
         }
       }
+      return await this._attempts(this.url, position, length, probe, this._retries);
     } finally {
       this._release();
     }
   }
 
-  async _once(position, length, probe) {
+  async _attempts(target, position, length, probe, retries) {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this._once(target, position, length, probe);
+      } catch (err) {
+        // Network errors and timeouts (also while the body arrives) are tried again; a closed
+        // source, a refusal or a changed file are not.
+        const retry = !this._closed && attempt < retries && (err.retry || !(err instanceof HttpSourceError));
+        if (!retry) throw err instanceof HttpSourceError ? err : new HttpSourceError(`${this.name}: ${err.message}`, { cause: err });
+        this.stats.retries++;
+        await sleep(500 * 2 ** attempt);
+      }
+    }
+  }
+
+  _giveUpVia(via, err) {
+    if (this.via !== via) return; // another read gave it up first
+    this.via = null;
+    this.viaError = err.message;
+    try {
+      this._onFallback?.(err);
+    } catch {
+      // the caller's
+    }
+  }
+
+  async _once(target, position, length, probe) {
     // Closed meanwhile (close() may come between a read's call and its request): no request.
     if (this._closed) throw new HttpSourceError(`${this.name}: closed`);
     const timeout = new AbortController();
@@ -144,7 +192,7 @@ export class HttpSource {
     try {
       let res;
       try {
-        res = await this._fetch(this.url, {
+        res = await this._fetch(target, {
           headers: { Range: `bytes=${position}-${position + length - 1}` },
           signal: timeout.signal,
           // Others running (this one counts too): past the browser's cache, which would queue it.
@@ -173,10 +221,10 @@ export class HttpSource {
       if (probe) this.lastModified = modified;
       else {
         if (range?.total != null && range.total !== this.size) {
-          throw new HttpSourceError(`${this.name}: the file changed on the server (its size is now ${range.total} bytes): open it again`);
+          throw new HttpSourceError(`${this.name}: the file changed on the server (its size is now ${range.total} bytes): open it again`, { edition: true });
         }
         if (modified && this.lastModified && modified !== this.lastModified) {
-          throw new HttpSourceError(`${this.name}: the file changed on the server (modified ${modified}): open it again`);
+          throw new HttpSourceError(`${this.name}: the file changed on the server (modified ${modified}): open it again`, { edition: true });
         }
       }
       if (range && range.start !== position) {
@@ -188,7 +236,7 @@ export class HttpSource {
       this.stats.bytes += bytes.length;
       // The probe's total: Content-Range when the page may read it, else a HEAD's length.
       let total = range?.total ?? null;
-      if (probe && total == null) total = await this._headLength();
+      if (probe && total == null) total = await this._headLength(target);
       return { bytes, range, total };
     } finally {
       clearTimeout(timer);
@@ -197,8 +245,8 @@ export class HttpSource {
   }
 
   /** The file's size from a HEAD request (Content-Length is readable across origins). */
-  async _headLength() {
-    const res = await this._fetch(this.url, { method: 'HEAD', signal: this._abort.signal }).catch(() => null);
+  async _headLength(target) {
+    const res = await this._fetch(target, { method: 'HEAD', signal: this._abort.signal }).catch(() => null);
     const n = Number(res?.headers.get('content-length'));
     return res?.ok && Number.isFinite(n) && n > 0 ? n : null;
   }

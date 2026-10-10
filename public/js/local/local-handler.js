@@ -93,15 +93,20 @@ export function createLocalLibraries({
      * Opens a File (or Blob), or a ZIM at a web address (`url`, as zim-url.js makes it: the server
      * must allow range requests and, from another site, CORS): { id, title, kind, books, indexing,
      * url? }. A Wikipedia's or Wikisource's index is built in the background when none is found,
-     * but from the web only up to URL_INDEX_BUILD_BYTES (it would read most of the file).
+     * but from the web only up to URL_INDEX_BUILD_BYTES (it would read most of the file). `via`:
+     * the same file through the site's edge proxy (zim-url.js proxiedUrl), read first while it
+     * works; the library is still the file's (`url`).
      */
-    async open({ file, url }, { onProgress } = {}) {
+    async open({ file, url, via = null }, { onProgress } = {}) {
       const t0 = performance.now();
       const remote = typeof url === 'string';
       const name = (remote ? fileNameOf(url) : file.name) || 'archive.zim';
       // From the web, through the block cache when there is one (it keeps what is read).
       const source = remote
-        ? await HttpSource.open(url).then((http) => blockCache?.wrap(http) ?? http, (err) => {
+        ? await HttpSource.open(url, {
+          via,
+          onFallback: (err) => warn(`${name}: the proxy failed (${err.message}): reading ${new URL(url).hostname} directly`),
+        }).then((http) => blockCache?.wrap(http) ?? http, (err) => {
           throw new LocalError(err instanceof HttpSourceError ? err.message : `${name}: ${err.message}`);
         })
         : file;

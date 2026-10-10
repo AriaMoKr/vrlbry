@@ -4,7 +4,7 @@
 // images (imageSource). The worker starts with the first file; until then nothing is loaded.
 // Opened files last until the page is reloaded (main.js reopens web addresses then).
 
-import { fileNameOf } from './zim-url.js';
+import { fileNameOf, proxiedUrl, zimProxyOf } from './zim-url.js';
 
 let worker = null;
 let seq = 0;
@@ -12,6 +12,8 @@ const pending = new Map(); // request id → { resolve, reject, onProgress? }
 const listeners = new Set();
 const indexingListeners = new Set();
 let opened = 0;
+/** The site's edge proxy for Kiwix's files (zim-url.js zimProxyOf; optional), or null. */
+const ZIM_PROXY = zimProxyOf();
 
 /**
  * A ZIM to try the local library with, from Kiwix (one of tools/demo-set.txt's, so the address is
@@ -103,7 +105,7 @@ export async function openFiles(files, { onFile, onProgress, onOpened, stopped =
       onFile?.(file, i);
       onProgress?.(i / list.length);
       try {
-        const what = typeof file === 'string' ? { url: file } : { file };
+        const what = typeof file === 'string' ? { url: file, via: proxiedUrl(file, ZIM_PROXY) } : { file };
         results.push({ name, ...(await call('open', what, { onProgress: onProgress && ((f) => onProgress((i + f) / list.length)) })) });
         onOpened?.(results.at(-1));
         opened++;

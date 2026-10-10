@@ -204,6 +204,16 @@ those of `tools/indexes.txt` under `indexes/`: `node tools/build-indexes.mjs --z
 builds them from local copies of the ZIMs into `.indexes/` (or `--web`, from Kiwix's mirror), and
 the Pages workflow ships them (see `.github/workflows/pages-cloud.yml`).
 
+Kiwix's own mirror is in France, so from far away every read costs a long round trip. An
+optional edge proxy, `tools/zim-proxy/` (a Cloudflare Worker), reads the mirror nearest each
+visitor instead and adds the CORS headers the other mirrors lack: from California the top 1M
+Wikipedia opened in 0.8 s instead of 2.4-4.3 s. To use it, deploy it with your Cloudflare account
+(`npx wrangler deploy` in that folder) and set the repository variable `ZIM_PROXY` to its address
+(`https://vrlbry-zim-proxy.<account>.workers.dev/`); the next Pages build names it in the page.
+To try it first, `node tools/zim-proxy/serve.mjs` runs it here and
+`http://localhost:8080/?zimproxy=http://localhost:8090/` reads through it. When it fails, the
+page reads Kiwix's mirror directly.
+
 ## Measuring performance on a Quest
 
 `/?perf` turns on a recorder in the page: every frame's timing, room switches, atlas painting,

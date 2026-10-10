@@ -325,6 +325,28 @@ whole. It works on GitHub Pages (no server) and beside a server's own libraries.
   browser's HTTP cache serves the reads made one at a time (opens, binary searches) but only
   queues the ones made together (§3.1), which this serves. The probe still goes to the network
   (it says which edition is there). Clearing the site's data clears it.
+- **Through an edge proxy** (milestone 3 step 7, optional; `tools/zim-proxy/`): a Cloudflare
+  Worker (`worker.js`) that answers range reads of Kiwix's files from the mirror nearest the
+  visitor, with the CORS headers only Kiwix's own mirror sends. `GET /zim/<folder>/<file>.zim`
+  with `Range: bytes=<start>-<end>`: the mirrors are tried in an order per continent (Cloudflare's
+  `request.cf.continent`: the Americas and Oceania the US mirrors first, Europe and Africa
+  Kiwix's, Asia India's; Kiwix's, which holds everything, always among them); one without the
+  file (404), failing, slower than 8 s to answer or sending the whole file is passed over for the
+  next, and for that file for 10 minutes. Every mirror has the same size and Last-Modified for a
+  file (rsync'd; checked on all seven), so the page's edition check holds whichever answers. It
+  relays only that: no Range, an open range, more than 64 MB, another path or method is refused
+  (no whole files, no other sites). Preflights get `Range` allowed for a day. The page uses it
+  only when the site names it: `<meta name="vrlbry-zim-proxy" content="<base>">` in the built
+  page (`build-pages.mjs --zim-proxy <url>`; the cloud workflow passes the repository variable
+  `ZIM_PROXY`), or `?zimproxy=<base>` in the page's address to try one (`off`: none); https only
+  (http on this machine). `local/zim-url.js` `zimProxyOf` reads it and `proxiedUrl` maps an
+  address on Kiwix's mirror to the proxy's (others are read directly); `open({ url, via })` reads
+  through it (§3.1 `via`) while it works and from `url` for good once it fails, with one
+  warning. The library stays the file's: its catalogue `url`, the remembered addresses and the
+  block cache's edition all name Kiwix's mirror, so switching the proxy on or off loses
+  nothing. `tools/zim-proxy/serve.mjs` runs it on this machine (port 8090) for trying. Measured
+  from California (TODO, milestone 3 step 7): the top 1M opens in 0.8 s instead of 2.4-4.3 s and
+  finds Albert Einstein in 3.4 s instead of 7.4 s.
 - **Closing:** a local library's × in the card's list closes it (stopping its index build) and
   forgets it: its file handle, or its web address (so it does not reopen).
 - **Ids:** `~` + `libraryIdFor(file name)` (then `-2`, `-3` … for the same name twice):
@@ -432,7 +454,13 @@ mirror sends Last-Modified and no Cache-Control), but once it holds a URL it ser
 requests on it: 8 at once took 1.3 s instead of 0.17 s. So a request made while others of the
 source run asks for `cache: 'no-store'`, and one on its own uses the cache: a second visit
 opens from it (the top 1M in 1.2 s on a Quest) while searches keep their reads at once.
-`stats` counts reads, bytes and retries. Pass options
+`stats` counts reads, bytes and retries (`viaReads` of them through a proxy). With `via` (the
+same file through an edge proxy, §2.6) the probe and the reads go there first, the probe once
+and a read twice; on a failure that is not a changed file (unreachable, an error status, no
+ranges, no size, a wrong range) the source drops it for good (`via` null, `viaError` the
+reason, `onFallback(err)` called once) and reads `url`. A changed file (`HttpSourceError`
+`edition: true`) is thrown as ever: the proxy is not to blame. `url`, `name`, `size` and
+`lastModified` stay the file's. Pass options
 as `ZimArchive.open(url, { http: { … } })`. A URL needs nothing else: no proxy, no cached
 index, no block store (those are optional speed-ups, TODO milestone 3).
 

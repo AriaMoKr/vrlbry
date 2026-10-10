@@ -1,0 +1,6 @@
+# The edge proxy for ZIMs read from the web (worker.js; optional). Deploy with a Cloudflare
+# account: `npx wrangler deploy` in this folder. It answers at https://vrlbry-zim-proxy.<account>.workers.dev/;
+# name that in the cloud site's workflow (the repo variable ZIM_PROXY) to have the page use it.
+name = "vrlbry-zim-proxy"
+main = "worker.js"
+compatibility_date = "2026-09-01"

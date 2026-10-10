@@ -7,6 +7,7 @@
 
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
@@ -362,6 +363,53 @@ describe('local library (ZIM files read in the browser)', () => {
     assert.deepEqual(second.requests.map((r) => r.range), ['bytes=0-79'], 'only the probe (the edition) went to the server');
     assert.equal(second.stats.misses, 0);
     assert.ok(second.stats.hits > 0);
+  });
+
+  it('reads a web address through the site\'s proxy while it works, and the file\'s own address otherwise', async () => {
+    const file = writeGutenbergZim(path.join(tmp, 'web-proxied.zim')).filePath;
+    const { url } = web.serve(file);
+    // A proxy that passes every request on to the file's server, counting them.
+    let relayed = 0;
+    const relay = http.createServer(async (req, res) => {
+      relayed++;
+      const answer = await fetch(web.base + req.url, { method: req.method, headers: req.headers.range ? { range: req.headers.range } : {} });
+      res.writeHead(answer.status, Object.fromEntries(answer.headers));
+      res.end(Buffer.from(await answer.arrayBuffer()));
+    });
+    await new Promise((r) => relay.listen(0, '127.0.0.1', r));
+    const via = url.replace(web.base, `http://127.0.0.1:${relay.address().port}`);
+    const indexedDB = new IDBFactory();
+    provide(browser);
+    try {
+      const blocks = blockCache({ indexedDB });
+      const local = createLocalLibraries({ blockCache: blocks });
+      const before = web.requests.length;
+      const opened = (await local.call('open', { url, via })).value;
+      assert.equal(opened.url, url, 'the library is the file\'s, not the proxy\'s');
+      assert.equal((await local.call('catalog')).value.libraries[0].url, url);
+      const answers = await localAnswers(local, opened.id);
+      assert.ok(relayed > 1 && web.requests.length - before === relayed, 'every read went through the proxy');
+      await local.call('close', { lib: opened.id });
+      await new Promise((r) => setTimeout(r, 50));
+      blocks.close();
+      // Kept under the file's address: read directly next time, from the cache.
+      const blocks2 = blockCache({ indexedDB });
+      const direct = createLocalLibraries({ blockCache: blocks2 });
+      const before2 = web.requests.length;
+      const again = (await direct.call('open', { url })).value;
+      assert.deepEqual(await localAnswers(direct, again.id), answers);
+      assert.deepEqual(web.requests.slice(before2).map((r) => r.range), ['bytes=0-79'], 'only the probe');
+      blocks2.close();
+      // A proxy that is down: the file is read directly, and the worker says so.
+      await new Promise((r) => relay.close(r));
+      const warned = [];
+      const down = createLocalLibraries({ warn: (m) => warned.push(m) });
+      const third = (await down.call('open', { url, via })).value;
+      assert.deepEqual(await localAnswers(down, third.id), answers);
+      assert.equal(warned.filter((m) => /the proxy failed .*reading 127\.0\.0\.1 directly/.test(m)).length, 1, warned.join('\n'));
+    } finally {
+      relay.close();
+    }
   });
 
   it('says why a web address cannot be read: not found, no ranges, not a ZIM', async () => {
