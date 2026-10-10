@@ -39,8 +39,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -48,7 +48,7 @@ jobs:
       - run: npm test
       # The demo set (tools/demo-set.txt, one ZIM URL per line), cached until the list changes.
       - if: inputs.demo_set || inputs.demo_indexes
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .demo
           key: demo-set-${{ hashFiles('tools/demo-set.txt') }}
@@ -64,9 +64,10 @@ jobs:
           ls -l .demo
       - name: Build the site
         run: npm run build:pages -- ${{ inputs.demo_set && '--zims .demo' || '' }} ${{ inputs.demo_indexes && '--indexes .demo' || '' }}
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: dist
+          include-hidden-files: true
 
   deploy:
     needs: build
@@ -76,4 +77,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
