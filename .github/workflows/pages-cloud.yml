@@ -62,8 +62,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 345
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -71,7 +71,7 @@ jobs:
       - run: npm test
       # The demo set (tools/demo-set.txt, one ZIM URL per line), cached until the list changes.
       - if: inputs.demo_set || inputs.demo_indexes
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .demo
           key: demo-set-${{ hashFiles('tools/demo-set.txt') }}
@@ -90,7 +90,7 @@ jobs:
           ZIM_PROXY: ${{ vars.ZIM_PROXY }}
         run: npm run build:pages -- ${{ inputs.demo_set && '--zims .demo' || '' }} ${{ inputs.demo_indexes && '--indexes .demo' || '' }} ${ZIM_PROXY:+--zim-proxy "$ZIM_PROXY"}
       # Prebuilt indexes: the cache of earlier runs, the release's assets, and (by hand) new builds.
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@v6
         with:
           path: .indexes
           key: indexes-${{ github.run_id }}
@@ -111,7 +111,7 @@ jobs:
         continue-on-error: true
         run: node tools/build-indexes.mjs --out .indexes --prune
       - if: inputs.prebuilt_indexes && !cancelled()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: .indexes
           key: indexes-${{ github.run_id }}
@@ -127,9 +127,10 @@ jobs:
           else
             echo "No prebuilt indexes."
           fi
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: dist
+          include-hidden-files: true
 
   deploy:
     needs: build
@@ -139,4 +140,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
