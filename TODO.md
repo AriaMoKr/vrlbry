@@ -237,7 +237,49 @@
       download.kiwix.org's redirect, are blocked. Its first read took 731 ms from California.
       Using the others would need a CORS proxy (a small worker forwarding range requests), or
       their operators adding CORS (a few lines of nginx). The big editions' prebuilt indexes
-      (`indexes/<name>`, `local/prebuilt.js`) belong here too.
+      (`indexes/<name>`, `local/prebuilt.js`) belong here too. *Measured from a browser here
+      (2026-10-10):* a 64 KB range read from mirror.download.kiwix.org takes 0.5–0.8 s (mostly
+      waiting), 8 at once 3 s (about 3× better than in turn), 1 MB 4.4 s (235 KB/s), 4 × 1 MB at
+      once ~400 KB/s: every read costs a round trip to France. Kiwix's OPDS catalogue
+      (`library.kiwix.org` → `opds.library.kiwix.org/catalog/v2/entries`) sends CORS `*`: 1,301
+      English ZIMs with sizes and links (`lb.download.kiwix.org/….zim.meta4`).
+      - *Rule: every speed-up is optional.* Caches (the block cache, the index store),
+        prebuilt indexes, a proxy and the catalogue only make things faster or easier: opening
+        a file or a ZIM by URL must keep working with each of them absent, failing, blocked or
+        off. Each is a fallback-safe wrapper around the plain path (as `withPrebuilt` falls back
+        to building, `memoryStore` stands in for IndexedDB), each has a test with it missing or
+        failing, and SPEC says which layers are optional.
+      - *Plan:*
+        1. An HTTP byte source (`{ name, size, read, close }` over `fetch` with `Range`, beside
+           `BlobSource`): the size from the first `Content-Range`; refuse a server that ignores
+           `Range` (a 200 would stream the whole file); pin the edition with `If-Range` (ETag
+           or Last-Modified); retries with backoff; a cap on requests in flight. Tested against
+           a local server with and without ranges.
+        2. Measure on the PC and a Quest: reads and time to open a Gutenberg ZIM, a Wikipedia
+           mini and the top 1M (with a prebuilt index), and to the first page. Decides the
+           block size over HTTP (64 KB suits files; at ~0.6 s a read, 256 KB–1 MB likely
+           suits the network) and whether a small ZIM's directory is fetched in one go.
+        3. Open by URL in the local library: the worker opens an HTTP source as it opens a
+           File (same ids, catalogue, indexing); URLs need no permission, so remote libraries
+           can reopen themselves after a reload; `__vrlbry.openUrl(url)`; a clear message for a
+           server without CORS or ranges. Works with no cache, index or proxy at all.
+        4. A persistent block cache (optional): fetched blocks kept in IndexedDB by the ZIM's
+           UUID and block, within a budget, oldest out first, so a library or book read once
+           costs no network again (browsers do not reliably keep 206 answers). Read-through:
+           a miss, quota error or no IndexedDB just reads from the source.
+        5. A Kiwix library to choose from (optional): the ZIMs the app reads well (Gutenberg,
+           Wikipedia, Wikisource) from OPDS, filtered or curated into JSON in the repo, in the
+           overlay and on the kiosk in VR (no file picker there). A URL can still be typed,
+           and files still opened, when the catalogue cannot be reached.
+        6. Prebuilt indexes for the curated Wikipedias and Wikisources (optional), under
+           `indexes/` on this site: building one in the browser over the network means
+           downloading all its HTML (12.7 GB for the top 1M). Built here or in CI, ~10 MB each
+           (1 GB site limit), rebuilt for new editions. Without one, the index is built in the
+           browser as today.
+        7. Speed, if step 2 says so (optional): an edge proxy (e.g. a Cloudflare Worker) adding
+           CORS and reading from the nearest mirror (a US one from here), or asking mirror
+           operators to add CORS. Used only when configured; the direct URL otherwise.
+        8. Quest checks and docs (SPEC §2.6 remote sources, README).
     - *Keep files across reloads (done 2026-10-08):* where the browser gives file handles (the
       File System Access API: desktop Chrome/Edge, and Quest Browser has it too) they are kept
       in IndexedDB and the card offers "Last time: … Reopen" (permission asked again within the
