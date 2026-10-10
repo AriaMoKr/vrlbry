@@ -15,7 +15,7 @@ import { ArchiveLibrary } from '../public/js/core/library.js';
 import { HttpSource, HttpSourceError } from '../public/js/core/zim/http-source.js';
 import { proxiedUrl, zimProxyOf } from '../public/js/local/zim-url.js';
 import { zimProxyMeta } from '../tools/build-pages.mjs';
-import { handle, MAX_RANGE_BYTES, MIRRORS, mirrorsFor } from '../tools/zim-proxy/worker.js';
+import worker, { allowOrigin, handle, MAX_RANGE_BYTES, MIRRORS, mirrorsFor } from '../tools/zim-proxy/worker.js';
 import { startRangeServer } from './helpers/range-server.js';
 import { writeGutenbergZim } from './helpers/zim-fixtures.js';
 
@@ -60,6 +60,44 @@ describe('the edge proxy (tools/zim-proxy/worker.js)', () => {
     assert.equal(asked.length, 0, 'no mirror was asked');
     const refused = await handle(get(ZIM), { fetch });
     assert.equal(refused.headers.get('access-control-allow-origin'), '*', 'a page can read why');
+  });
+
+  it('serves only the pages of its own sites (ALLOWED_ORIGINS), so no other can spend its requests', async () => {
+    const SITES = 'https://ariamokr.github.io, http://localhost:*, http://127.0.0.1:*';
+    assert.equal(allowOrigin('https://ariamokr.github.io', SITES), 'https://ariamokr.github.io');
+    assert.equal(allowOrigin('http://localhost:8080', SITES), 'http://localhost:8080', 'any port');
+    assert.equal(allowOrigin('http://localhost', SITES), 'http://localhost');
+    assert.equal(allowOrigin('http://127.0.0.1:8097', SITES), 'http://127.0.0.1:8097');
+    assert.equal(allowOrigin('https://other.github.io', SITES), null);
+    assert.equal(allowOrigin('https://ariamokr.github.io.evil.example', SITES), null);
+    assert.equal(allowOrigin('http://localhost.evil.example:80', SITES), null);
+    assert.equal(allowOrigin('http://localhost:80x', SITES), null);
+    assert.equal(allowOrigin(null, SITES), null, 'no Origin: not a page');
+    assert.equal(allowOrigin(null, '*'), '*');
+    assert.equal(allowOrigin('https://any.example', '*'), '*');
+    // In the Worker: refused before any mirror is asked; allowed, the answer names the page's origin.
+    const { fetch, asked } = mirrors({ kiwix: 206 });
+    const as = (origin, extra = {}) => handle(get(ZIM, { range: 'bytes=0-3', ...(origin ? { origin } : {}), ...extra }), {
+      fetch, continent: 'EU', skipped: new Map(), origins: SITES,
+    });
+    const refused = await as('https://other.example');
+    assert.equal(refused.status, 403);
+    assert.equal(refused.headers.get('access-control-allow-origin'), null);
+    assert.equal((await as(null)).status, 403);
+    assert.equal(asked.length, 0);
+    const ok = await as('https://ariamokr.github.io');
+    assert.equal(ok.status, 206);
+    assert.equal(ok.headers.get('access-control-allow-origin'), 'https://ariamokr.github.io');
+    assert.equal(ok.headers.get('vary'), 'Origin');
+    const pre = await handle(get(ZIM, { origin: 'http://localhost:8080' }, 'OPTIONS'), { origins: SITES });
+    assert.equal(pre.status, 204);
+    assert.equal(pre.headers.get('access-control-allow-origin'), 'http://localhost:8080');
+    // The deployed Worker takes the list from its environment (wrangler.toml [vars]).
+    const toml = fs.readFileSync(new URL('../tools/zim-proxy/wrangler.toml', import.meta.url), 'utf8');
+    const listed = /^ALLOWED_ORIGINS = "([^"]+)"$/m.exec(toml)?.[1];
+    assert.ok(listed && allowOrigin('https://ariamokr.github.io', listed) && !allowOrigin('https://other.example', listed), listed);
+    const fromEnv = await worker.fetch(get(ZIM, { range: 'bytes=0-3', origin: 'https://other.example' }), { ALLOWED_ORIGINS: listed });
+    assert.equal(fromEnv.status, 403);
   });
 
   it('asks the mirrors nearest the visitor first', () => {

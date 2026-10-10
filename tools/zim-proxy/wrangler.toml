@@ -1,6 +1,13 @@
 # The edge proxy for ZIMs read from the web (worker.js; optional). Deploy with a Cloudflare
-# account: `npx wrangler deploy` in this folder. It answers at https://vrlbry-zim-proxy.<account>.workers.dev/;
-# name that in the cloud site's workflow (the repo variable ZIM_PROXY) to have the page use it.
+# account: `npx wrangler login`, then `npx wrangler deploy` in this folder. It answers at
+# https://vrlbry-zim-proxy.<your workers.dev subdomain>.workers.dev/; name that in the cloud
+# site's workflow (the repository variable ZIM_PROXY) to have the page use it.
 name = "vrlbry-zim-proxy"
 main = "worker.js"
 compatibility_date = "2026-09-01"
+workers_dev = true
+
+[vars]
+# The pages that may read through it (worker.js allowOrigin): the Pages sites (all three share
+# this origin) and this machine's servers, any port, for trying. "*" would allow any site.
+ALLOWED_ORIGINS = "https://ariamokr.github.io, http://localhost:*, http://127.0.0.1:*"

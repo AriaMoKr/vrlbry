@@ -335,7 +335,12 @@ whole. It works on GitHub Pages (no server) and beside a server's own libraries.
   next, and for that file for 10 minutes. Every mirror has the same size and Last-Modified for a
   file (rsync'd; checked on all seven), so the page's edition check holds whichever answers. It
   relays only that: no Range, an open range, more than 64 MB, another path or method is refused
-  (no whole files, no other sites). Preflights get `Range` allowed for a day. The page uses it
+  (no whole files, no other sites: it fetches from its seven mirrors only). Only the pages of the
+  origins in `ALLOWED_ORIGINS` (`wrangler.toml`: `https://ariamokr.github.io`, which the three
+  Pages sites share, and this machine's servers on any port; `allowOrigin`) may use it, so no
+  other site spends its requests (Cloudflare's free plan: 100,000 a day; over them it answers an
+  error and the page reads Kiwix's mirror directly); a request without an allowed `Origin` gets
+  403, an allowed one its origin back (`Vary: Origin`). Preflights get `Range` allowed for a day. The page uses it
   only when the site names it: `<meta name="vrlbry-zim-proxy" content="<base>">` in the built
   page (`build-pages.mjs --zim-proxy <url>`; the cloud workflow passes the repository variable
   `ZIM_PROXY`), or `?zimproxy=<base>` in the page's address to try one (`off`: none); https only

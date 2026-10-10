@@ -14,6 +14,12 @@
 // uses this only when its site names it (`--zim-proxy`, tools/build-pages.mjs) and reads Kiwix's
 // mirror directly when it fails.
 //
+// Only the pages of the sites in ALLOWED_ORIGINS (wrangler.toml) may use it: a browser names the
+// page's origin in every cross-origin request, so another site's page cannot spend this one's
+// daily requests (the free plan's 100,000: over them Cloudflare answers an error, and the page
+// reads Kiwix's mirror directly). A request without an allowed Origin is refused (403); "*"
+// allows any.
+//
 // Deploy: `npx wrangler deploy` in this folder (wrangler.toml), with a Cloudflare account.
 
 /** The mirrors (Kiwix's MirrorBrain list, from a file's .meta4): where each one's /zim/ is. */
@@ -49,10 +55,7 @@ const SKIPPED_MAX = 4096;
 const FILE_PATH = /^\/zim\/[A-Za-z0-9._-]+\/[A-Za-z0-9._%+-]+\.zim$/;
 const RANGE = /^bytes=(\d+)-(\d+)$/;
 
-const CORS = {
-  'access-control-allow-origin': '*',
-  'access-control-expose-headers': 'Content-Range, Content-Length, Last-Modified, ETag, X-Mirror',
-};
+const EXPOSE = 'Content-Range, Content-Length, Last-Modified, ETag, X-Mirror';
 /** What is passed on from a mirror's answer. */
 const KEEP = ['content-range', 'content-length', 'content-type', 'last-modified', 'etag', 'accept-ranges', 'cache-control'];
 
@@ -67,36 +70,63 @@ function skip(skipped, key, until) {
 }
 
 function answer(status, message, headers = {}) {
-  return new Response(message ? `${message}\n` : null, { status, headers: { ...CORS, 'content-type': 'text/plain; charset=utf-8', ...headers } });
+  return new Response(message ? `${message}\n` : null, { status, headers: { 'content-type': 'text/plain; charset=utf-8', ...headers } });
+}
+
+/**
+ * The Access-Control-Allow-Origin for a request's Origin: '*' when any is allowed, the origin
+ * itself when it is listed, else null.
+ * @param {string|null} origin
+ * @param {string} allowed origins separated by commas or spaces ("https://user.github.io"); a
+ *   port of `*` matches any port ("http://localhost:*"); "*" alone matches any origin
+ */
+export function allowOrigin(origin, allowed) {
+  const list = String(allowed ?? '').split(/[\s,]+/).filter(Boolean);
+  if (list.includes('*')) return '*';
+  if (!origin) return null;
+  for (const entry of list) {
+    if (entry === origin) return origin;
+    const m = /^(https?:\/\/[^/:]+):\*$/.exec(entry);
+    if (m && (origin === m[1] || (origin.startsWith(`${m[1]}:`) && /^\d+$/.test(origin.slice(m[1].length + 1))))) return origin;
+  }
+  return null;
 }
 
 /**
  * The proxy itself, for the Worker and tests.
  * @param {Request} request
  * @param {{ fetch?: typeof fetch, continent?: string, skipped?: Map<string, number>, now?: () => number,
- *   timeoutMs?: number }} [opts] fetch: the mirrors' (tests); continent: the visitor's;
- *   skipped: `<mirror> <path>` → until when it is passed over (kept between requests)
+ *   timeoutMs?: number, origins?: string }} [opts] fetch: the mirrors' (tests); continent: the
+ *   visitor's; skipped: `<mirror> <path>` → until when it is passed over (kept between requests);
+ *   origins: the pages allowed (allowOrigin; any by default, the Worker's from ALLOWED_ORIGINS)
  * @returns {Promise<Response>}
  */
 export async function handle(request, {
   fetch: fetchImpl = (...a) => globalThis.fetch(...a), continent = request.cf?.continent, skipped = SKIPPED,
-  now = Date.now, timeoutMs = MIRROR_TIMEOUT_MS,
+  now = Date.now, timeoutMs = MIRROR_TIMEOUT_MS, origins = '*',
 } = {}) {
   const url = new URL(request.url);
+  const origin = allowOrigin(request.headers.get('origin'), origins);
+  if (!origin) return answer(403, 'this proxy serves the pages of its own sites only');
+  const CORS = {
+    'access-control-allow-origin': origin,
+    'access-control-expose-headers': EXPOSE,
+    ...(origin === '*' ? {} : { vary: 'Origin' }),
+  };
   if (request.method === 'OPTIONS') {
     return new Response(null, {
       status: 204,
       headers: { ...CORS, 'access-control-allow-methods': 'GET, HEAD, OPTIONS', 'access-control-allow-headers': 'Range', 'access-control-max-age': '86400' },
     });
   }
-  if (request.method !== 'GET' && request.method !== 'HEAD') return answer(405, 'only GET and HEAD', { allow: 'GET, HEAD, OPTIONS' });
-  if (!FILE_PATH.test(url.pathname)) return answer(404, 'only Kiwix\'s ZIM files: /zim/<folder>/<file>.zim');
+  if (request.method !== 'GET' && request.method !== 'HEAD') return answer(405, 'only GET and HEAD', { ...CORS, allow: 'GET, HEAD, OPTIONS' });
+  if (!FILE_PATH.test(url.pathname)) return answer(404, 'only Kiwix\'s ZIM files: /zim/<folder>/<file>.zim', CORS);
   const range = request.headers.get('range');
   const m = RANGE.exec(range ?? '');
   if (request.method === 'GET') {
-    if (!m) return answer(416, 'a Range header is needed: bytes=<start>-<end> (parts of the file, not all of it)');
+    if (!m) return answer(416, 'a Range header is needed: bytes=<start>-<end> (parts of the file, not all of it)', CORS);
     if (Number(m[2]) < Number(m[1]) || Number(m[2]) - Number(m[1]) + 1 > MAX_RANGE_BYTES) {
-      return answer(416, `a range of 1 to ${MAX_RANGE_BYTES} bytes`);
+      return answer(416, `a range of 1 to ${MAX_RANGE_BYTES} bytes`, CORS);
     }
   }
   const path = url.pathname.slice('/zim/'.length);
@@ -140,11 +170,11 @@ export async function handle(request, {
     }
     return new Response(request.method === 'HEAD' ? null : res.body, { status: res.status, headers });
   }
-  return answer(502, `no mirror answered (${last})`);
+  return answer(502, `no mirror answered (${last})`, CORS);
 }
 
 export default {
-  fetch(request) {
-    return handle(request);
+  fetch(request, env) {
+    return handle(request, { origins: env?.ALLOWED_ORIGINS ?? '*' });
   },
 };

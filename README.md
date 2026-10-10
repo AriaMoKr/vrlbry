@@ -207,12 +207,23 @@ the Pages workflow ships them (see `.github/workflows/pages-cloud.yml`).
 Kiwix's own mirror is in France, so from far away every read costs a long round trip. An
 optional edge proxy, `tools/zim-proxy/` (a Cloudflare Worker), reads the mirror nearest each
 visitor instead and adds the CORS headers the other mirrors lack: from California the top 1M
-Wikipedia opened in 0.8 s instead of 2.4-4.3 s. To use it, deploy it with your Cloudflare account
-(`npx wrangler deploy` in that folder) and set the repository variable `ZIM_PROXY` to its address
-(`https://vrlbry-zim-proxy.<account>.workers.dev/`); the next Pages build names it in the page.
-To try it first, `node tools/zim-proxy/serve.mjs` runs it here and
-`http://localhost:8080/?zimproxy=http://localhost:8090/` reads through it. When it fails, the
-page reads Kiwix's mirror directly.
+Wikipedia opened in 0.8 s instead of 2.4-4.3 s. It relays only parts of Kiwix's files, from
+those mirrors, and only for the pages of the sites listed in `tools/zim-proxy/wrangler.toml`
+(`ALLOWED_ORIGINS`). Cloudflare's free plan (no card needed) allows 100,000 requests a day;
+past that the Worker answers an error and the page reads Kiwix's mirror directly, as it does
+whenever the proxy fails. To deploy it with your Cloudflare account:
+
+```bash
+cd tools/zim-proxy
+npx wrangler login
+npx wrangler deploy
+```
+
+The deploy prints its address, `https://vrlbry-zim-proxy.<your subdomain>.workers.dev`. Set the
+repository variable `ZIM_PROXY` to it (Settings → Secrets and variables → Actions → Variables),
+and the next Pages build names it in the page. To try it before that, add
+`?zimproxy=<its address>` to the site's address. `node tools/zim-proxy/serve.mjs` runs it on
+this machine instead, for `http://localhost:8080/?zimproxy=http://localhost:8090/`.
 
 #### Why only Kiwix's own mirror: CORS
 
