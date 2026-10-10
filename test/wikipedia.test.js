@@ -11,6 +11,7 @@ import { after, before, describe, it } from 'node:test';
 import { ArchiveLibrary, Library } from '../server/library.js';
 import { createApp } from '../server/http.js';
 import { fileStore } from '../server/cache-store.js';
+import { IndexQueue } from '../public/js/core/util/index-queue.js';
 import { ZimArchive } from '../public/js/core/zim/reader.js';
 import { isWikipedia, buildIndex, volumeTitle, removeCheckpoint, searchIndex } from '../public/js/core/wikipedia.js';
 import { titleKey } from '../public/js/util/books.js';
@@ -393,6 +394,28 @@ describe('wikipedia', () => {
       assert.ok(logs.some((m) => /a_big\.zim: waiting to index Wikipedia articles/.test(m)));
     } finally {
       await library.close();
+    }
+  });
+
+  it('builds the index of two copies of a ZIM once: the second finds it when its turn comes', async () => {
+    const file = path.join(tmp, 'copy.zim');
+    writeWikipediaZim(file);
+    const logs = [];
+    const store = fileStore(path.join(tmp, 'copies-cache'));
+    const indexQueue = new IndexQueue({ smallBytes: 0 });
+    indexQueue.hold(); // as a folder scan or a batch of files: both open before either builds
+    const open = (id) => ArchiveLibrary.open(file, { id, store, indexQueue, volumeSize: 3, log: (m) => logs.push(`${id}: ${m}`) });
+    const [a, b] = [await open('a'), await open('b')];
+    indexQueue.release();
+    try {
+      const [booksA, booksB] = [await waitForBooks(a), await waitForBooks(b)];
+      assert.deepEqual(booksB.map((x) => x.title), booksA.map((x) => x.title));
+      assert.equal(logs.filter((m) => /indexing Wikipedia articles in the background/.test(m)).length, 1, logs.join('\n'));
+      assert.ok(logs.some((m) => /index found \(made meanwhile for a copy of this file\)/.test(m)), logs.join('\n'));
+      assert.deepEqual(fs.readdirSync(path.join(tmp, 'copies-cache')).filter((n) => /\.part/.test(n)), [], 'no checkpoint left');
+    } finally {
+      await a.close();
+      await b.close();
     }
   });
 

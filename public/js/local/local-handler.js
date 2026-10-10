@@ -10,7 +10,7 @@
 import { ArchiveLibrary, createContentCache, libraryIdFor } from '../core/library.js';
 import { IndexQueue } from '../core/util/index-queue.js';
 import { ZimArchive } from '../core/zim/reader.js';
-import { HttpSourceError } from '../core/zim/http-source.js';
+import { HttpSource, HttpSourceError } from '../core/zim/http-source.js';
 import { fileNameOf } from './zim-url.js';
 
 /** Converted books kept for all local libraries: a headset has far less memory than a PC. */
@@ -49,16 +49,18 @@ export class LocalError extends Error {}
 
 /**
  * @param {{ log?: (msg: string) => void, warn?: (msg: string) => void, store?: object|null, onChange?: () => void,
- *   urlIndexBuildBytes?: number }} [opts]
+ *   urlIndexBuildBytes?: number, blockCache?: object|null }} [opts]
  *   store: where derived indexes are kept (idb-store.js; the server's shape, server/cache-store.js),
  *   or null: a Wikipedia's index is built every time and kept in memory only; onChange: called
  *   when a library's catalogue changes on its own (its index finished): the generation is new;
  *   onIndexing(id, info, fileName): a library's index build moved on ({ stage, progress },
  *   'failed' with `error`, or null once ready); fileName names it before the open answers;
- *   urlIndexBuildBytes: URL_INDEX_BUILD_BYTES (for tests)
+ *   urlIndexBuildBytes: URL_INDEX_BUILD_BYTES (for tests); blockCache: block-cache.js's, which keeps
+ *   what is read from the web (optional: without it every read goes to the network)
  */
 export function createLocalLibraries({
   log = () => {}, warn = log, store = null, onChange = null, onIndexing = null, urlIndexBuildBytes = URL_INDEX_BUILD_BYTES,
+  blockCache = null,
 } = {}) {
   const libs = new Map(); // id → ArchiveLibrary
   const urls = new Map(); // id → the web address of a library read from one
@@ -102,8 +104,14 @@ export function createLocalLibraries({
       const t0 = performance.now();
       const remote = typeof url === 'string';
       const name = (remote ? fileNameOf(url) : file.name) || 'archive.zim';
+      // From the web, through the block cache when there is one (it keeps what is read).
+      const source = remote
+        ? await HttpSource.open(url).then((http) => blockCache?.wrap(http) ?? http, (err) => {
+          throw new LocalError(err instanceof HttpSourceError ? err.message : `${name}: ${err.message}`);
+        })
+        : file;
       // Opened once: the library takes the archive over.
-      const archive = await ZimArchive.open(remote ? url : file, remote ? URL_ARCHIVE : FILE_ARCHIVE).catch((err) => {
+      const archive = await ZimArchive.open(source, remote ? URL_ARCHIVE : FILE_ARCHIVE).catch((err) => {
         // A server's refusal says what it is (no ranges, not found, unreachable or CORS).
         const refusal = err instanceof HttpSourceError ? err : err.cause instanceof HttpSourceError ? err.cause : null;
         if (refusal) throw new LocalError(refusal.message);

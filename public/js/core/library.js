@@ -644,6 +644,7 @@ export class ArchiveLibrary {
     this._startIndexing({
       what: 'Wikisource works', unit: 'works', build: (opts) => buildIndex(this.archive, opts),
       save: this._store && ((built) => saveIndex(this._store, name, built)),
+      existing: this._store && (() => loadIndex(this._store, name, this.archive)),
       weights: { scan: [0, 0.25], works: [0.25, 0.3], authors: [0.55, 0.45], done: [1, 0] },
     });
     this._shelves = [];
@@ -657,7 +658,7 @@ export class ArchiveLibrary {
    * and info().indexing reports progress, weighted per stage ('queued' while a big archive waits
    * its turn in the folder's IndexQueue).
    */
-  _startIndexing({ what, unit, build, save = null, weights, saved = null }) {
+  _startIndexing({ what, unit, build, save = null, weights, saved = null, existing = null }) {
     if (this._indexTask) return;
     const queue = this._indexQueue;
     const bytes = this.archive.fileSize;
@@ -676,33 +677,42 @@ export class ArchiveLibrary {
     this._setIndexing({ stage: 'queued', progress: 0 });
     if (queue?.queues(bytes)) this._log(`${this.file}: waiting to index ${what} (big archives one at a time, smallest first)…`);
     let t0;
-    const task = () => {
+    // The queue's job is the whole build, its index kept and its checkpoint removed included: the
+    // next one starts after (a copy of this ZIM, with the same UUID, names both the same).
+    const task = async () => {
+      // Built meanwhile under the same name (another copy of this ZIM, opened beside it, or the
+      // same file twice): found, not built again.
+      const found = existing && await existing().catch(() => null);
+      if (found) return { idx: found, kept: true, found: true };
       this._setIndexing({ stage: 'scan', progress: 0 });
       this._log(`${this.file}: indexing ${what} in the background (first open only)…`);
       t0 = performance.now();
-      return build({
+      const idx = await build({
         onProgress: (stage, f) => {
           const [base, span] = weights[stage] ?? [0, 0];
           this._setIndexing({ stage, progress: Math.min(1, base + span * f) });
         },
         log: (m) => this._log(`${this.file}:${m}`),
       });
-    };
-    this._indexTask = (queue ? queue.run(bytes, task, { cancelled: () => this._closed }) : task()).then(async (idx) => {
-      if (this._closed) return;
-      const ok = save && await save(idx).then(() => true, (err) => {
+      if (this._closed) return { idx, kept: false };
+      const kept = !!save && await save(idx).then(() => true, (err) => {
         this._warn(`${this.file}: cannot cache the ${what} index (${err.message})`);
         return false;
       });
-      if (ok) await saved?.().catch(() => {});
+      if (kept) await saved?.().catch(() => {});
+      return { idx, kept };
+    };
+    this._indexTask = (queue ? queue.run(bytes, task, { cancelled: () => this._closed }) : task()).then(async ({ idx, kept, found }) => {
+      if (this._closed) return;
       this._setIndexing(null);
       this._books = null;
       this._info = null;
       this._byId.clear();
       this._built = idx; // the catalogue is rebuilt from it, not re-read (there may be no store)
       const books = await this.books();
-      if (ok) this._built = null; // in the store: no need to hold it twice
-      this._log(`${this.file}: ${what} index ready: ${books.length} ${unit} (${Math.round((performance.now() - t0) / 1000)} s)`);
+      if (kept) this._built = null; // in the store: no need to hold it twice
+      this._log(found ? `${this.file}: ${what} index found (made meanwhile for a copy of this file): ${books.length} ${unit}`
+        : `${this.file}: ${what} index ready: ${books.length} ${unit} (${Math.round((performance.now() - t0) / 1000)} s)`);
       this._onChange?.();
     }).catch((err) => {
       if (this._closed) return;
@@ -744,6 +754,7 @@ export class ArchiveLibrary {
       }),
       save: store && ((built) => wikipedia.saveIndex(store, name, built)),
       saved: () => wikipedia.removeCheckpoint(store, checkpoint),
+      existing: store && (() => wikipedia.loadIndex(store, name, this.archive)),
       // Full English Wikipedia (2026-10-06): scan 11½ min, sizes 16 min, sort 17 s.
       weights: { scan: [0, 0.4], sizes: [0.4, 0.58], sort: [0.98, 0.02], done: [1, 0] },
     });

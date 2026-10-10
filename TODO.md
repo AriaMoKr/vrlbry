@@ -330,12 +330,21 @@
            mini's index over the network took 27 s instead of 47. Needs nothing else: no cache,
            index or proxy. Not yet: opening a web address in VR (the kiosk has no address
            entry; step 5's list is for that).
-        4. A persistent block cache (optional): fetched blocks kept in IndexedDB by the ZIM's
-           UUID and block, within a budget, oldest out first, so a library or book read once
-           costs no network again. Read-through: a miss, quota error or no IndexedDB just reads
-           from the source. Step 2 found that the browser's cache already serves reads made one
-           at a time (opens, binary searches) on a second visit, but not reads made together
-           (a search's and a volume's), which it would only queue: this would cover those.
+        4. *Done (2026-10-10):* a persistent block cache (optional, `local/block-cache.js`, SPEC
+           §2.6 "Kept from the web"): every read of a web source kept in IndexedDB, under the
+           file's edition (address, size, Last-Modified: the UUID is inside the file, known
+           only after the first read) and the read's position and length, which repeat exactly
+           on a second visit; 256 MB, oldest first; read-through, standing aside after 5
+           failures in a row. On a Quest, second visit: the top 1M's search 0.1 s (8.6 s with
+           the browser's cache alone), its volume's titles 0.0 s (2.1), Chemistry's search
+           0.0 s (3.2); only the probe goes to the network. While testing, the index-queue test
+           failed twice in some 20 full runs: Wikipedia fixtures all had one UUID, so two
+           shared an index and checkpoint name, and the queue started the next build before the
+           previous one had saved its index and removed its checkpoint. Now the fixtures' UUIDs
+           come from their file names, a queued job includes the saving, and a build whose
+           index appeared meanwhile (a copy of the ZIM, the same file opened twice) takes it.
+           Not done: a way to see or clear the cache in the page (clearing the site's data
+           does it).
         5. A Kiwix library to choose from (optional): the ZIMs the app reads well (Gutenberg,
            Wikipedia, Wikisource) from OPDS, filtered or curated into JSON in the repo, in the
            overlay and on the kiosk in VR (no file picker there). A URL can still be typed,

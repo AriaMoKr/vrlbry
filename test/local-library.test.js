@@ -18,6 +18,7 @@ import { Parser } from 'htmlparser2';
 import { nodePlatform } from '../server/platform-node.js';
 import { ArchiveLibrary } from '../public/js/core/library.js';
 import { defaults, provide } from '../public/js/core/platform.js';
+import { blockCache } from '../public/js/local/block-cache.js';
 import { browserPlatform } from '../public/js/local/browser-platform.js';
 import { idbStore } from '../public/js/local/idb-store.js';
 import { createLocalLibraries } from '../public/js/local/local-handler.js';
@@ -335,6 +336,32 @@ describe('local library (ZIM files read in the browser)', () => {
     const asked = web.requests.slice(before);
     assert.ok(asked.length >= 10, `read over HTTP, a probe and reads for each: ${asked.length} requests`);
     assert.ok(asked.every((r) => r.method === 'GET' && /^bytes=\d+-\d+$/.test(r.range)), 'only range requests');
+  });
+
+  it('keeps what it read from the web (block cache): read again, a ZIM costs only its probe', async () => {
+    const file = writeGutenbergZim(path.join(tmp, 'web-kept.zim')).filePath;
+    const { url } = web.serve(file);
+    const indexedDB = new IDBFactory();
+    /** Opens the ZIM from its address in a new local library (a page) and reads every book. */
+    const readAll = async () => {
+      const blocks = blockCache({ indexedDB });
+      const local = createLocalLibraries({ blockCache: blocks });
+      provide(browser);
+      const before = web.requests.length;
+      const { id } = (await local.call('open', { url })).value;
+      const answers = await localAnswers(local, id);
+      await local.call('close', { lib: id });
+      await new Promise((r) => setTimeout(r, 50)); // writes are kept in the background
+      blocks.close();
+      return { answers, requests: web.requests.slice(before), stats: { ...blocks.stats } };
+    };
+    const first = await readAll();
+    const second = await readAll();
+    assert.deepEqual(second.answers, first.answers, 'the same answers from the cache');
+    assert.ok(first.requests.length > 1 && first.stats.misses > 0);
+    assert.deepEqual(second.requests.map((r) => r.range), ['bytes=0-79'], 'only the probe (the edition) went to the server');
+    assert.equal(second.stats.misses, 0);
+    assert.ok(second.stats.hits > 0);
   });
 
   it('says why a web address cannot be read: not found, no ranges, not a ZIM', async () => {

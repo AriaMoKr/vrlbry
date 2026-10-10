@@ -12,6 +12,7 @@ import { decompress } from '../../vendor/fzstd/esm/index.js';
 import { inflateSync, unzlibSync } from '../../vendor/fflate/esm/browser.js';
 import { Parser } from '../../vendor/htmlparser2/dist/Parser.js';
 import { provide } from '../core/platform.js';
+import { blockCache } from './block-cache.js';
 import { browserPlatform } from './browser-platform.js';
 import { idbStore } from './idb-store.js';
 import { createLocalLibraries } from './local-handler.js';
@@ -30,6 +31,14 @@ try {
   warn(`no IndexedDB (${err.message}): indexes are kept for this page only`);
   kept = memoryStore();
 }
+// What is read from the web is kept too (block-cache.js), so a book or search read once costs no
+// network again; without IndexedDB every read goes to the network.
+let blocks = null;
+try {
+  blocks = blockCache();
+} catch (err) {
+  warn(`no cache for what is read from the web (${err.message})`);
+}
 const INDEXES_URL = new URL('../../indexes/', import.meta.url);
 const store = withPrebuilt(kept, async (name) => {
   const res = await fetch(new URL(name, INDEXES_URL));
@@ -43,6 +52,7 @@ const libraries = createLocalLibraries({
   log: (msg) => self.postMessage({ log: msg }),
   warn,
   store,
+  blockCache: blocks,
   onChange: () => self.postMessage({ changed: true }), // an index finished: the page refreshes its catalogue
   onIndexing: (id, info, file) => {
     const last = indexingSent.get(id);

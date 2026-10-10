@@ -249,6 +249,23 @@ whole. It works on GitHub Pages (no server) and beside a server's own libraries.
   down): "Not reopened: …", and the card's "Last time" line offers it with the kept files
   (Reopen, Forget). Nothing else is required: no proxy, no block store, no prebuilt index for a
   Gutenberg ZIM or a small Wikipedia.
+- **Kept from the web** (milestone 3 step 4, optional; `local/block-cache.js`): what is read
+  from a web address is kept in IndexedDB (`vrlbry-blocks`: the reads, their sizes and when they
+  were written, and the total), so a library, book or search read once costs no network again,
+  after a reload too. The worker wraps each web source (`blockCache().wrap(httpSource)`), and
+  every read goes through it: a hit is the kept bytes; a miss reads from the source and is kept
+  in the background (a copy: the caller may transfer its bytes). A read is kept under the file's
+  edition (address, size and Last-Modified from the probe: a new edition at the same address
+  never meets the old one's bytes; without Last-Modified the source is not wrapped) and its
+  position and length: ZimArchive's reads repeat exactly on a second visit (aligned blocks,
+  whole clusters, blob ranges). At most 256 MB (`BLOCK_CACHE_BYTES`), the oldest written going
+  first (down to 90 %); reads over 8 MB are not kept. Read-through: no IndexedDB (no cache), a
+  failed request (a miss), and after 5 failures in a row the cache stands aside; a database of
+  that name without its stores gets them one version up. On a Quest a second visit to the top
+  1M took 0.1 s for a search instead of 8.6, 0.0 s for a volume's titles instead of 2.1: the
+  browser's HTTP cache serves the reads made one at a time (opens, binary searches) but only
+  queues the ones made together (§3.1), which this serves. The probe still goes to the network
+  (it says which edition is there). Clearing the site's data clears it.
 - **Closing:** a local library's × in the card's list closes it (stopping its index build) and
   forgets it: its file handle, or its web address (so it does not reopen).
 - **Ids:** `~` + `libraryIdFor(file name)` (then `-2`, `-3` … for the same name twice):
@@ -784,7 +801,11 @@ first, and smaller ones at once. Builds share the main thread and libuv's four t
 together they only slow each other down: 8 Wikipedias re-indexed at once took 52 min, Simple
 English 20 min instead of about 1. A folder scan holds the queue until it has opened every new
 archive, so the order does not depend on the file names. `ArchiveLibrary.open` without a queue
-builds at once.
+builds at once. A queued job is the whole build: its index kept and its checkpoint removed
+included, so the next starts after them. When its turn comes, a build first looks in the store
+again: an index made meanwhile under the same name (a copy of the ZIM, which has the same UUID,
+or the same file opened twice) is taken, not built again ("index found (made meanwhile for a
+copy of this file)"). Copies once shared a checkpoint: one's removal ran while the other built.
 
 **`POST /api/rescan`** → rescans the ZIM folder now: `{ "generation", "added": [ids],
 "removed": [ids], "reopened": [ids], "failed": [file names], "libraries": [ … ] }`. `GET` → 405.

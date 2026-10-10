@@ -3,7 +3,16 @@
 // ZIPs, EPUBs). Used by library.test.js and by the browser parity test.
 
 import zlib from 'node:zlib';
+import crypto from 'node:crypto';
+import path from 'node:path';
 import { writeZim } from './zimwriter.js';
+
+/**
+ * A fixture's UUID from its file name: each ZIM has its own, as real ones do (Wikipedia and
+ * Wikisource indexes are named by it; two fixtures sharing one shared their index and checkpoint
+ * in a test's store).
+ */
+const uuidOf = (file) => crypto.createHash('md5').update(path.basename(file)).digest();
 
 /** A PNG header that imageSize() can read (not a decodable image; the server never decodes). */
 export function png(w, h) {
@@ -242,7 +251,7 @@ export function writeWikipediaZim(file, padding = 0) {
     { ns: 'M', url: 'Illustration_48x48@1', mime: 'image/png', content: WIKI_PNG },
   ];
   if (padding) entries.push({ ns: 'C', url: '_assets_/pad.bin', mime: 'application/octet-stream', content: Buffer.alloc(padding, 7), compression: 'none' });
-  return writeZim(file, { entries, scheme: 'new', mainPage: 'C/Main_Page' });
+  return writeZim(file, { entries, scheme: 'new', mainPage: 'C/Main_Page', uuid: uuidOf(file) });
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -292,5 +301,5 @@ export function writeWikisourceZim(file) {
     { ns: 'M', url: 'Title', mime: 'text/plain', content: 'Wikisource' },
     { ns: 'M', url: 'Language', mime: 'text/plain', content: 'eng' },
   ];
-  return writeZim(file, { entries, scheme: 'new', mainPage: 'C/Main_Page' });
+  return writeZim(file, { entries, scheme: 'new', mainPage: 'C/Main_Page', uuid: uuidOf(file) });
 }
