@@ -484,7 +484,21 @@
            all books, its 3,000 most read (by popularity Frankenstein, Moby Dick, Romeo and
            Juliet first; by title the same books from "1000 Mythological Characters"), frames
            at 90 Hz; switching to title order took 2.1 s, choosing American literature from the
-           list 1.9 s (its 3,000 most read of 11,188). Left for later: the items under steps 6 and 7 (a more
+           list 1.9 s (its 3,000 most read of 11,188).
+           *Pages (2026-10-10):* a room over 3,000 is shelved a page at a time (Gutenberg's by
+           popularity: 1-3,000, 3,001-6,000…), with Previous / Next on the kiosk; the rest was
+           reachable only through filters and search. *Bigger rooms, measured* (the page
+           address's `?roomcap=<n>`; the dev server on the Quest over adb reverse, English
+           Gutenberg through the proxy, the 2D view; switching from Medicine, 598 books, to all
+           books): 3,000 books on 28 bookcases rebuilt in 0.76 s (the worst frame 111 ms, 2.6 %
+           of frames dropped in the 4 s after), 6,000 on 55 in 0.94 s (178 ms, 4.0 %), 10,000
+           on 92 in 1.12 s (256 ms, 5.4 %), 20,000 on 183 in 1.66 s (411 ms, 7.6 %; of it the
+           build 417 ms and the low atlases 703 ms); walking the room after (room-walk) dropped
+           1.3, 1.4, 1.5 and 0.6 %, with 34-40 draw calls (rows behind not drawn) and the
+           browser's memory ~100 MB more at 20,000. *To do:* the same walk in VR (both eyes, 72
+           Hz: needs the headset worn), then choose the cap. *Possible later:* the whole
+           library on the shelves, only the bookcases near the viewer built as they walk (a
+           virtual hall), instead of a cap and pages. Left for later: the items under steps 6 and 7 (a more
            compact index, other languages, keeping popular reads at the edge, CORS on the
            mirrors, then following Kiwix's redirect).
     - *Keep files across reloads (done 2026-10-08):* where the browser gives file handles (the
