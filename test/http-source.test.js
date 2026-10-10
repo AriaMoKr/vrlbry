@@ -91,7 +91,7 @@ describe('ZIMs over HTTP (HttpSource)', () => {
     }
   });
 
-  it('uses the browser cache for a read on its own, not for reads made together (it would queue them)', async () => {
+  it('uses the browser cache for a read on its own, not for reads made together (it would queue them) nor the probe', async () => {
     const file = writeGutenbergZim(path.join(tmp, 'g7.zim')).filePath;
     const { url } = serve(file);
     const modes = [];
@@ -102,7 +102,7 @@ describe('ZIMs over HTTP (HttpSource)', () => {
     const src = await HttpSource.open(url, { fetch: recording });
     await src.read(0, 10);
     await src.read(100, 10);
-    assert.deepEqual(modes, ['default', 'default', 'default'], 'the probe and two reads one after another');
+    assert.deepEqual(modes, ['no-store', 'default', 'default'], 'the probe (it decides the edition), then two reads one after another');
     modes.length = 0;
     await Promise.all([0, 1, 2, 3].map((k) => src.read(k * 1000, 10)));
     assert.deepEqual(modes, ['no-store', 'no-store', 'no-store', 'no-store']);
@@ -110,6 +110,46 @@ describe('ZIMs over HTTP (HttpSource)', () => {
     await src.read(5000, 10);
     assert.deepEqual(modes, ['default'], 'alone again');
     await src.close();
+  });
+
+  it('asks again past the browser cache when it answers a changed file\'s whole, or a short part', async () => {
+    // Chrome completes a range it holds part of with If-Range and the old version's tag; once the
+    // file changed (a deploy re-uploads the site's ZIMs) the server sends the whole file (200), or
+    // Chrome answers a 206 with fewer bytes than it says. Past the cache (no-store) all is well.
+    const file = writeGutenbergZim(path.join(tmp, 'g8.zim')).filePath;
+    const { url } = serve(file);
+    const data = fs.readFileSync(file);
+    const modes = [];
+    let cached = 'whole'; // what the "browser cache" does to a default-mode request
+    const browser = async (u, init) => {
+      modes.push(init?.cache ?? 'default');
+      if (init?.cache === 'no-store' || init?.method === 'HEAD') return fetch(u, init);
+      const [a, b] = /bytes=(\d+)-(\d+)/.exec(init.headers.Range).slice(1).map(Number);
+      if (cached === 'whole') return new Response(data, { status: 200 });
+      return new Response(data.subarray(a, a + Math.floor((b - a + 1) / 2)), { // half of it
+        status: 206, headers: { 'content-range': `bytes ${a}-${b}/${data.length}` },
+      });
+    };
+    const src = await HttpSource.open(url, { fetch: browser });
+    assert.deepEqual(modes, ['no-store'], 'the probe, past the cache: it decides the edition');
+    modes.length = 0;
+    assert.deepEqual(await src.read(100, 50), new Uint8Array(data.subarray(100, 150)));
+    cached = 'short';
+    assert.deepEqual(await src.read(300, 40), new Uint8Array(data.subarray(300, 340)), 'not the short answer');
+    assert.deepEqual(modes, ['default', 'no-store', 'default', 'no-store']);
+    assert.equal(src.stats.uncached, 2);
+    // An answer of the edition before, from the cache (fresh there for minutes): asked past it.
+    cached = 'old';
+    const old = (u, init) => (init?.cache === 'no-store' ? browser(u, init)
+      : fetch(u, init).then((r) => new Response(r.body, { status: r.status, headers: { 'content-range': r.headers.get('content-range'), 'last-modified': 'Sat, 01 Jan 2000 00:00:00 GMT' } })));
+    src._fetch = old;
+    modes.length = 0;
+    assert.deepEqual(await src.read(500, 20), new Uint8Array(data.subarray(500, 520)));
+    assert.equal(src.stats.uncached, 3);
+    await src.close();
+    // A server that really sends whole files still says so.
+    const whole = await HttpSource.open(url, { fetch: async () => new Response(data, { status: 200 }) }).catch((err) => err);
+    assert.match(whole.message, /does not serve parts of the file/);
   });
 
   it('finds the size with a HEAD when Content-Range cannot be read', async () => {

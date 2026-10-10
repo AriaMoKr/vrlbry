@@ -479,8 +479,16 @@ requests and rejects the queued reads. A browser keeps range answers in its HTTP
 mirror sends Last-Modified and no Cache-Control), but once it holds a URL it serializes range
 requests on it: 8 at once took 1.3 s instead of 0.17 s. So a request made while others of the
 source run asks for `cache: 'no-store'`, and one on its own uses the cache: a second visit
-opens from it (the top 1M in 1.2 s on a Quest) while searches keep their reads at once.
-`stats` counts reads, bytes and retries (`viaReads` of them through a proxy). With `via` (the
+opens from it (the top 1M in 1.2 s on a Quest) while searches keep their reads at once. The
+cache may answer for an edition before, though (GitHub Pages keeps answers fresh for 10 minutes
+and re-uploads the site's identical ZIMs with each deploy, with new dates and tags): Chrome
+completes a range it holds part of with `If-Range` and the old tag, so the server sends the
+whole new file (200), or it answers a 206 shorter than it says. So the probe, which decides the
+edition, always asks past the cache, and a cached answer that is whole, short, or of another
+size or date is asked again past it (`uncached` in `stats`): only an answer from the server
+itself is "no range requests" or "the file changed" (the site's files failed to open with the
+first, just after a deploy). `stats` counts reads, bytes and retries (`viaReads` of them through
+a proxy). With `via` (the
 same file through an edge proxy, §2.6) the probe and the reads go there first, the probe once
 and a read twice; on a failure that is not a changed file (unreachable, an error status, no
 ranges, no size, a wrong range) the source drops it for good (`via` null, `viaError` the

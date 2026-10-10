@@ -10,6 +10,14 @@
 // requests on it: 8 reads at once took 1.3 s instead of 0.17 s (Chrome and Quest Browser, the
 // Kiwix mirror). So a request made while others run bypasses the cache (`no-store`); one on its
 // own (an open, a binary search's step) uses it, and the next visit is served from it.
+// Once the file changed on the server, though, the cache answers for the old version (GitHub
+// Pages keeps answers fresh for 10 minutes and re-uploads the site's identical ZIM files with
+// each deploy, new dates and tags and all: the site's files failed to open just after one).
+// Chrome completes a range it holds part of with `If-Range` and the old version's tag, and the
+// server rightly sends the whole new file (200); or Chrome answers a 206 shorter than it says.
+// So the probe, which decides the edition, always goes past the cache, and a cached answer that
+// is whole, short or of another edition is asked again past it before it counts: only an answer
+// from the server itself says the file changed.
 //
 // Through a proxy (`via`, optional: tools/zim-proxy/, which reads the mirror nearest the visitor):
 // the same reads go there first, and on the first failure (unreachable, an error, no ranges, a
@@ -77,7 +85,7 @@ export class HttpSource {
     this.via = via ? String(via) : null;
     this.viaError = null;
     /** Reads made (`viaReads` of them through the proxy) and bytes received (for measurements). */
-    this.stats = { reads: 0, bytes: 0, retries: 0, viaReads: 0 };
+    this.stats = { reads: 0, bytes: 0, retries: 0, viaReads: 0, uncached: 0 }; // uncached: asked again past the browser cache
     this._onFallback = onFallback;
     // Called as a plain function: a browser's fetch throws "Illegal invocation" when called as
     // another object's method (this._fetch(…)).
@@ -182,7 +190,7 @@ export class HttpSource {
     }
   }
 
-  async _once(target, position, length, probe) {
+  async _once(target, position, length, probe, fresh = probe) {
     // Closed meanwhile (close() may come between a read's call and its request): no request.
     if (this._closed) throw new HttpSourceError(`${this.name}: closed`);
     const timeout = new AbortController();
@@ -196,7 +204,7 @@ export class HttpSource {
           headers: { Range: `bytes=${position}-${position + length - 1}` },
           signal: timeout.signal,
           // Others running (this one counts too): past the browser's cache, which would queue it.
-          ...(this._running > 1 ? { cache: 'no-store' } : {}),
+          ...(fresh || this._running > 1 ? { cache: 'no-store' } : {}),
         });
       } catch (err) {
         if (this._closed) throw new HttpSourceError(`${this.name}: closed`, { cause: err });
@@ -207,6 +215,8 @@ export class HttpSource {
       }
       if (res.status === 200) {
         await res.body?.cancel().catch(() => {});
+        // From the browser's cache, a changed file's whole (see the top): ask past it.
+        if (!fresh) return this._again(target, position, length, probe);
         throw new HttpSourceError(probe ? `${this.name}: the server does not serve parts of the file (no range requests)`
           : `${this.name}: the server sent the whole file instead of a part`, { status: 200 });
       }
@@ -220,10 +230,17 @@ export class HttpSource {
       const modified = res.headers.get('last-modified');
       if (probe) this.lastModified = modified;
       else {
-        if (range?.total != null && range.total !== this.size) {
+        const sized = range?.total != null && range.total !== this.size;
+        const dated = modified && this.lastModified && modified !== this.lastModified;
+        // The browser's cache may still hold the edition before (see the top): ask past it.
+        if ((sized || dated) && !fresh) {
+          await res.body?.cancel().catch(() => {});
+          return this._again(target, position, length, probe);
+        }
+        if (sized) {
           throw new HttpSourceError(`${this.name}: the file changed on the server (its size is now ${range.total} bytes): open it again`, { edition: true });
         }
-        if (modified && this.lastModified && modified !== this.lastModified) {
+        if (dated) {
           throw new HttpSourceError(`${this.name}: the file changed on the server (modified ${modified}): open it again`, { edition: true });
         }
       }
@@ -232,6 +249,13 @@ export class HttpSource {
       }
       const bytes = new Uint8Array(await res.arrayBuffer());
       if (this._closed) throw new HttpSourceError(`${this.name}: closed`);
+      // As many bytes as asked for (or as the file has from there), else the browser's cache
+      // pieced together what it could (see the top): ask past it, and again later if it persists.
+      const want = range ? range.end - range.start + 1 : this.size ? Math.min(length, this.size - position) : bytes.length;
+      if (bytes.length !== want) {
+        if (!fresh) return this._again(target, position, length, probe);
+        throw Object.assign(new HttpSourceError(`${this.name}: ${bytes.length} bytes came instead of ${want}`), { retry: true });
+      }
       this.stats.reads++;
       this.stats.bytes += bytes.length;
       // The probe's total: Content-Range when the page may read it, else a HEAD's length.
@@ -242,6 +266,12 @@ export class HttpSource {
       clearTimeout(timer);
       this._abort.signal.removeEventListener('abort', onClose);
     }
+  }
+
+  /** _once again, past the browser's cache (this attempt's timer is cleared as it returns). */
+  _again(target, position, length, probe) {
+    this.stats.uncached++;
+    return this._once(target, position, length, probe, true);
   }
 
   /** The file's size from a HEAD request (Content-Length is readable across origins). */
