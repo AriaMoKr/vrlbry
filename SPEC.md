@@ -315,7 +315,8 @@ whole. It works on GitHub Pages (no server) and beside a server's own libraries.
   set): copied to the site as `zims/<name>`, with their Wikipedia and Wikisource indexes under
   `indexes/`, and named in the static `api/libraries` answer (`"zims": [{ "path", "name",
   "size" }]`, paths relative to the site). The page (`main.js`, from `api.getCatalog().zims`)
-  opens them with every visit, before the remembered addresses, as web addresses on the site
+  opens them with every visit, before the remembered addresses, all at once in one batch
+  (`local.openFiles`' `concurrency`; other files open one after another), as web addresses on the site
   itself (range requests: GitHub Pages answers them), with `site: true` (`local.openFiles`'s
   `site`, the worker's `open({ site })`, the catalogue entry's `site`): they are in the Demo set
   (`isDemoLibrary` takes a `~` library only when it is the site's; a file the visitor opened is

@@ -306,9 +306,12 @@ async function start() {
     try {
       results = await localLibrary.openFiles(zims, {
         site,
+        // The site's own files open at once (read from the site, they mostly wait on the network:
+        // on a Quest the main site's three took ~10 s one after another); others one by one.
+        concurrency: site ? zims.length : 1,
         stopped: () => job.stopping,
         onFile: (file, i) => {
-          if (zims.length > 1) {
+          if (zims.length > 1 && !site) {
             job.label = `${name(file)} (${i + 1} of ${zims.length})`;
             renderStatus();
           }

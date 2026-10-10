@@ -83,40 +83,70 @@ export const sourceName = (source) => (typeof source === 'string' ? fileNameOf(s
  * them), one after the other.
  * @param {Iterable<File|string>} files
  * @param {{ onFile?: (file: File, i: number) => void, onProgress?: (fraction: number) => void,
- *   onOpened?: (result: object) => void, stopped?: () => boolean, site?: boolean }} [opts]
+ *   onOpened?: (result: object) => void, stopped?: () => boolean, site?: boolean, concurrency?: number }} [opts]
  *   onFile: called as each file starts; onProgress: how far all of them are (each file's share by
  *   how much of its catalogue is built); onOpened: each file's result as soon as it is open;
  *   stopped: checked before each file: true opens no more (those left get `skipped: true`).
  *   Several files' index builds wait until all are open, then go smallest first. site: web
- *   addresses on this site that the site ships (main.js), marked so in the catalogue.
+ *   addresses on this site that the site ships (main.js), marked so in the catalogue;
+ *   concurrency: how many open at once (1: one after the other; openEach).
  * @returns {Promise<Array<{ name: string, id?: string, title?: string, kind?: string, books?: number, url?: string, error?: string, skipped?: true }>>}
  */
-export async function openFiles(files, { onFile, onProgress, onOpened, stopped = () => false, site = false } = {}) {
+export async function openFiles(files, {
+  onFile, onProgress, onOpened, stopped = () => false, site = false, concurrency = 1,
+} = {}) {
   const list = [...files];
-  const results = [];
   const batch = list.length > 1;
   if (batch) await call('hold');
   try {
-    for (const [i, file] of list.entries()) {
-      const name = sourceName(file);
-      if (stopped()) {
-        results.push({ name, skipped: true });
-        continue;
-      }
-      onFile?.(file, i);
-      onProgress?.(i / list.length);
-      try {
-        const what = typeof file === 'string' ? { url: file, via: proxiedUrl(file, ZIM_PROXY), ...(site ? { site: true } : {}) } : { file };
-        results.push({ name, ...(await call('open', what, { onProgress: onProgress && ((f) => onProgress((i + f) / list.length)) })) });
-        onOpened?.(results.at(-1));
-        opened++;
-      } catch (err) {
-        results.push({ name, error: err.message, ...(typeof file === 'string' ? { url: file } : {}) });
-      }
-    }
+    return await openEach(list, async (file, i, progress) => {
+      const what = typeof file === 'string' ? { url: file, via: proxiedUrl(file, ZIM_PROXY), ...(site ? { site: true } : {}) } : { file };
+      const r = await call('open', what, { onProgress: onProgress && progress });
+      opened++;
+      return r;
+    }, { concurrency, onFile, onProgress, onOpened, stopped });
   } finally {
     if (batch) await call('release').catch(() => {});
   }
+}
+
+/**
+ * openFiles' loop: opens each of `list` with `open(file, i, progress)`, `concurrency` at a time
+ * (the worker answers each request on its own: a ZIM read over the network mostly waits, so the
+ * site's own files open together; a device's files one by one), and gives the results in the
+ * list's order. onProgress: the average of each file's fraction; stopped: checked before each
+ * file starts. (Exported for tests.)
+ * @returns {Promise<Array<object>>}
+ */
+export async function openEach(list, open, { concurrency = 1, onFile, onProgress, onOpened, stopped = () => false } = {}) {
+  const results = new Array(list.length);
+  const fractions = new Array(list.length).fill(0);
+  const report = () => onProgress?.(fractions.reduce((a, b) => a + b, 0) / list.length);
+  let next = 0;
+  const lane = async () => {
+    while (next < list.length) {
+      const i = next++;
+      const file = list[i];
+      const name = sourceName(file);
+      if (stopped()) {
+        results[i] = { name, skipped: true };
+        continue;
+      }
+      onFile?.(file, i);
+      report();
+      try {
+        results[i] = { name, ...(await open(file, i, (f) => {
+          fractions[i] = f;
+          report();
+        })) };
+        onOpened?.(results[i]);
+      } catch (err) {
+        results[i] = { name, error: err.message, ...(typeof file === 'string' ? { url: file } : {}) };
+      }
+      fractions[i] = 1;
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(concurrency, list.length)) }, lane));
   return results;
 }
 
