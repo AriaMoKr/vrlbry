@@ -58,7 +58,9 @@ export class HttpSource {
     this.lastModified = null;
     /** Reads made and bytes received (for measurements). */
     this.stats = { reads: 0, bytes: 0, retries: 0 };
-    this._fetch = fetchImpl;
+    // Called as a plain function: a browser's fetch throws "Illegal invocation" when called as
+    // another object's method (this._fetch(…)).
+    this._fetch = (input, init) => fetchImpl(input, init);
     this._retries = retries;
     this._timeoutMs = timeoutMs;
     this._max = Math.max(1, maxInFlight);

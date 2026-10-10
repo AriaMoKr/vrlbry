@@ -115,6 +115,24 @@ describe('ZIMs over HTTP (HttpSource)', () => {
     }
   });
 
+  it('calls fetch as a browser allows: not as a method of the source', async () => {
+    const file = writeGutenbergZim(path.join(tmp, 'g0.zim')).filePath;
+    const { url } = serve(file);
+    const nodeFetch = globalThis.fetch;
+    // A browser's fetch throws "Illegal invocation" when `this` is another object.
+    globalThis.fetch = function (input, init) {
+      if (this !== undefined && this !== globalThis) throw new TypeError('Illegal invocation');
+      return nodeFetch(input, init);
+    };
+    try {
+      const src = await HttpSource.open(url);
+      assert.equal((await src.read(0, 4)).length, 4);
+      await src.close();
+    } finally {
+      globalThis.fetch = nodeFetch;
+    }
+  });
+
   it('finds the size with a HEAD when Content-Range cannot be read', async () => {
     const file = writeGutenbergZim(path.join(tmp, 'g2.zim')).filePath;
     const { url } = serve(file, { mode: 'no-content-range' });

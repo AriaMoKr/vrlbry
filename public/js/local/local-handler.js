@@ -70,6 +70,7 @@ export function createLocalLibraries({ log = () => {}, warn = log, store = null,
       // Opened once: the library takes the archive over.
       const archive = await ZimArchive.open(file, {
         clusterCacheBytes: CLUSTER_CACHE_BYTES, blockCacheBytes: BLOCK_CACHE_BYTES, wholeClusterBytes: WHOLE_CLUSTER_BYTES,
+        wholeCompressedBytes: WHOLE_CLUSTER_BYTES, // a compressed cluster in one read, not two
       }).catch((err) => {
         throw new LocalError(`${file.name}: not a readable ZIM file (${err.message})`);
       });

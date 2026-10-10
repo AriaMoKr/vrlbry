@@ -262,6 +262,7 @@ export class ArchiveLibrary {
     this._inflightProgress = new Map(); // bookId → Set of content()'s onProgress, while converting
     this._catalogProgress = null; // open()'s onProgress, while the catalogue is first built
     this._estimateSizes = false; // open()'s estimateSizes (_blobSizes)
+    this._checkImages = true; // open()'s checkImages (_fixImages' trustSized)
     this._onIndexing = null; // open()'s onIndexing (_setIndexing)
     this._epubCache = new LRUCache({ maxBytes: EPUB_CACHE_BYTES, sizeOf: (e) => e.bytes });
     this._epubInflight = new Map();
@@ -316,6 +317,7 @@ export class ArchiveLibrary {
     onProgress, // (fraction) as the catalogue is built: Gutenberg books looked up, generic entries scanned
     estimateSizes = false, // books' sizes estimated from the cluster pointers, not read (_blobSizes)
     onIndexing, // (info) whenever info().indexing changes: { stage, progress }, or null once the index is ready
+    checkImages = true, // false: a Wikipedia's or Wikisource's image whose size the HTML gives is not looked up (_fixImages)
   } = {}) {
     // An open ZimArchive is taken over (closed with the library): the local library opens the
     // file once, for the metadata that decides whether to go on, and keeps its block cache.
@@ -327,6 +329,7 @@ export class ArchiveLibrary {
       });
       lib._catalogProgress = onProgress ?? null;
       lib._estimateSizes = estimateSizes;
+      lib._checkImages = checkImages;
       lib._onIndexing = onIndexing ?? null;
       try {
         await lib.books(); // catalog now: `kind` is final and errors surface at scan time
@@ -593,7 +596,10 @@ export class ArchiveLibrary {
       this._warn(`${this.file}: cannot read metadata: ${err.message}`);
       return {};
     });
-    const index = await this._findIndex();
+    // A Wikipedia or Wikisource says so in its metadata: the Gutenberg index is then not looked
+    // for (8 lookups in a directory of millions of entries, 5 s over the network).
+    const mediawiki = isWikisource(this._meta) || wikipedia.isWikipedia(this._meta);
+    const index = mediawiki ? null : await this._findIndex();
     if (index) {
       try {
         const books = await this._gutenbergCatalog(index);
@@ -752,12 +758,9 @@ export class ArchiveLibrary {
   /** Reading metadata of a volume: one chunk per article (sizes estimated), contents = titles. */
   async _volumeMeta(rec) {
     const { book, from, to } = rec;
-    const order = this._wikipedia.order;
-    const titles = new Array(to - from);
-    await mapLimit(titles, 16, async (_, i) => {
-      const e = await this.archive.getEntryByIndex(order[from + i]);
-      titles[i] = (e.title || e.url).replace(/\s+/g, ' ').trim();
-    });
+    // The articles' entries read together: neighbours with one read (getEntriesByIndex).
+    const entries = await this.archive.getEntriesByIndex(Array.from(this._wikipedia.order.subarray(from, to)));
+    const titles = entries.map((e) => (e.title || e.url).replace(/\s+/g, ' ').trim());
     // Sizes estimated from each article's HTML size (the reader corrects them once loaded).
     const chunks = [];
     let start = 0;
@@ -784,7 +787,7 @@ export class ArchiveLibrary {
     if (!content) throw new LibraryError(`book ${rec.book.id}: article ${entry.path} has no content`);
     const title = (entry.title || entry.url).replace(/\s+/g, ' ').trim();
     const blocks = [{ t: 'h', l: 1, r: [[title, 0]] }, ...htmlToBlocks(decodeHtml(content.data), { docPath: content.entry.path }).blocks];
-    await this._fixImages(blocks, { lookup: (p, opts) => this._zimImage(p, opts), fallback: null, url: (p) => zimUrl(this.id, p) });
+    await this._fixImages(blocks, { lookup: (p, opts) => this._zimImage(p, opts), fallback: null, url: (p) => zimUrl(this.id, p), trustSized: !this._checkImages });
     const chars = blocks.reduce((s, b) => s + blockChars(b), 0);
     const chunk = new Chunk(n, meta.chunks[n].start, chars, blocks);
     this._conversions++;
@@ -1117,6 +1120,7 @@ export class ArchiveLibrary {
         fallback: null,
         url: (p) => zimUrl(this.id, p),
         onProgress: images,
+        trustSized: !this._checkImages,
       });
     } else if (rec.html) {
       const content = await this.archive.getContent(rec.html);
@@ -1209,7 +1213,7 @@ export class ArchiveLibrary {
    * URL, and replaces images that are not in the archive with their alt text (or drops them).
    * Works in place on `blocks`. `onProgress(fraction)` as images are done (1 when none).
    */
-  async _fixImages(blocks, { lookup, fallback, url, onProgress = () => {} }) {
+  async _fixImages(blocks, { lookup, fallback, url, onProgress = () => {}, trustSized = false }) {
     const imgs = [];
     const inline = []; // image runs (SPEC §3.5): their size is known, only the path is resolved
     for (let i = 0; i < blocks.length; i++) {
@@ -1264,6 +1268,13 @@ export class ArchiveLibrary {
         }
         return;
       }
+      // trustSized (checkImages: false, remote archives): an image whose size is known is not
+      // looked up (a binary search: ~6 round trips over the network, 38 images 39 s); a missing
+      // one then shows as the reader's placeholder instead of its alt text.
+      if (trustSized && blk.w && blk.h) {
+        blk.src = url(blk.src);
+        return;
+      }
       const { path: p, info } = await resolve(blk.src, !(blk.w && blk.h));
       if (!info.ok) {
         if (blk.alt) {
@@ -1282,6 +1293,10 @@ export class ArchiveLibrary {
     await mapLimit(inline, IMAGE_PROBE_CONCURRENCY, counted(async (run) => {
       const img = run[2];
       if (img.src.startsWith('data:')) return;
+      if (trustSized) { // inline images' sizes are always known
+        img.src = url(img.src);
+        return;
+      }
       const { path: p, info } = await resolve(img.src, false);
       if (info.ok) {
         img.src = url(p);

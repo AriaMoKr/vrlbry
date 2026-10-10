@@ -12,7 +12,8 @@ import { ArchiveLibrary, Library } from '../server/library.js';
 import { createApp } from '../server/http.js';
 import { fileStore } from '../server/cache-store.js';
 import { ZimArchive } from '../public/js/core/zim/reader.js';
-import { isWikipedia, buildIndex, volumeTitle, removeCheckpoint } from '../public/js/core/wikipedia.js';
+import { isWikipedia, buildIndex, volumeTitle, removeCheckpoint, searchIndex } from '../public/js/core/wikipedia.js';
+import { titleKey } from '../public/js/util/books.js';
 import { article, redirectPage, WIKI_PNG, writeWikipediaZim } from './helpers/zim-fixtures.js';
 import { writeZim } from './helpers/zimwriter.js';
 
@@ -43,6 +44,83 @@ describe('wikipedia', () => {
     assert.equal(isWikipedia({}), false);
     assert.equal(volumeTitle(['Ant', 'Zebra']), 'Ant – Zebra');
     assert.equal(volumeTitle(['Zebra', 'Zebra']), 'Zebra');
+  });
+
+  it('opens a Wikipedia without looking for a Gutenberg index (its metadata says what it is)', async () => {
+    const file = path.join(tmp, 'kind.zim');
+    writeWikipediaZim(file);
+    const z = await ZimArchive.open(file);
+    const looked = [];
+    const findEntry = z.findEntry.bind(z);
+    z.findEntry = (ns, url) => {
+      looked.push(`${ns}/${url}`);
+      return findEntry(ns, url);
+    };
+    const lib = await ArchiveLibrary.open(z, { cacheDir: path.join(tmp, 'kind-cache'), volumeSize: 3, log: () => {} });
+    try {
+      assert.equal(lib.kind, 'wikipedia');
+      assert.deepEqual(looked.filter((p) => p.endsWith('full_by_popularity.js')), []);
+    } finally {
+      await lib.close();
+    }
+  });
+
+  it('converts articles without looking sized images up when told not to check them (remote archives)', async () => {
+    const file = path.join(tmp, 'check-images.zim');
+    writeWikipediaZim(file);
+    const open = async (checkImages) => {
+      const lib = await ArchiveLibrary.open(file, { cacheDir: path.join(tmp, 'check-images-cache'), volumeSize: 3, log: () => {}, checkImages });
+      await waitForBooks(lib);
+      const looked = [];
+      const zimImage = lib._zimImage.bind(lib);
+      lib._zimImage = (p, opts) => {
+        looked.push(p);
+        return zimImage(p, opts);
+      };
+      return { lib, looked };
+    };
+    const checked = await open(true);
+    const trusted = await open(false);
+    try {
+      for (const b of await checked.lib.books()) {
+        const meta = (await checked.lib.content(b.id)).meta;
+        assert.deepEqual((await trusted.lib.content(b.id)).meta, meta);
+        for (let c = 0; c < meta.chunks.length; c++) {
+          const [x, y] = [await checked.lib.chunk(b.id, c), await trusted.lib.chunk(b.id, c)];
+          assert.equal(new TextDecoder().decode(y.json), new TextDecoder().decode(x.json), `${b.id} chunk ${c}`);
+        }
+      }
+      assert.ok(checked.looked.some((p) => p.endsWith('_assets_/pic.png')), 'checked: the picture is looked up');
+      assert.ok(checked.looked.some((p) => p.endsWith('_assets_/f.svg')), 'checked: the formula too');
+      assert.deepEqual(trusted.looked, [], 'not checked: sized pictures and formulas are not looked up');
+    } finally {
+      await checked.lib.close();
+      await trusted.lib.close();
+    }
+  });
+
+  it('finds titles within the volume their first and last titles point to, as a search of all would', async () => {
+    const file = path.join(tmp, 'bounds.zim');
+    writeWikipediaZim(file);
+    const z = await ZimArchive.open(file);
+    try {
+      for (const volumeSize of [1, 2, 3, 7, 100]) {
+        const idx = await buildIndex(z, { volumeSize });
+        // Every prefix of every title (and some between and around them), against a plain filter.
+        const queries = new Set(['', '0', '1', '2', 'a', 'an', 'b', 'c', 'e', 'é', 'the', 'the b', 'z', 'zz', '~', 'yellow']);
+        for (const t of ORDER) for (let n = 1; n <= t.length; n++) queries.add(t.slice(0, n));
+        for (const q of queries) {
+          const qk = titleKey(q.replace(/\s+/g, ' ').trim());
+          const expected = qk ? ORDER.map((title, position) => ({ title, position })).filter((a) => titleKey(a.title).startsWith(qk)) : [];
+          const typed = q.replace(/\s+/g, ' ').trim().toLowerCase();
+          const exact = expected.findIndex((a) => a.title.toLowerCase() === typed);
+          if (exact > 0) expected.unshift(...expected.splice(exact, 1));
+          assert.deepEqual(await searchIndex(z, idx, q, 50), expected, `"${q}", volumes of ${volumeSize}`);
+        }
+      }
+    } finally {
+      await z.close();
+    }
   });
 
   it('indexes articles only, in title order, cut into volumes', async () => {

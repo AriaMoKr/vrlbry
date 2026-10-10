@@ -190,7 +190,7 @@ async function sizePages(archive, { n, index, cluster, blob, onProgress, log, ch
       if (c !== NO_CLUSTER) {
         const blobs = [];
         for (let p = from; p < to; p++) blobs.push(blob[byCluster[p]]);
-        const out = await archive.clusterBlobs(c, blobs, { head: PAGE_HEAD, cache: false });
+        const out = await archive.clusterBlobs(c, blobs, { head: PAGE_HEAD, cache: false, compressed: true }); // HTML: compressed
         for (let k = 0; k < out.length; k++) sizes[byCluster[from + k]] = pageKind(out[k].size, out[k].data);
       }
       finished.fill(1, from, to);
@@ -311,10 +311,13 @@ export async function searchIndex(archive, idx, query, limit = 12) {
   if (!qk) return [];
   limit = Math.max(1, Math.min(SEARCH_LIMIT, limit | 0 || 12));
   const out = [];
-  for (let i = await lowerBoundKey(archive, idx, qk); i < idx.count && out.length < limit; i++) {
-    const title = await titleAt(archive, idx, i);
+  // The first `limit` titles from the bound, read together (getEntriesByIndex), not one by one.
+  const from = await lowerBoundKey(archive, idx, qk);
+  const entries = await archive.getEntriesByIndex(Array.from(idx.order.subarray(from, Math.min(idx.count, from + limit))));
+  for (let k = 0; k < entries.length; k++) {
+    const title = entries[k].title || entries[k].url;
     if (!titleKey(title).startsWith(qk)) break;
-    out.push({ title: title.replace(/\s+/g, ' ').trim(), position: i });
+    out.push({ title: title.replace(/\s+/g, ' ').trim(), position: from + k });
   }
   // The article titled exactly as typed comes first ("Paris" before ".paris").
   const typed = String(query).replace(/\s+/g, ' ').trim().toLowerCase();
@@ -329,16 +332,42 @@ async function titleAt(archive, idx, position) {
   return e.title || e.url;
 }
 
-/** First position in title order whose title key is not before `key` (binary search). */
+/**
+ * First position in title order whose title key is not before `key` (binary search), within the
+ * volume that the volumes' first and last titles (in memory) say it is in: a million articles
+ * then cost the reads of 10 steps instead of 20 (each a round trip over the network).
+ */
 async function lowerBoundKey(archive, idx, key) {
-  let lo = 0;
-  let hi = idx.count;
+  let [lo, hi] = volumeBounds(idx, key);
   while (lo < hi) {
     const mid = (lo + hi) >>> 1;
     if (collator.compare(titleKey(await titleAt(archive, idx, mid)), key) < 0) lo = mid + 1;
     else hi = mid;
   }
   return lo;
+}
+
+/** The positions [lo, hi] that hold `key`'s lower bound, from the volumes' titles alone. */
+function volumeBounds(idx, key) {
+  const vols = idx.volumes;
+  if (!vols?.length || !idx.volumeSize) return [0, idx.count];
+  const before = (title) => collator.compare(titleKey(title), key) < 0;
+  // Volumes [0, a) end before the key: their articles all do.
+  let a = 0;
+  for (let b = vols.length; a < b;) {
+    const m = (a + b) >>> 1;
+    if (before(vols[m][1])) a = m + 1;
+    else b = m;
+  }
+  // From volume c on, volumes begin at or after it: the bound is at most c's first position.
+  let c = a;
+  for (let d = vols.length; c < d;) {
+    const m = (c + d) >>> 1;
+    if (before(vols[m][0])) c = m + 1;
+    else d = m;
+  }
+  const lo = Math.min(idx.count, a * idx.volumeSize);
+  return [lo, Math.max(lo, Math.min(idx.count, c * idx.volumeSize))];
 }
 
 /** Position of an article entry in title order, or -1 when it is not an article of the index. */
@@ -353,6 +382,8 @@ async function positionOf(archive, idx, entry) {
 
 /** Most URL-index entries looked at per spelling of a redirect search. */
 const REDIRECT_SCAN = 400;
+/** Redirects of a spelling resolved at once (each a search of the title order). */
+const RESOLVE_AT_ONCE = 8;
 
 /**
  * Redirects whose titles start with `query` ("NYC" → "New York City"): the other names of
@@ -370,22 +401,37 @@ export async function searchRedirects(archive, idx, query, limit = 12) {
     q, q.charAt(0).toUpperCase() + q.slice(1), q.toUpperCase(),
     q.replace(/(^|\s)(\S)/g, (m, s, c) => s + c.toUpperCase()),
   ])];
-  const out = [];
-  const seen = new Set();
-  for (const s of spellings) {
+  // The spellings are searched at once (each a binary search: round trips over the network), and
+  // a spelling's redirects resolved a few at a time; the results keep the spellings' order.
+  const found = await Promise.all(spellings.map(async (s) => {
     const prefix = s.replace(/ /g, '_');
     const start = await archive.lowerBound(idx.ns, prefix);
+    const redirects = [];
     let n = 0;
     for await (const e of archive.entries(start, archive.entryCount)) {
-      if (e.ns !== idx.ns || !e.url.startsWith(prefix) || ++n > REDIRECT_SCAN || out.length >= limit) break;
-      if (!e.isRedirect || seen.has(e.index)) continue;
-      seen.add(e.index);
-      const target = await archive.resolveRedirect(e).catch(() => null);
-      if (!target || target.isRedirect) continue;
-      const position = await positionOf(archive, idx, target);
-      if (position < 0) continue; // not an article (e.g. a file)
-      out.push({ from: (e.title || e.url).replace(/\s+/g, ' ').trim(), title: (target.title || target.url).replace(/\s+/g, ' ').trim(), position });
+      if (e.ns !== idx.ns || !e.url.startsWith(prefix) || ++n > REDIRECT_SCAN) break;
+      if (e.isRedirect) redirects.push(e);
     }
+    const hits = [];
+    for (let i = 0; i < redirects.length && hits.length < limit; i += RESOLVE_AT_ONCE) {
+      const batch = await Promise.all(redirects.slice(i, i + RESOLVE_AT_ONCE).map(async (e) => {
+        const target = await archive.resolveRedirect(e).catch(() => null);
+        if (!target || target.isRedirect) return null;
+        const position = await positionOf(archive, idx, target);
+        if (position < 0) return null; // not an article (e.g. a file)
+        return { index: e.index, from: (e.title || e.url).replace(/\s+/g, ' ').trim(), title: (target.title || target.url).replace(/\s+/g, ' ').trim(), position };
+      }));
+      for (const hit of batch) if (hit) hits.push(hit);
+    }
+    return hits;
+  }));
+  const out = [];
+  const seen = new Set();
+  for (const { index, ...hit } of found.flat()) {
+    if (out.length >= limit) break;
+    if (seen.has(index)) continue;
+    seen.add(index);
+    out.push(hit);
   }
   return out;
 }

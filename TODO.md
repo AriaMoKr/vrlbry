@@ -257,12 +257,57 @@
            request, so every answer's total size and Last-Modified must match the first's.
            Retries with backoff, at most 6 requests in flight, and a block size per archive
            (`blockBytes`). Tested against a local server (`test/http-source.test.js`).
-        2. Measure on the PC and a Quest: reads and time to open a Gutenberg ZIM, a Wikipedia
-           mini and the top 1M (with a prebuilt index), and to the first page. Decides the
-           block size over HTTP (64 KB suits files; at ~0.6 s a read, 256 KB–1 MB likely
-           suits the network) and whether a small ZIM's directory is fetched in one go.
+        2. *Measured on the PC (2026-10-10; the Quest still to do, its adb was disconnected):*
+           Node and the built-in browser, from mirror.download.kiwix.org, with the local
+           library's settings and the indexes built here: Gutenberg LCC-P (37 MB), Chemistry
+           mini (25 MB), the top 1M (49 GB). A round trip took 0.3–0.8 s and one answer came
+           at 100–700 KB/s, so both the number of reads one after another and the bytes count.
+           At first the top 1M took 39 s to open (61 reads) and 65 s more to show Albert
+           Einstein. What cost and what was done (`6a51178` and the next commit):
+           - *The open's lookups:* the namespace scheme was checked with a binary search (28
+             reads of the top 1M's directory), the metadata found with two more (28), and a
+             Wikipedia looked for a Gutenberg index (8). Now the scheme comes from the version
+             (as libzim), the directory's last 64 entries are read at open (the metadata lies
+             13–17 from the end in every ZIM tried) and lookups after their first search those
+             alone, and a Wikipedia or Wikisource skips the Gutenberg lookup. Top 1M: 8 reads.
+           - *Two reads per compressed cluster* (its head's block, then the rest): now one when
+             the entry's MIME type says compressed (`wholeCompressedBytes`). Also saves a read
+             per cluster of a File on a Quest, index builds included.
+           - *Image checks:* converting an article looked every image up (a binary search,
+             ~6 reads each): Albert Einstein's 38 images made 244 reads, 39 s. With
+             `checkImages: false` a sized image is not looked up (mwoffliner's are all there).
+           - *Block size:* not bigger but smaller. Lookups touch scattered entries, so a 64 KB
+             block mostly carries bytes nobody wants. Top 1M, search and article with checks:
+             1 KB 12 s and 25 s, 2 KB 10 and 20, 4 KB 9 and 21, 8 KB 8 and 19, 16 KB 15 and
+             31, 64 KB 21 and 39. Opens: 256 KB and 1 MB blocks were slower than 64 KB (11 vs
+             14 vs 32 s for LCC-P). *Decided: 8 KB over HTTP*, 64 KB for files (a File read
+             costs the same however small).
+           - *Many entries at once* (a volume's 1,000 titles) were read one by one: with 8 KB
+             blocks 76 reads. Now `getEntriesByIndex` reads neighbours together: 13–20 reads.
+           - *Search:* the binary search now starts in the volume the volumes' titles point to
+             (10 steps instead of 20 on the top 1M), results are read together, and the
+             redirect spellings are searched at once.
+           - *Pictures (Gutenberg's, sized by reading them):* The Story of the Alphabet's 126
+             took 7.7 s read one by one (124 reads, 4.1 MB) and 16.2 s with clusters read whole
+             (13 reads, 6.0 MB). *Decided: no whole uncompressed clusters over HTTP*
+             (`wholeClusterBytes` 0).
+           - *Directory in one go:* no. Chemistry's directory is 3.5 MB, more than its whole
+             open costs now.
+           - *Result (browser, cold, 8 KB blocks, no image checks):* LCC-P opens in 6.1 s and a
+             book in 1.4 s; Chemistry opens in 3.3 s, a search takes 4.0 s, a volume 2.3 s, an
+             article 1.2 s; the top 1M opens in 5.5 s, Albert Einstein is found in 9.7 s, his
+             volume opens in 2.3 s and the article in 1.0 s (from 39 s + 65 s).
+           - *Chrome caches the mirror's range answers* (no Cache-Control, so heuristic
+             freshness from Last-Modified): a second visit opened LCC-P in 0.1 s. Check the
+             Quest Browser before building step 4.
+           - *Still slow:* the search (33 reads on Chemistry, 110 on the top 1M: a binary
+             search is a round trip per step, and each redirect is placed in title order by
+             another). Step 6's indexes could carry what makes it free (titles, the redirects'
+             positions), at the cost of their size.
         3. Open by URL in the local library: the worker opens an HTTP source as it opens a
-           File (same ids, catalogue, indexing); URLs need no permission, so remote libraries
+           File (same ids, catalogue, indexing), with step 2's settings for URLs (`blockBytes`
+           8 KB, `wholeClusterBytes` 0, `wholeCompressedBytes` 4 MB, `checkImages: false`);
+           URLs need no permission, so remote libraries
            can reopen themselves after a reload; `__vrlbry.openUrl(url)`; a clear message for a
            server without CORS or ranges. Works with no cache, index or proxy at all.
         4. A persistent block cache (optional): fetched blocks kept in IndexedDB by the ZIM's

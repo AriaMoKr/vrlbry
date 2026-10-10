@@ -342,13 +342,35 @@ do big reads. With `wholeClusterBytes` (0 by default; the local library sets 4 M
 uncompressed cluster up to that big is read whole into the cluster cache once a second blob of
 it is wanted (a book's pictures usually share a few clusters; the first blob is read on its
 own, so a book with one picture per cluster reads no more than before), never for a size alone
-(`getBlobSize`).
+(`getBlobSize`). With `wholeCompressedBytes` (0 by default; the local library sets 4 MB) a
+cluster up to that big that is expected to be compressed (the entry's MIME type is one libzim
+compresses: `text/*`, `+xml`, `+json`, JavaScript, JSON; or `clusterBlobs(…, { compressed:
+true })`, the Wikipedia index's pass over HTML) is read in one read, head and all, instead of
+its head first and then the rest (a round trip over the network, a ~65 ms read of a File on a
+Quest); one wrongly expected is kept whole in the cluster cache. Only a cluster whose end is
+exactly known (not the last before a section). The two are apart because over the network
+bytes cost time: a compressed cluster is read whole anyway, but reading a 4 MB cluster of
+pictures for two of them takes seconds.
+
+`getEntriesByIndex(indices)` reads several entries at once (a Wikipedia volume's 1,000
+articles): their pointers together, then the dirents lying near each other with one read
+(within 256 KB, no gap wider than a block), the groups at once, as `entries()` does.
+
+Opening reads the header, the MIME list, the cluster pointers and the directory's last 64
+entries (`TAIL_ENTRIES`: their pointers and dirents, one or two reads). Metadata (`M`), the
+main page link (`W`) and the search indexes (`X`) lie there in every libzim file (the metadata
+13 to 17 entries from the end), so a binary search for a key after the first of them searches
+only these (`_lowerBoundKey`): `getMetadata()` and the illustration and main page lookups cost
+no directory reads. The namespace scheme comes from the version as in libzim (6.1 and later:
+new); only older files are checked with a search for `C`. Over the network this took the top
+1M Wikipedia's open from 61 reads (39 s) to 8 (10 s). `ArchiveLibrary` likewise looks for a
+Gutenberg index only when the metadata does not say Wikipedia or Wikisource.
 
 ```js
 export class ZimError extends Error {}
 export class ZimArchive {
   /** Opens and validates a ZIM file. Reads header, MIME list, pointer lists (lazily or eagerly). */
-  static async open(input, { clusterCacheBytes = 256 * 1024 * 1024, direntCacheEntries = 50000, blockCacheBytes = 8 * 1024 * 1024, blockBytes = 65536, wholeClusterBytes = 0, http = {} } = {}): Promise<ZimArchive>
+  static async open(input, { clusterCacheBytes = 256 * 1024 * 1024, direntCacheEntries = 50000, blockCacheBytes = 8 * 1024 * 1024, blockBytes = 65536, wholeClusterBytes = 0, wholeCompressedBytes = 0, http = {} } = {}): Promise<ZimArchive>
   async close()
   filePath: string
   header: { major, minor, uuid /* 32-char hex */, entryCount, clusterCount, mainPage /* index|null */,
@@ -357,6 +379,7 @@ export class ZimArchive {
   newNamespaceScheme: boolean       // true when content lives in namespace 'C'
   entryCount: number
   async getEntryByIndex(index): Promise<Entry>
+  async getEntriesByIndex(indices): Promise<Entry[]>   // several at once, neighbours with one read
   async findEntry(ns, url): Promise<Entry|null>          // exact match, binary search
   async findPath(path): Promise<Entry|null>              // 'C/foo/bar' → ns 'C', url 'foo/bar'
   async findContentPath(url, namespaces = ['C','A','I','-']): Promise<Entry|null> // first hit
@@ -542,8 +565,14 @@ instead (default `<project>/.cache`, as `fileStore`). With `estimateSizes` (the 
 books' sizes, which only set their thickness on the shelf (logarithmic), are not read but
 estimated from the cluster pointers: a cluster's bytes (`ZimArchive.clusterBytes`) shared
 among the books whose size entry lies in it; on a Quest the reads cost 8 s of a 4.5 GB
-Gutenberg ZIM's open. Chunks keep their JSON as bytes (`Uint8Array`, a Buffer on
-Node), with `gzip()` and `etag` from the platform (the server's).
+Gutenberg ZIM's open. With `checkImages: false` (for remote archives) a Wikipedia's or
+Wikisource's image whose size the HTML gives, and every inline image, is not looked up in the
+archive when an article is converted: each lookup is a binary search, ~6 round trips over the
+network (Albert Einstein's 38 images: 39 s of the top 1M's article), and mwoffliner's images are
+all there. A missing one then shows as the reader's placeholder instead of its alt text.
+Gutenberg books (whose image paths may need their fallback) and EPUBs are checked as before.
+Chunks keep their JSON as bytes (`Uint8Array`, a Buffer on Node), with `gzip()` and `etag`
+from the platform (the server's).
 
 ```js
 export class Library {
@@ -768,13 +797,15 @@ accepts it (recommended: large chunks compress ~4×).
 otherwise) → `{ "library": lib, "articles": [ { "title", "book": "v<N>", "n", "from"? } ] }`:
 articles whose title starts with `q` in title order (matched by `titleKey`, so case, accents, a
 leading "The" and punctuation are ignored), the one titled exactly `q` first; `book` is the volume
-and `n` the article's chunk in it. A binary search over the sorted index reads ~20 directory
-entries (a few ms on 1 M articles). Articles are also found by their other names, the ZIM's
+and `n` the article's chunk in it. A binary search over the sorted index, started within the
+volume that the volumes' first and last titles (in memory) point to, reads ~10 directory
+entries (a few ms on 1 M articles; each a round trip over the network); the results are read
+together (`getEntriesByIndex`). Articles are also found by their other names, the ZIM's
 redirects ("NYC" → "New York City", `from` = the redirect's title): a prefix search over the
 URL index (Wikipedia URLs are titles with "_" for spaces; URLs are case-sensitive, so `q` is tried
 as typed, with a capital first letter, in capitals and in title case; at most 400 entries per
 spelling), each redirect resolved to its article's position in the index (`searchRedirects` in
-`wikipedia.js`). Title matches come first, except that another name typed in full leads; an
+`wikipedia.js`; the spellings searched at once, a spelling's redirects resolved 8 at a time). Title matches come first, except that another name typed in full leads; an
 article appears once. `limit` defaults to 12, at most 50. Empty while indexing.
 
 **`GET /zim/:lib/<archivePath>`** → raw entry content. `<archivePath>` is `ns/url` with each
