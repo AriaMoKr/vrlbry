@@ -74,7 +74,9 @@ export async function getCatalog() {
   const r = await getJSON(api('api/libraries'), FRESH);
   // static: a build without a server (GitHub Pages): no rescans, answers are files.
   staticSite = !!r.static;
-  return { ...(await withLocal(r)), static: staticSite };
+  // zims: the site's own ZIM files (a static build's --zim-files: [{ path, name, size }]), opened
+  // in the browser with the page (main.js).
+  return { ...(await withLocal(r)), static: staticSite, zims: Array.isArray(r.zims) ? r.zims : [] };
 }
 
 /** @returns {Promise<{ changed: string|null, file: string|null }>} when the website's files last changed */

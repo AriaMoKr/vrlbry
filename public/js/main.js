@@ -11,7 +11,7 @@ import { audio } from './audio.js';
 import { load, save } from './util/storage.js';
 import { progressText } from './util/progress.js';
 import { handleStore, pickFiles, reopen, supportsHandles } from './local/handles.js';
-import { onKiwixMirror, zimUrl } from './local/zim-url.js';
+import { fileNameOf, onKiwixMirror, zimUrl } from './local/zim-url.js';
 import { defaultLanguage, kiwixCatalog } from './local/kiwix.js';
 import { idbStore } from './local/idb-store.js';
 import { PLAYER, XR_FRAME_RATE } from './config.js';
@@ -283,7 +283,8 @@ async function start() {
   // picker, a drop or __vrlbry.openZim, or from web addresses (strings, as zim-url.js makes them:
   // openUrls): shelved like the server's as soon as they are open. `reopening`: the web addresses
   // remembered from last time, opened as the page starts (the place is then put back, not moved).
-  async function openLocalFiles(files, fileHandles = [], { reopening = false } = {}) {
+  // `site`: the site's own ZIM files (catalog.zims), opened with every visit: not remembered.
+  async function openLocalFiles(files, fileHandles = [], { reopening = false, site = false } = {}) {
     const picked = [...files].map((file, i) => ({ file, handle: fileHandles[i] ?? null }))
       .filter(({ file }) => typeof file === 'string' || /\.zim$/i.test(file.name ?? '') || !file.name);
     const zims = picked.map((p) => p.file);
@@ -304,6 +305,7 @@ async function start() {
     let results;
     try {
       results = await localLibrary.openFiles(zims, {
+        site,
         stopped: () => job.stopping,
         onFile: (file, i) => {
           if (zims.length > 1) {
@@ -340,8 +342,8 @@ async function start() {
     }
     // Web addresses that opened are remembered and reopen with the page; one that did not reopen
     // stays remembered (the network may be down) and is offered on the "Last time" line.
-    rememberUrls(results.filter((r) => r.id && r.url));
-    if (reopening) {
+    if (!site) rememberUrls(results.filter((r) => r.id && r.url));
+    if (reopening && !site) {
       notReopened = results.filter((r) => r.error && r.url).map((r) => ({ url: r.url, name: r.name }));
       showRemembered();
     }
@@ -378,12 +380,14 @@ async function start() {
   // ZIMs from the web (milestone 3: Kiwix's mirror), typed or pasted in the card, a dropped link or
   // __vrlbry.openUrl: read where they are, a few kilobytes at a time. Each address goes through
   // zim-url.js (Kiwix's download links become its mirror's, which lets a page read them).
+  /** Whether a ZIM at this address is open: the same address, or the site's own copy of the same file. */
+  const isOpen = (url) => libraries.some((l) => l.url === url || (l.site && fileNameOf(l.url) === fileNameOf(url)));
   async function openUrls(inputs) {
     const urls = [];
     for (const input of inputs) {
       const r = zimUrl(input);
       if (r.error) overlay.showToast(r.error, 'error', 8000);
-      else if (libraries.some((l) => l.url === r.url) || urls.includes(r.url)) overlay.showToast(`${r.name} is already open.`, 'info', 5000);
+      else if (isOpen(r.url) || urls.includes(r.url)) overlay.showToast(`${r.name} is already open.`, 'info', 5000);
       else urls.push(r.url);
     }
     return urls.length ? openLocalFiles(urls) : [];
@@ -406,7 +410,7 @@ async function start() {
     settings.kiwix = { kind, lang };
     save('settings', settings);
   };
-  const kiwixOpen = (url) => libraries.some((l) => l.url === url);
+  const kiwixOpen = (url) => isOpen(url);
   overlay.setKiwix({ catalog: kiwix, onOpen: (url) => openUrls([url]), isOpen: kiwixOpen, prefs: kiwixPrefs, setPrefs: setKiwixPrefs });
   interaction.setKiwix({ catalog: kiwix, prefs: kiwixPrefs, setPrefs: setKiwixPrefs, isOpen: kiwixOpen }, (url) => openUrls([url]));
   // The web addresses opened here, reopened with the page (no permission needed, unlike files):
@@ -548,7 +552,14 @@ async function start() {
   // The web addresses opened before reopen now, in the background (the status box says so); the
   // place saved last time comes back once its library is open (openLocalFiles).
   const reopenUrls = remembered().map((r) => r.url);
-  if (reopenUrls.length) openLocalFiles(reopenUrls, [], { reopening: true }).catch((err) => console.warn('[vrlbry] reopening', err));
+  // The site's own ZIM files first (a static build's --zim-files: on the main site, part of the
+  // demo set ships as ZIM files, read from the site itself like web addresses): opened with every
+  // visit, in the Demo set (rooms.js), neither remembered nor in "Opened here".
+  const siteZims = (catalog.zims ?? []).map((z) => new URL(z.path, location.href).href);
+  (async () => {
+    if (siteZims.length) await openLocalFiles(siteZims, [], { reopening: true, site: true });
+    if (reopenUrls.length) await openLocalFiles(reopenUrls, [], { reopening: true });
+  })().catch((err) => console.warn('[vrlbry] reopening', err));
   // A new version of the site (a deploy, or edited client files) means this page runs old code, and
   // new data may need the new code: a page left open across a deploy once took a new ZIM into the
   // catalogue but not into the Demo set, whose list was in the old rooms.js. So once the version

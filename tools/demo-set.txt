@@ -1,7 +1,12 @@
+# The demo set: one ZIM per line, its address and how the main site has it: pre-rendered (no word
+# after the address; tools/build-pages.mjs --zims) or "file" (the ZIM file itself on the site,
+# opened in the browser: --zim-files). Chosen by size (TODO, "Merging back into the main site"):
+# each in the smaller form, ~460 MB in all. rooms.js DEMO_LIBRARIES names the same ZIMs (a test
+# checks). Lines starting with # are comments.
 https://download.kiwix.org/zim/gutenberg/gutenberg_en_lcc-p_2026-03.zim
-https://download.kiwix.org/zim/wikipedia/wikipedia_en_mathematics_mini_2026-06.zim
-https://download.kiwix.org/zim/wikipedia/wikipedia_en_physics_mini_2026-07.zim
+https://download.kiwix.org/zim/wikipedia/wikipedia_en_mathematics_mini_2026-06.zim file
+https://download.kiwix.org/zim/wikipedia/wikipedia_en_physics_mini_2026-07.zim file
 https://download.kiwix.org/zim/wikipedia/wikipedia_en_chemistry_mini_2026-07.zim
 https://download.kiwix.org/zim/wikipedia/wikipedia_en_100_2026-08.zim
 https://download.kiwix.org/zim/wikipedia/wikipedia_en_medicine_mini_2026-04.zim
-https://download.kiwix.org/zim/wikipedia/wikipedia_en_golf_maxi_2026-07.zim
+https://download.kiwix.org/zim/wikipedia/wikipedia_en_golf_maxi_2026-07.zim file

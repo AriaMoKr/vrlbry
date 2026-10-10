@@ -59,6 +59,7 @@ export function createLocalLibraries({
 } = {}) {
   const libs = new Map(); // id → ArchiveLibrary
   const urls = new Map(); // id → the web address of a library read from one
+  const sites = new Set(); // ids of libraries the site itself ships (open({ site }))
   const contentCache = createContentCache(CONTENT_CACHE_BYTES);
   // Index builds one at a time, the smallest first, whatever their size: they share the worker's
   // one thread, so at once each only ended later (six files opened together all waited for the
@@ -95,9 +96,10 @@ export function createLocalLibraries({
      * url? }. A Wikipedia's or Wikisource's index is built in the background when none is found,
      * but from the web only up to URL_INDEX_BUILD_BYTES (it would read most of the file). `via`:
      * the same file through the site's edge proxy (zim-url.js proxiedUrl), read first while it
-     * works; the library is still the file's (`url`).
+     * works; the library is still the file's (`url`). `site`: a ZIM the site itself ships (the
+     * main site's demo set): its catalogue entry says so (`site: true`).
      */
-    async open({ file, url, via = null }, { onProgress } = {}) {
+    async open({ file, url, via = null, site = false }, { onProgress } = {}) {
       const t0 = performance.now();
       const remote = typeof url === 'string';
       const name = (remote ? fileNameOf(url) : file.name) || 'archive.zim';
@@ -137,19 +139,20 @@ export function createLocalLibraries({
       });
       libs.set(id, opened);
       if (remote) urls.set(id, url);
+      if (remote && site) sites.add(id);
       generation++;
       const info = await opened.info();
       const took = `${((performance.now() - t0) / 1000).toFixed(1)} s`;
       log(info.indexing ? `${name}: ${opened.kind} library, indexing (${info.indexing.stage}) after ${took}`
         : `${name}: ${opened.kind} library, ${info.bookCount} book(s), opened in ${took}`);
-      return { value: { id, title: info.title, kind: opened.kind, books: info.bookCount, indexing: info.indexing, ...(remote ? { url } : {}) } };
+      return { value: { id, title: info.title, kind: opened.kind, books: info.bookCount, indexing: info.indexing, ...(remote ? { url } : {}), ...(sites.has(id) ? { site: true } : {}) } };
     },
 
     /** The catalogue: { generation, libraries: [info, with `url` when read from the web] } in the order they were opened. */
     async catalog() {
       const libraries = await Promise.all([...libs].map(async ([id, l]) => {
         const info = await l.info();
-        return urls.has(id) ? { ...info, url: urls.get(id) } : info;
+        return urls.has(id) ? { ...info, url: urls.get(id), ...(sites.has(id) ? { site: true } : {}) } : info;
       }));
       return { value: { generation, libraries } };
     },
@@ -202,6 +205,7 @@ export function createLocalLibraries({
       if (l) {
         libs.delete(id);
         urls.delete(id);
+        sites.delete(id);
         generation++;
         await l.close();
       }

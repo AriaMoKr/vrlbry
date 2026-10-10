@@ -432,6 +432,20 @@ describe('local library (ZIM files read in the browser)', () => {
     }
   });
 
+  it('marks a ZIM the site itself ships (site), in its answer and the catalogue, until closed', async () => {
+    const file = writeGutenbergZim(path.join(tmp, 'web-site-own.zim')).filePath;
+    const { url } = web.serve(file);
+    provide(browser);
+    const local = createLocalLibraries();
+    const opened = (await local.call('open', { url, site: true })).value;
+    assert.equal(opened.site, true);
+    assert.equal((await local.call('catalog')).value.libraries.find((l) => l.id === opened.id).site, true);
+    const other = (await local.call('open', { url: web.serve(file).url })).value;
+    assert.equal(other.site, undefined, "only those opened as the site's");
+    await local.call('close', { lib: opened.id });
+    assert.deepEqual((await local.call('catalog')).value.libraries.map((l) => [l.id, l.site]), [[other.id, undefined]]);
+  });
+
   it('says why a web address cannot be read: not found, no ranges, not a ZIM', async () => {
     provide(browser);
     const local = createLocalLibraries();

@@ -4,10 +4,14 @@
 // IWER files the client imports (followed from its imports), instead of the server mapping
 // node_modules.
 //
-//   node tools/build-pages.mjs [--out dist] [--zims <folder>] [--indexes <folder>] [--zim-proxy <url>]
+//   node tools/build-pages.mjs [--out dist] [--zims <folder>] [--zim-files <folder>] [--indexes <folder>] [--zim-proxy <url>]
 //
 // --indexes builds the indexes of that folder's Wikipedia and Wikisource ZIMs into indexes/, for
 // visitors who open those files in the browser (buildIndexes).
+// --zim-files ships that folder's ZIMs as files (zims/<name>, with their Wikipedia and Wikisource
+// indexes under indexes/), named in the static api/libraries answer (`zims`): the page opens them
+// in the browser with every visit, read from the site itself (shipZimFiles; the main site's demo
+// set is part pre-rendered, part ZIM files: tools/demo-set.txt).
 // --zim-proxy names the edge proxy (tools/zim-proxy/, deployed) the page reads Kiwix's files
 // through, in a meta tag (zimProxyMeta; optional: an empty value names none).
 //
@@ -224,6 +228,20 @@ export function zimProxyMeta(html, url) {
   const without = html.replace(/\s*<meta name="vrlbry-zim-proxy"[^>]*>/, '');
   if (!/<\/head>/i.test(without)) throw new Error('index.html has no </head>');
   return without.replace(/<\/head>/i, `${tag}\n</head>`);
+}
+
+/**
+ * Copies a folder's ZIMs into the site (zims/<name>), for the page to open in the browser.
+ * @returns {Array<{ path: string, name: string, size: number }>} path relative to the site
+ */
+export function shipZimFiles(dir, out) {
+  const names = fs.readdirSync(dir).filter((n) => /\.zim$/i.test(n)).sort();
+  if (!names.length) return [];
+  fs.mkdirSync(path.join(out, 'zims'), { recursive: true });
+  return names.map((name) => {
+    fs.copyFileSync(path.join(dir, name), path.join(out, 'zims', name));
+    return { path: `zims/${encodeURIComponent(name)}`, name, size: fs.statSync(path.join(dir, name)).size };
+  });
 }
 
 /** When the site last changed: the last commit's time, else now. */
@@ -458,6 +476,7 @@ export async function buildIndexes(dir, out, { log = console.log } = {}) {
 async function main() {
   const { values: opts } = parseArgs({ options: {
     out: { type: 'string', default: 'dist' }, zims: { type: 'string' }, indexes: { type: 'string' }, 'zim-proxy': { type: 'string' },
+    'zim-files': { type: 'string' },
   } });
   const OUT = path.resolve(ROOT, opts.out);
   fs.rmSync(OUT, { recursive: true, force: true });
@@ -531,6 +550,16 @@ async function main() {
     console.log(`Building the indexes of the ZIMs in ${opts.indexes}…`);
     const st = await buildIndexes(path.resolve(opts.indexes), OUT);
     console.log(`  ${st.indexes.length} indexes of ${st.libraries} libraries`);
+  }
+  if (opts['zim-files']) {
+    const dir = path.resolve(opts['zim-files']);
+    console.log(`Shipping the ZIMs in ${opts['zim-files']} as files…`);
+    const zims = shipZimFiles(dir, OUT);
+    const st = await buildIndexes(dir, OUT);
+    // The static answer names them: the page opens them in the browser (main.js).
+    const answerFile = path.join(api, 'libraries');
+    fs.writeFileSync(answerFile, JSON.stringify({ ...JSON.parse(fs.readFileSync(answerFile, 'utf8')), zims }));
+    console.log(`  ${zims.length} ZIM files (${(zims.reduce((n, z) => n + z.size, 0) / 1048576).toFixed(1)} MB), ${st.indexes.length} indexes`);
   }
   fs.writeFileSync(path.join(api, 'version'), JSON.stringify({ changed: changedAt(), file: null, static: true }));
   // Served as is (no Jekyll processing).

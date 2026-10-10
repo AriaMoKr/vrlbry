@@ -83,14 +83,15 @@ export const sourceName = (source) => (typeof source === 'string' ? fileNameOf(s
  * them), one after the other.
  * @param {Iterable<File|string>} files
  * @param {{ onFile?: (file: File, i: number) => void, onProgress?: (fraction: number) => void,
- *   onOpened?: (result: object) => void, stopped?: () => boolean }} [opts]
+ *   onOpened?: (result: object) => void, stopped?: () => boolean, site?: boolean }} [opts]
  *   onFile: called as each file starts; onProgress: how far all of them are (each file's share by
  *   how much of its catalogue is built); onOpened: each file's result as soon as it is open;
  *   stopped: checked before each file: true opens no more (those left get `skipped: true`).
- *   Several files' index builds wait until all are open, then go smallest first.
+ *   Several files' index builds wait until all are open, then go smallest first. site: web
+ *   addresses on this site that the site ships (main.js), marked so in the catalogue.
  * @returns {Promise<Array<{ name: string, id?: string, title?: string, kind?: string, books?: number, url?: string, error?: string, skipped?: true }>>}
  */
-export async function openFiles(files, { onFile, onProgress, onOpened, stopped = () => false } = {}) {
+export async function openFiles(files, { onFile, onProgress, onOpened, stopped = () => false, site = false } = {}) {
   const list = [...files];
   const results = [];
   const batch = list.length > 1;
@@ -105,7 +106,7 @@ export async function openFiles(files, { onFile, onProgress, onOpened, stopped =
       onFile?.(file, i);
       onProgress?.(i / list.length);
       try {
-        const what = typeof file === 'string' ? { url: file, via: proxiedUrl(file, ZIM_PROXY) } : { file };
+        const what = typeof file === 'string' ? { url: file, via: proxiedUrl(file, ZIM_PROXY), ...(site ? { site: true } : {}) } : { file };
         results.push({ name, ...(await call('open', what, { onProgress: onProgress && ((f) => onProgress((i + f) / list.length)) })) });
         onOpened?.(results.at(-1));
         opened++;

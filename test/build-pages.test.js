@@ -154,6 +154,34 @@ describe('GitHub Pages build: prebuilt indexes (--indexes)', () => {
   });
 });
 
+describe('GitHub Pages build: ZIM files shipped on the site (--zim-files)', () => {
+  it('copies the ZIMs under zims/, writes their indexes, and names them in the static answer', () => {
+    const zims = fs.mkdtempSync(path.join(os.tmpdir(), 'vrlbry-pages-files-zims-'));
+    const site = fs.mkdtempSync(path.join(os.tmpdir(), 'vrlbry-pages-files-site-'));
+    try {
+      writeDocsZim(path.join(zims, 'docs one.zim'));
+      writeWikipediaZim(path.join(zims, 'wp.zim'));
+      execFileSync(process.execPath, [path.join(ROOT, 'tools', 'build-pages.mjs'), '--out', site, '--zim-files', zims], { cwd: ROOT });
+      for (const name of ['docs one.zim', 'wp.zim']) {
+        assert.deepEqual(fs.readFileSync(path.join(site, 'zims', name)), fs.readFileSync(path.join(zims, name)), name);
+      }
+      const answer = JSON.parse(fs.readFileSync(path.join(site, 'api', 'libraries'), 'utf8'));
+      assert.equal(answer.static, true);
+      assert.deepEqual(answer.libraries, [], 'none pre-rendered');
+      assert.deepEqual(answer.zims, [
+        { path: 'zims/docs%20one.zim', name: 'docs one.zim', size: fs.statSync(path.join(zims, 'docs one.zim')).size },
+        { path: 'zims/wp.zim', name: 'wp.zim', size: fs.statSync(path.join(zims, 'wp.zim')).size },
+      ], 'relative to the site, escaped');
+      const { indexes } = JSON.parse(fs.readFileSync(path.join(site, 'indexes', 'list.json'), 'utf8'));
+      assert.equal(indexes.length, 1, "the Wikipedia's");
+      assert.ok(fs.existsSync(path.join(site, 'indexes', indexes[0])));
+    } finally {
+      fs.rmSync(zims, { recursive: true, force: true });
+      fs.rmSync(site, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('GitHub Pages build: pre-rendered ZIMs (--zims)', () => {
   let site;
   let zims;

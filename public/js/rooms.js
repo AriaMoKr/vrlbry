@@ -40,15 +40,22 @@ export const DEMO_LIBRARIES = [
   'gutenberg_en_lcc-p_', 'wikipedia_en_mathematics_mini_', 'wikipedia_en_physics_mini_', 'wikipedia_en_chemistry_mini_',
   'wikipedia_en_100_', 'wikipedia_en_medicine_mini_', 'wikipedia_en_golf_maxi_',
 ];
-export const isDemoLibrary = (library) => DEMO_LIBRARIES.some((name) => library.id.startsWith(name)
-  && /^\d{4}-\d{2}$/.test(library.id.slice(name.length)));
+export const isDemoLibrary = (library) => {
+  // Pre-rendered on the site, or the site's own ZIM files opened in the browser ('~' ids, `site`);
+  // not a file the visitor opened, even with a demo ZIM's name.
+  const raw = String(library.id);
+  if (raw.startsWith('~') && !library.site) return false;
+  const id = raw.replace(/^~/, '');
+  return DEMO_LIBRARIES.some((name) => id.startsWith(name) && /^\d{4}-\d{2}$/.test(id.slice(name.length)));
+};
 
 /**
  * The libraries opened in this browser (ZIM files from the device, SPEC §2.6: ids start with
  * '~'), shelved together once there are two or more: opening several files at once goes there.
+ * Not the site's own ZIM files (`site`), which are part of its demo set.
  */
 export const LOCAL_PLACE = { id: 'local', title: 'Opened here', kind: 'local' };
-export const isLocalLibrary = (library) => String(library.id).startsWith('~');
+export const isLocalLibrary = (library) => String(library.id).startsWith('~') && !library.site;
 
 /** Places that shelve several libraries together: which libraries each takes, and when it exists. */
 const GROUPS = [

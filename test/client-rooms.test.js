@@ -157,15 +157,21 @@ describe('rooms', () => {
   it('agrees with the GitHub Pages build on what the demo set is', () => {
     // tools/demo-set.txt is what the Pages workflow downloads; DEMO_LIBRARIES is what the Demo
     // set place shelves together. Each must name the other's ZIMs.
-    const urls = fs.readFileSync(new URL('../tools/demo-set.txt', import.meta.url), 'utf8').split(/\r?\n/).filter((l) => l.trim());
-    const ids = urls.map((u) => u.trim().split('/').pop().replace(/\.zim$/, ''));
+    // Each line: an address, then "file" when the site ships the ZIM itself (else pre-rendered).
+    const lines = fs.readFileSync(new URL('../tools/demo-set.txt', import.meta.url), 'utf8').split(/\r?\n/)
+      .map((l) => l.trim()).filter((l) => l && !l.startsWith('#')).map((l) => l.split(/\s+/));
+    assert.ok(lines.every((l) => l.length === 1 || (l.length === 2 && l[1] === 'file')), 'an address and "file", or the address alone');
+    const urls = lines.map((l) => l[0]);
+    const ids = urls.map((u) => u.split('/').pop().replace(/\.zim$/, ''));
+    // The site's own ZIM files are opened in the browser: their ids start with '~'.
+    for (const id of ids) assert.equal(isDemoLibrary({ id: `~${id}`, site: true }), true, `~${id}`);
     for (const id of ids) assert.equal(isDemoLibrary({ id }), true, `${id} is downloaded for the site but not in DEMO_LIBRARIES`);
     for (const name of DEMO_LIBRARIES) {
       assert.ok(ids.some((id) => isDemoLibrary({ id }) && id.startsWith(name)), `${name} is in DEMO_LIBRARIES but not in tools/demo-set.txt`);
     }
     // The example offered for opening in the browser is a demo-set ZIM: an address the workflow
     // keeps using (Kiwix replaces old dated files), and one the local library can open (Gutenberg).
-    assert.ok(urls.map((u) => u.trim()).includes(EXAMPLE_ZIM.url), `${EXAMPLE_ZIM.url} is not in tools/demo-set.txt`);
+    assert.ok(urls.includes(EXAMPLE_ZIM.url), `${EXAMPLE_ZIM.url} is not in tools/demo-set.txt`);
     assert.match(EXAMPLE_ZIM.url, /\/gutenberg_[^/]+\.zim$/);
   });
 
@@ -189,6 +195,11 @@ describe('rooms', () => {
     assert.equal(isLocalLibrary(a), true);
     assert.equal(isLocalLibrary(server), false);
     assert.equal(isDemoLibrary(b), false, 'a file opened here is not the demo set, even with its name');
+    // The site's own ZIM files (the main site ships part of its demo set as files) are.
+    const siteFile = { ...b, site: true };
+    assert.equal(isDemoLibrary(siteFile), true);
+    assert.equal(isLocalLibrary(siteFile), false, 'not "Opened here"');
+    assert.deepEqual(groupPlaces([a, siteFile]), [DEMO_PLACE, ALL_PLACE], 'the site file in the Demo set; one file opened here is no "Opened here"');
     assert.deepEqual(groupPlaces([a]), [], 'one file: its own room');
     assert.deepEqual(groupPlaces([a, b]), [LOCAL_PLACE], 'no all-libraries place: it would be the same');
     assert.deepEqual(groupPlaces([server, a, b]), [LOCAL_PLACE, ALL_PLACE]);
