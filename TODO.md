@@ -68,8 +68,9 @@
     another, Golf at 4.8 s, Mathematics 6.2 s, Physics 9.7 s (all seven in the Demo set on 7
     bookcases); Quantum mechanics read from Physics in 1.3 s; 90 Hz; the page's process 239 to
     358 MB. The site's files now open at once (`openFiles`' `concurrency`, `openEach`: one batch,
-    the hall rebuilt once): on the Quest, to measure once deployed (~4-5 s for all expected, not
-    ~10). To do: ZIM files split into parts (cold CDN misses).
+    the hall rebuilt once): on the Quest (deployed at 15fbe0e) the app up at 1.5 s, Mathematics
+    open at 5.0 s, Physics 5.3 s, Golf 5.8 s: all seven at 5.8 s instead of 9.7; Quantum mechanics
+    read in 1.0 s; 90 Hz. To do: ZIM files split into parts (cold CDN misses).
   - *GitHub Pages serves files over 100 MB* when a workflow deploys them (tested 2026-10-10 with a
     throwaway repo, pages-size-test: Golf's 138 MB and Wikipedia 100's 318 MB ZIMs, downloaded
     into the Pages artifact: whole sizes, range requests at both ends, the same bytes as Kiwix's;
