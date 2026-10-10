@@ -2,6 +2,13 @@
 // 3, SPEC §2.6): the local library opens it with range requests (core/zim/http-source.js). Used by
 // the page (the address field, a dropped link, __vrlbry.openUrl) and the worker (names).
 
+/**
+ * The biggest Wikipedia or Wikisource read from the web whose index is built in the browser when
+ * none is found (the store, the site's indexes/): building reads most of the file. The worker
+ * (local-handler.js) keeps to it, and Kiwix's library (kiwix.js) marks bigger ones.
+ */
+export const URL_INDEX_BUILD_BYTES = 256 * 1024 * 1024;
+
 /** Kiwix's own mirror: the one that lets a page read its files (CORS), and serves every ZIM. */
 export const KIWIX_MIRROR = 'mirror.download.kiwix.org';
 

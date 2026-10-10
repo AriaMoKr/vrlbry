@@ -170,3 +170,37 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .ov-lib-body { flex: 1; min-width: 0; }
 .ov-lib-close { flex: none; width: 24px; height: 24px; padding: 0; border-radius: 6px; border: 1px solid transparent; background: none; color: var(--muted); font-size: 16px; line-height: 1; }
 .ov-lib-close:hover { border-color: var(--line); color: var(--text); }
+
+/* Kiwix's library (ui/kiwix-dialog.js, milestone 3 step 5) */
+.ov-kiwix-btn { margin-top: 8px; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--accent); }
+.ov-kiwix-btn:hover { border-color: var(--accent); }
+.ov-kiwix { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 6; }
+.ov-kiwix[hidden] { display: none; }
+.ov-kiwix-inner { background: var(--panel-solid); border: 1px solid var(--line); border-radius: var(--radius); max-width: 680px; width: 100%; height: min(85vh, 760px); display: flex; flex-direction: column; padding: 14px 20px 16px; }
+.ov-kiwix-inner header { display: flex; justify-content: space-between; align-items: center; }
+.ov-kiwix h2 { font: 600 20px var(--serif); margin: 4px 0; color: var(--accent); }
+.ov-kiwix-close { background: none; border: 0; font-size: 26px; line-height: 1; color: var(--muted); }
+.ov-kiwix-note { margin: 4px 0 10px; color: var(--muted); font-size: 13px; line-height: 1.4; }
+.ov-kiwix-note a { color: var(--accent); }
+.ov-kiwix-filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+.ov-kiwix-kinds { display: flex; gap: 4px; }
+.ov-kiwix-kinds button { padding: 5px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--text); }
+.ov-kiwix-kinds button[aria-selected="true"] { border-color: var(--accent); color: var(--accent); }
+.ov-kiwix-lang, .ov-kiwix-find { padding: 5px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--text); font-size: 13px; }
+.ov-kiwix-lang { max-width: 180px; }
+.ov-kiwix-find { flex: 1; min-width: 120px; }
+.ov-kiwix-state { color: var(--muted); font-size: 13px; padding: 6px 2px; }
+.ov-kiwix-state[hidden] { display: none; }
+.ov-kiwix-state.error { color: #e8a87c; }
+.ov-kiwix-retry { margin-left: 8px; padding: 2px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--accent); }
+.ov-kiwix-list { list-style: none; margin: 0; padding: 0; overflow: auto; flex: 1; min-height: 0; }
+.ov-kiwix-item { display: flex; gap: 10px; align-items: flex-start; padding: 8px 4px; border-top: 1px solid var(--line); }
+.ov-kiwix-item img, .ov-kiwix-noimg { flex: none; width: 40px; height: 40px; border-radius: 8px; background: rgba(255,255,255,.05); }
+.ov-kiwix-body { flex: 1; min-width: 0; }
+.ov-kiwix-title { font: 600 15px/1.25 var(--serif); }
+.ov-kiwix-summary { color: var(--muted); font-size: 13px; margin-top: 2px; }
+.ov-kiwix-meta { color: var(--muted); font-size: 12px; margin-top: 3px; opacity: .85; }
+.ov-kiwix-warn { color: #e8a87c; font-size: 12px; margin-top: 3px; }
+.ov-kiwix-open { flex: none; padding: 5px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--accent); }
+.ov-kiwix-open:hover:not(:disabled) { border-color: var(--accent); }
+.ov-kiwix-open:disabled { color: var(--muted); opacity: .7; }

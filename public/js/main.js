@@ -12,6 +12,7 @@ import { load, save } from './util/storage.js';
 import { progressText } from './util/progress.js';
 import { handleStore, pickFiles, reopen, supportsHandles } from './local/handles.js';
 import { onKiwixMirror, zimUrl } from './local/zim-url.js';
+import { defaultLanguage, kiwixCatalog } from './local/kiwix.js';
 import { PLAYER, XR_FRAME_RATE } from './config.js';
 import { collectionsFor, LOCAL_PLACE } from './rooms.js';
 import { perf } from './perf.js';
@@ -242,6 +243,7 @@ async function start() {
       libraries = next.libraries;
       booksByLib = nextBooks;
       overlay.setLibraries(libraries, booksByLib);
+      overlay.refreshKiwix?.(); // its Open buttons follow what is open
       for (const l of added) {
         if (l.indexing) continue; // its indexing toast says so (local), or the card does (server)
         overlay.showToast(`New library: ${l.title} (${(nextBooks[l.id]?.length || 0).toLocaleString()} books) — shelving…`, 'info', 6000);
@@ -332,6 +334,8 @@ async function start() {
       const mirror = r.url && /CORS/.test(r.error) ? onKiwixMirror(r.url) : null;
       const hint = mirror ? ` Kiwix's own mirror lets pages read its files: ${mirror}` : '';
       overlay.showToast(`${reopening ? 'Not reopened: ' : ''}${r.error}.${hint}`, 'error', mirror ? 15000 : 9000);
+      // In VR the page's toasts are out of sight (a ZIM opened from the kiosk's Kiwix tab).
+      if (controls.presenting) interaction.notice(`Could not open ${r.name}`, r.error, 8);
     }
     // Web addresses that opened are remembered and reopen with the page; one that did not reopen
     // stays remembered (the network may be down) and is offered on the "Last time" line.
@@ -384,6 +388,18 @@ async function start() {
     return urls.length ? openLocalFiles(urls) : [];
   }
   overlay.onOpenUrl((input) => openUrls([input]));
+  // Kiwix's library (milestone 3 step 5; optional): the ZIMs this app reads well, from Kiwix's
+  // catalogue, in the card's dialog and on the kiosk's Kiwix tab (VR has no file picker and no
+  // keyboard for an address). Its kind and language are remembered in the settings.
+  const kiwix = kiwixCatalog();
+  const kiwixPrefs = () => ({ kind: settings.kiwix?.kind ?? 'gutenberg', lang: settings.kiwix?.lang ?? defaultLanguage() });
+  const setKiwixPrefs = ({ kind, lang }) => {
+    settings.kiwix = { kind, lang };
+    save('settings', settings);
+  };
+  const kiwixOpen = (url) => libraries.some((l) => l.url === url);
+  overlay.setKiwix({ catalog: kiwix, onOpen: (url) => openUrls([url]), isOpen: kiwixOpen, prefs: kiwixPrefs, setPrefs: setKiwixPrefs });
+  interaction.setKiwix({ catalog: kiwix, prefs: kiwixPrefs, setPrefs: setKiwixPrefs, isOpen: kiwixOpen }, (url) => openUrls([url]));
   // The web addresses opened here, reopened with the page (no permission needed, unlike files):
   // [{ url, name }] in localStorage, in the order first opened; a library's × forgets its own.
   const remembered = () => {

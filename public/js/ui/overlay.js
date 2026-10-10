@@ -4,6 +4,7 @@
 import { imageSource } from '../api.js';
 import { EXAMPLE_ZIM, MORE_ZIMS_URL, isLocalUrl } from '../local/local.js';
 import { droppedHandles } from '../local/handles.js';
+import { KiwixDialog } from './kiwix-dialog.js';
 import { bookIndex, matchBooks, findArticles } from '../search.js';
 import { load, save } from '../util/storage.js';
 
@@ -100,6 +101,7 @@ export class Overlay {
               placeholder="or the web address of a ZIM file" aria-label="Web address of a ZIM file">
             <button type="submit" title="Read it from the web, a little at a time">Open</button>
           </form>
+          <button class="ov-kiwix-btn" hidden title="The ZIMs this library reads well, from library.kiwix.org">Browse Kiwix's library…</button>
           <div class="ov-reopen" hidden>Last time: <span class="ov-reopen-names"></span>
             <button class="ov-reopen-btn">Reopen</button><button class="ov-reopen-forget" title="Forget these files">Forget</button></div>
           <div class="ov-open-hint">No ZIM file yet? Read
@@ -182,6 +184,7 @@ export class Overlay {
       this._openUrl?.(typed);
     };
     this.$('.ov-try-btn').onclick = () => this._openUrl?.(EXAMPLE_ZIM.url);
+    this.$('.ov-kiwix-btn').onclick = () => this._kiwix?.show();
     // A local library's × in the list: close it (and forget it).
     this.$('.ov-libs').onclick = (e) => {
       const btn = e.target.closest('.ov-lib-close');
@@ -438,6 +441,16 @@ export class Overlay {
   onOpenUrl(fn) { this._openUrl = fn; }
   /** fn(libId): a local library's × in the list (close it, and forget it). */
   onCloseLibrary(fn) { this._closeLibrary = fn; }
+  /**
+   * Kiwix's library (ui/kiwix-dialog.js): the card's button shows it once this is given (the
+   * catalogue and its callbacks: see KiwixDialog).
+   */
+  setKiwix(opts) {
+    this._kiwix = new KiwixDialog(this.root, opts);
+    this.$('.ov-kiwix-btn').hidden = false;
+  }
+  /** The libraries open changed: Kiwix's list marks them. */
+  refreshKiwix() { this._kiwix?.refresh(); }
   onReopen(fn) { this._reopen = fn; }
   onForget(fn) { this._forget = fn; }
   /** The files remembered from last time (names), with Reopen and Forget; none hides the line. */
@@ -504,6 +517,7 @@ export class Overlay {
       card: this.$('.ov-card').classList.contains('collapsed') ? 'collapsed' : 'open',
       search: { q: this.$('.ov-search input').value, open: !this.$('.ov-results').hidden },
       update: !this.$('.ov-update').hidden,
+      kiwix: this._kiwix?.visible ? { ...this._kiwix._prefs() } : null,
       loading: loading.hidden || loading.classList.contains('done') ? null
         : { text: this.$('.ov-loading-text').textContent, error: loading.classList.contains('error') },
       toasts: [...this.root.querySelectorAll('.ov-toast:not(.out)')].map((t) => t.textContent),
@@ -532,6 +546,12 @@ export class Overlay {
       input.value = ui.search.q || '';
       if (ui.search.open && input.value) this._search(input.value);
       else this.$('.ov-results').hidden = true;
+    }
+    if (this._kiwix) {
+      if (ui.kiwix) {
+        this._kiwix._setPrefs({ ...this._kiwix._prefs(), ...ui.kiwix });
+        this._kiwix.show();
+      } else this._kiwix.hide();
     }
   }
 

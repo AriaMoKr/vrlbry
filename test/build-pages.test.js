@@ -145,6 +145,8 @@ describe('GitHub Pages build: prebuilt indexes (--indexes)', () => {
       const idx = JSON.parse(fs.readFileSync(path.join(site, 'indexes', st.indexes[0]), 'utf8'));
       assert.equal(idx.count, 4, 'this file\'s fixture has 4 articles');
       assert.deepEqual(fs.readdirSync(site), ['indexes'], 'nothing else is written');
+      // …and the list of them, for Kiwix's library in the page (local/kiwix.js).
+      assert.deepEqual(JSON.parse(fs.readFileSync(path.join(site, 'indexes', 'list.json'), 'utf8')), { indexes: st.indexes });
     } finally {
       fs.rmSync(zims, { recursive: true, force: true });
       fs.rmSync(site, { recursive: true, force: true });

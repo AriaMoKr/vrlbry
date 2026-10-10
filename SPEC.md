@@ -224,8 +224,10 @@ whole. It works on GitHub Pages (no server) and beside a server's own libraries.
   ZIM's index spares its visitors the build, minutes on a headset for a big Wikipedia (Simple
   English about 10 min with the page rendering, the top 1M about an hour). `tools/build-pages.mjs
   --indexes <folder>` builds the indexes of a folder's Wikipedia and Wikisource ZIMs into
-  `indexes/` (the standalone workflow's "demo indexes" does it for the demo set); the big
-  editions' indexes (the top 1M's is 10.7 MB) are for the planned remote-ZIM repo to publish.
+  `indexes/` (the standalone workflow's "demo indexes" does it for the demo set), and their
+  names in `indexes/list.json` (`{ "indexes": [names] }`, with any written before), by which
+  Kiwix's library (below) knows which big Wikipedias open here; the big editions' indexes (the
+  top 1M's is 10.7 MB) are this repo's to publish (TODO, milestone 3 step 6).
 - **From the web** (milestone 3): a ZIM's web address, typed or pasted into the card's field
   under the Open button, a link dropped on the page (`text/uri-list`), the example's "read it
   online" button, or `__vrlbry.openUrl(url)`. `local/zim-url.js` `zimUrl` makes the address one
@@ -249,6 +251,29 @@ whole. It works on GitHub Pages (no server) and beside a server's own libraries.
   down): "Not reopened: …", and the card's "Last time" line offers it with the kept files
   (Reopen, Forget). Nothing else is required: no proxy, no block store, no prebuilt index for a
   Gutenberg ZIM or a small Wikipedia.
+- **Kiwix's library** (milestone 3 step 5, optional; `local/kiwix.js`, `ui/kiwix-dialog.js`, the
+  kiosk's Kiwix tab): the ZIMs this app reads well (Gutenberg, Wikipedia, Wikisource) as Kiwix's
+  OPDS catalogue lists them (`opds.library.kiwix.org`, CORS `*`), to open from the web without
+  typing an address, in VR too (no file picker or keyboard there). Read live, one feed per kind
+  with every language (`/catalog/v2/entries?category=<kind>&count=-1`: 100 KB to 1.5 MB, about
+  100 KB compressed, revalidated by its ETag), kept for the page's life, a language chosen
+  without another request; the languages' own names from `/catalog/v2/languages`. The feed is
+  machine-written and read with patterns (`parseEntries`; no DOMParser in a worker or Node).
+  Each entry: its UUID, name, kind, languages, flavour, size, date, article count, thumbnail
+  and the ZIM's address (through `zimUrl`: Kiwix's mirror), its title as the app shows a
+  library (`libraryTitle`, moved to `util/library-title.js` for the page; Gutenberg's whole
+  collections "Gutenberg · every book"), its summary unless the title says it (`about`).
+  Listed by title, a topic's editions together (the fullest first), and those that open here
+  first: a Wikipedia or Wikisource over 256 MB (`URL_INDEX_BUILD_BYTES`) whose UUID is not in
+  the site's `indexes/list.json` is marked "needs an index" and cannot be opened from the list
+  (47 of the 65 English Wikipedias in October 2026). The card's "Browse Kiwix's library…" opens
+  the dialog: kind tabs, a language menu (with counts), a filter, rows with thumbnail, title,
+  summary, size, date and Open (closing the dialog; "Open ✓" for one already open). The kiosk's
+  Kiwix tab is the same list: kind buttons, "Change language" (a list of languages, most
+  entries first), rows that open their ZIM with a notice in the headset; in VR an error is a
+  notice too. The kind and language are remembered (`settings.kiwix`, the browser's language
+  at first). Unreachable, the dialog and the tab say so, with Retry; addresses and files still
+  open. The dialog's state is in the debug report (`uiState().kiwix`).
 - **Kept from the web** (milestone 3 step 4, optional; `local/block-cache.js`): what is read
   from a web address is kept in IndexedDB (`vrlbry-blocks`: the reads, their sizes and when they
   were written, and the total), so a library, book or search read once costs no network again,

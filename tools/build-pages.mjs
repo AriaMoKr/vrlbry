@@ -423,6 +423,12 @@ export async function buildIndexes(dir, out, { log = console.log } = {}) {
       indexes.push(name);
       log(`  ${lib.id}: indexes/${name} (${(fs.statSync(from).size / 1048576).toFixed(1)} MB)`);
     }
+    // The list of what is there (with any index written before): Kiwix's library in the page
+    // (local/kiwix.js) offers a big Wikipedia only when its index is here.
+    if (indexes.length) {
+      const all = fs.readdirSync(path.join(out, 'indexes')).filter((n) => n !== 'list.json').sort();
+      fs.writeFileSync(path.join(out, 'indexes', 'list.json'), `${JSON.stringify({ indexes: all }, null, 1)}\n`);
+    }
     return { libraries: library.list().length, indexes };
   } finally {
     await library.close();

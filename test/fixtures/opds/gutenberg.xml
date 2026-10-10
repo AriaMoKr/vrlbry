@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom"
+      xmlns:dc="http://purl.org/dc/terms/"
+      xmlns:opds="https://specs.opds.io/opds-1.2"
+      xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/">
+  <id>7b7f1eb7-5dae-2861-8b47-fa8e33b23554</id>
+
+  <link rel="self"
+        href="/catalog/v2/entries?category=gutenberg&amp;count=-1"
+        type="application/atom+xml;profile=opds-catalog;kind=acquisition"/>
+  <link rel="start"
+        href="/catalog/v2/root.xml"
+        type="application/atom+xml;profile=opds-catalog;kind=navigation"/>
+  <link rel="up"
+        href="/catalog/v2/root.xml"
+        type="application/atom+xml;profile=opds-catalog;kind=navigation"/>
+
+  <title>Filtered Entries (category=gutenberg&amp;count=-1)</title>
+  <updated>2026-10-10T04:12:18Z</updated>
+  <totalResults>4</totalResults>
+  <startIndex>0</startIndex>
+  <itemsPerPage>103</itemsPerPage>
+  <entry>
+    <id>urn:uuid:c77bbc17-604b-2e6c-595d-09072a6c6e59</id>
+    <title>Project Gutenberg Library</title>
+    <updated>2026-03-05T00:00:00Z</updated>
+    <summary>Language and literature</summary>
+    <language>eng</language>
+    <name>gutenberg_en_lcc-p</name>
+    <flavour></flavour>
+    <category>gutenberg</category>
+    <tags>_category:gutenberg;gutenberg;_ftindex:no;_pictures:yes;_videos:yes;_details:yes</tags>
+    <articleCount>39</articleCount>
+    <mediaCount>920</mediaCount>
+    <link rel="http://opds-spec.org/image/thumbnail"
+          href="/catalog/v2/illustration/c77bbc17-604b-2e6c-595d-09072a6c6e59/?size=48"
+          type="image/png;width=48;height=48;scale=1"/>
+    <link type="text/html" href="https://browse.library.kiwix.org/content/gutenberg_en_lcc-p_2026-03" />
+    <author>
+      <name>gutenberg.org</name>
+    </author>
+    <publisher>
+      <name>openZIM</name>
+    </publisher>
+    <dc:issued>2026-03-05T00:00:00Z</dc:issued>
+    <link rel="http://opds-spec.org/acquisition/open-access" type="application/x-zim" href="https://lb.download.kiwix.org/zim/gutenberg/gutenberg_en_lcc-p_2026-03.zim.meta4" length="38550528" />
+  </entry>
+  <entry>
+    <id>urn:uuid:c5d468e5-7b83-09cd-76bc-d23dc3aaa4f5</id>
+    <title>Project Gutenberg Library</title>
+    <updated>2026-03-05T00:00:00Z</updated>
+    <summary>Germanic and Scandinavian languages</summary>
+    <language>eng</language>
+    <name>gutenberg_en_lcc-pd</name>
+    <flavour></flavour>
+    <category>gutenberg</category>
+    <tags>_category:gutenberg;gutenberg;_ftindex:no;_pictures:yes;_videos:yes;_details:yes</tags>
+    <articleCount>14</articleCount>
+    <mediaCount>128</mediaCount>
+    <link rel="http://opds-spec.org/image/thumbnail"
+          href="/catalog/v2/illustration/c5d468e5-7b83-09cd-76bc-d23dc3aaa4f5/?size=48"
+          type="image/png;width=48;height=48;scale=1"/>
+    <link type="text/html" href="https://browse.library.kiwix.org/content/gutenberg_en_lcc-pd_2026-03" />
+    <author>
+      <name>gutenberg.org</name>
+    </author>
+    <publisher>
+      <name>openZIM</name>
+    </publisher>
+    <dc:issued>2026-03-05T00:00:00Z</dc:issued>
+    <link rel="http://opds-spec.org/acquisition/open-access" type="application/x-zim" href="https://lb.download.kiwix.org/zim/gutenberg/gutenberg_en_lcc-pd_2026-03.zim.meta4" length="15091712" />
+  </entry>
+  <entry>
+    <id>urn:uuid:a1e751b1-0b37-20fb-8991-6ed0968d900c</id>
+    <title>Project Gutenberg Library</title>
+    <updated>2025-11-25T00:00:00Z</updated>
+    <summary>All books in English from the first producer of free Ebooks</summary>
+    <language>eng</language>
+    <name>gutenberg_en_all</name>
+    <flavour></flavour>
+    <category>gutenberg</category>
+    <tags>_category:gutenberg;gutenberg;_ftindex:no;_pictures:yes;_videos:yes;_details:yes</tags>
+    <articleCount>80656</articleCount>
+    <mediaCount>1275468</mediaCount>
+    <link rel="http://opds-spec.org/image/thumbnail"
+          href="/catalog/v2/illustration/a1e751b1-0b37-20fb-8991-6ed0968d900c/?size=48"
+          type="image/png;width=48;height=48;scale=1"/>
+    <link type="text/html" href="https://browse.library.kiwix.org/content/gutenberg_en_all_2025-11" />
+    <author>
+      <name>gutenberg.org</name>
+    </author>
+    <publisher>
+      <name>openZIM</name>
+    </publisher>
+    <dc:issued>2025-11-25T00:00:00Z</dc:issued>
+    <link rel="http://opds-spec.org/acquisition/open-access" type="application/x-zim" href="https://lb.download.kiwix.org/zim/gutenberg/gutenberg_en_all_2025-11.zim.meta4" length="221251591168" />
+  </entry>
+  <entry>
+    <id>urn:uuid:4edd27c7-69d7-4f76-3b2c-000e5799e860</id>
+    <title>Project Gutenberg Library</title>
+    <updated>2025-11-27T00:00:00Z</updated>
+    <summary>All books in all languages from the first producer of free Ebooks</summary>
+    <language>eng,fra,fin,deu,ita,nld,spa,por,hun,zho,swe,ell,lat,epo,dan,cat,tgl,pol,nor,jpn,fry,afr,cym,ces,rus,isl,heb,bul,tel,ron,srp,slv,glg,nhe,gle,mri,oci,lit,kor,bre,bod,iku,ara,yid,san,fas,ina,est</language>
+    <name>gutenberg_mul_all</name>
+    <flavour></flavour>
+    <category>gutenberg</category>
+    <tags>_category:gutenberg;gutenberg;_ftindex:no;_pictures:yes;_videos:yes;_details:yes</tags>
+    <articleCount>100909</articleCount>
+    <mediaCount>1449957</mediaCount>
+    <link rel="http://opds-spec.org/image/thumbnail"
+          href="/catalog/v2/illustration/4edd27c7-69d7-4f76-3b2c-000e5799e860/?size=48"
+          type="image/png;width=48;height=48;scale=1"/>
+    <link type="text/html" href="https://browse.library.kiwix.org/content/gutenberg_mul_all_2025-11" />
+    <author>
+      <name>gutenberg.org</name>
+    </author>
+    <publisher>
+      <name>openZIM</name>
+    </publisher>
+    <dc:issued>2025-11-27T00:00:00Z</dc:issued>
+    <link rel="http://opds-spec.org/acquisition/open-access" type="application/x-zim" href="https://lb.download.kiwix.org/zim/gutenberg/gutenberg_mul_all_2025-11.zim.meta4" length="253055617024" />
+  </entry>
+</feed>

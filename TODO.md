@@ -345,10 +345,14 @@
            index appeared meanwhile (a copy of the ZIM, the same file opened twice) takes it.
            Not done: a way to see or clear the cache in the page (clearing the site's data
            does it).
-        5. A Kiwix library to choose from (optional): the ZIMs the app reads well (Gutenberg,
-           Wikipedia, Wikisource) from OPDS, filtered or curated into JSON in the repo, in the
-           overlay and on the kiosk in VR (no file picker there). A URL can still be typed,
-           and files still opened, when the catalogue cannot be reached.
+        5. *Done (2026-10-10):* Kiwix's library to choose from (optional, SPEC §2.6 "Kiwix's
+           library"): the ZIMs the app reads well (Gutenberg, Wikipedia, Wikisource) from Kiwix's
+           OPDS catalogue, read live rather than curated into the repo (a copy would go stale:
+           editions change monthly and old ones leave the mirror), in the card's dialog and on
+           the kiosk's Kiwix tab in VR. Big Wikipedias without a prebuilt index on the site
+           (`indexes/list.json`, now written by `--indexes`) are listed last and cannot be
+           opened: 47 of the 65 English ones, which is what step 6 is for. On a Quest the list
+           fills in about a second. Addresses and files still open without the catalogue.
         6. Prebuilt indexes for the curated Wikipedias and Wikisources (optional), under
            `indexes/` on this site: building one in the browser over the network means
            downloading all its HTML (12.7 GB for the top 1M). Built here or in CI, ~10 MB each

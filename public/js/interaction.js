@@ -12,6 +12,7 @@ import { perf } from './perf.js';
 import { load, save } from './util/storage.js';
 import { progressText } from './util/progress.js';
 import { isLocal } from './local/local.js';
+import { KINDS as KIWIX_KINDS, sizeText } from './local/kiwix.js';
 import { letterOf, SORT_MODES, inTitleOrder, thumbIndex } from './util/books.js';
 import { PAGE_PX, READ } from './config.js';
 import {
@@ -172,11 +173,13 @@ export class Interaction {
     const hasRooms = this.libraries.length > 1 || (place && isFaceted(place, this.booksByLib[place.id]));
     if (!hasRooms && this._kioskTab === 'rooms') this._kioskTab = 'shelves';
     let y = 96;
-    const tabs = [['shelves', 'Shelves & settings'], ...(hasRooms ? [['rooms', 'Rooms']] : []), ['search', 'Search']];
+    if (!this.kiwix && this._kioskTab === 'kiwix') this._kioskTab = 'shelves';
+    const tabs = [['shelves', 'Shelves & settings'], ...(hasRooms ? [['rooms', 'Rooms']] : []), ['search', 'Search'],
+      ...(this.kiwix ? [['kiwix', 'Kiwix']] : [])];
     const tw = (W - 2 * pad - 12 * (tabs.length - 1)) / tabs.length;
     tabs.forEach(([id, label], i) => {
       p.add({
-        id: `tab-${id}`, type: 'button', x: pad + i * (tw + 12), y, w: tw, h: 54, label, size: 25,
+        id: `tab-${id}`, type: 'button', x: pad + i * (tw + 12), y, w: tw, h: 54, label, size: tabs.length > 3 ? 22 : 25,
         active: this._kioskTab === id,
         onClick: () => {
           this._kioskTab = id;
@@ -188,19 +191,31 @@ export class Interaction {
     y += 74;
     if (this._kioskTab === 'rooms') this._fillRoomsTab(p, y, pad, place, placesScroll);
     else if (this._kioskTab === 'search') this._fillSearchTab(p, y, pad);
+    else if (this._kioskTab === 'kiwix') this._fillKiwixTab(p, y, pad);
     else this._fillShelvesTab(p, y, pad, place);
     // In VR a file cannot be picked or downloaded: say where that is done (the page's library
     // card has the button and a link to an example ZIM). Not over the newer-version notice.
     if (this.controls.presenting && !this._outdated) {
       p.add({
         id: 'own-zims', type: 'text', x: pad, y: p.h - 40, w: W - 2 * pad - 270, h: 28, size: 20, color: UI.muted, maxLines: 1,
-        text: 'More ZIMs: exit VR, then open a file or a web address on the page',
+        text: this.kiwix ? 'More ZIMs: the Kiwix tab, or exit VR to open a file or a web address'
+          : 'More ZIMs: exit VR, then open a file or a web address on the page',
       });
     }
     if (this._version || this._outdated) {
       const text = this._outdated ? 'A newer version of this site is available: reload the page' : this._version;
       p.add({ id: 'version', type: 'text', x: pad, y: p.h - 40, w: W - 2 * pad, h: 28, text, size: 21, color: this._outdated ? UI.accent : UI.muted, align: 'right', maxLines: 1 });
     }
+  }
+
+  /**
+   * Kiwix's library for the kiosk's Kiwix tab (main.js): { catalog, prefs(), setPrefs(p),
+   * isOpen(url) }, and onOpenUrl(url) to open a ZIM from the web.
+   */
+  setKiwix(kiwix, onOpenUrl) {
+    this.kiwix = kiwix;
+    this.onOpenUrl = onOpenUrl;
+    this._fillKiosk();
   }
 
   /** A build without a server (GitHub Pages): nothing to rescan. */
@@ -548,10 +563,109 @@ export class Interaction {
     });
   }
 
+  /**
+   * Kiwix's library in VR (milestone 3 step 5; local/kiwix.js), where no file can be picked and no
+   * address typed: the ZIMs this library reads well, by kind and language; a row opens one from
+   * the web (onOpenUrl). `this.kiwix` is given by main.js: { catalog, prefs(), setPrefs(p),
+   * isOpen(url) }. The page's dialog (ui/kiwix-dialog.js) is the same list.
+   */
+  _fillKiwixTab(p, y0, pad) {
+    const W = p.w;
+    const k = this.kiwix;
+    const { kind, lang } = k.prefs();
+    const key = `${kind}|${lang}`;
+    if (this._kiwixView?.key !== key) {
+      this._kiwixView = { key, loading: true };
+      k.catalog.view(kind, lang).then((view) => ({ key, view }), (err) => ({ key, error: err.message })).then((st) => {
+        if (this._kiwixView?.key !== key) return;
+        this._kiwixView = st;
+        if (this._kioskTab === 'kiwix') this._fillKiosk();
+      });
+    }
+    const st = this._kiwixView;
+    let y = y0;
+    const bw = (W - 2 * pad - 10 * (KIWIX_KINDS.length - 1)) / KIWIX_KINDS.length;
+    KIWIX_KINDS.forEach((kd, i) => {
+      p.add({
+        id: `kiwix-kind-${kd.id}`, type: 'button', x: pad + i * (bw + 10), y, w: bw, h: 50, label: kd.label, size: 24,
+        active: kind === kd.id,
+        onClick: () => {
+          this._kiwixPicking = false;
+          k.setPrefs({ kind: kd.id, lang });
+          this._fillKiosk();
+        },
+      });
+    });
+    y += 62;
+    const langName = st.view?.languages.find((l) => l.code === lang)?.name ?? lang;
+    p.add({ type: 'text', x: pad, y: y + 8, w: W - 2 * pad - 250, h: 34, text: `Language: ${langName}`, size: 24, color: UI.text, maxLines: 1 });
+    p.add({
+      id: 'kiwix-lang', type: 'button', x: W - pad - 240, y, w: 240, h: 48, size: 22, disabled: !st.view,
+      label: this._kiwixPicking ? 'Back to the list' : 'Change language',
+      onClick: () => {
+        this._kiwixPicking = !this._kiwixPicking;
+        this._fillKiosk();
+      },
+    });
+    y += 62;
+    const listH = Math.max(140, p.h - y - 64);
+    if (st.loading) {
+      p.add({ type: 'text', x: pad, y, w: W - 2 * pad, h: 40, text: "Reading Kiwix's catalogue…", size: 24, color: UI.muted });
+      return;
+    }
+    if (st.error) {
+      p.add({ type: 'text', x: pad, y, w: W - 2 * pad, h: 100, size: 24, color: UI.muted, maxLines: 3,
+        text: `Kiwix's catalogue cannot be reached (${st.error}). Outside VR a ZIM's web address can still be typed, or a file opened.` });
+      p.add({ id: 'kiwix-retry', type: 'button', x: pad, y: y + 110, w: 200, h: 48, label: 'Try again', size: 22,
+        onClick: () => { this._kiwixView = null; this._fillKiosk(); } });
+      return;
+    }
+    if (this._kiwixPicking) {
+      const rowH = 58;
+      const current = st.view.languages.findIndex((l) => l.code === lang);
+      p.add({
+        id: 'kiwix-langs', type: 'list', x: pad, y, w: W - 2 * pad, h: Math.floor(listH / rowH) * rowH, rowH, size: 24,
+        scroll: Math.max(0, current - 1),
+        items: st.view.languages.map((l) => ({
+          label: l.name, right: String(l.count), active: l.code === lang,
+          onClick: () => {
+            this._kiwixPicking = false;
+            k.setPrefs({ kind, lang: l.code });
+            this._fillKiosk();
+          },
+        })),
+      });
+      return;
+    }
+    const entries = st.view.entries;
+    if (!entries.length) {
+      p.add({ type: 'text', x: pad, y, w: W - 2 * pad, h: 70, size: 24, color: UI.muted, maxLines: 2,
+        text: `No ${KIWIX_KINDS.find((x) => x.id === kind)?.label ?? ''} ZIMs in this language: change it above.` });
+      return;
+    }
+    const rowH = 72;
+    p.add({
+      id: 'kiwix-list', type: 'list', x: pad, y, w: W - 2 * pad, h: Math.floor(listH / rowH) * rowH, rowH, size: 24,
+      items: entries.map((e) => {
+        const open = k.isOpen(e.url);
+        return {
+          label: e.title,
+          sub: [e.date, e.about].filter(Boolean).join(' · '),
+          right: open ? 'open' : e.needsIndex ? 'needs an index' : sizeText(e.size),
+          active: open, disabled: open || e.needsIndex,
+          onClick: () => {
+            this.notice(`Opening ${e.title}`, "Read from Kiwix's mirror, a little at a time", 5);
+            this.onOpenUrl?.(e.url);
+          },
+        };
+      }),
+    });
+  }
+
   /** Library info changed without a rebuild (e.g. indexing progress): refresh the kiosk text. */
   updateLibraries(libraries) {
     this.libraries = libraries;
-    if (this._kioskTab === 'rooms') this._fillKiosk();
+    if (this._kioskTab === 'rooms' || this._kioskTab === 'kiwix') this._fillKiosk();
   }
 
   /**
@@ -893,7 +1007,7 @@ export class Interaction {
       // The list under the pointer, else the tab's own list.
       const el = this.kiosk.hover;
       const id = el?.type === 'list' && el.id ? el.id
-        : { rooms: 'places', search: 'search-results', shelves: 'recent' }[this._kioskTab];
+        : { rooms: 'places', search: 'search-results', shelves: 'recent', kiwix: this._kiwixPicking ? 'kiwix-langs' : 'kiwix-list' }[this._kioskTab];
       this.kiosk.scrollList(id, Math.sign(deltaY));
     }
   }

@@ -11,7 +11,7 @@ import { ArchiveLibrary, createContentCache, libraryIdFor } from '../core/librar
 import { IndexQueue } from '../core/util/index-queue.js';
 import { ZimArchive } from '../core/zim/reader.js';
 import { HttpSource, HttpSourceError } from '../core/zim/http-source.js';
-import { fileNameOf } from './zim-url.js';
+import { fileNameOf, URL_INDEX_BUILD_BYTES } from './zim-url.js';
 
 /** Converted books kept for all local libraries: a headset has far less memory than a PC. */
 const CONTENT_CACHE_BYTES = 64 * 1024 * 1024;
@@ -36,11 +36,6 @@ const URL_ARCHIVE = {
   clusterCacheBytes: CLUSTER_CACHE_BYTES, blockCacheBytes: BLOCK_CACHE_BYTES, blockBytes: 8 * 1024,
   wholeClusterBytes: 0, wholeCompressedBytes: WHOLE_CLUSTER_BYTES,
 };
-/**
- * The biggest Wikipedia or Wikisource read from the web whose index is built here when none is
- * found (in the store or the site's indexes/): building reads most of the file.
- */
-const URL_INDEX_BUILD_BYTES = 256 * 1024 * 1024;
 
 export const LOCAL_PREFIX = '~';
 
