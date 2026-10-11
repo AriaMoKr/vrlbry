@@ -508,7 +508,7 @@
            variable `ZIM_PROXY`, and a measurement on a Quest (step 8). *Later:* keeping popular reads at the edge (the Cache
            API, which needs a custom domain, not workers.dev; a 206 would be kept as a 200
            under a key of its own); asking the mirrors' operators for CORS (a few lines of
-           nginx or Apache: README, "Why only Kiwix's own mirror"), which would make the proxy
+           nginx or Apache: docs/MIRRORS.md), which would make the proxy
            unnecessary. Kiwix's redirects already send CORS headers (`download.kiwix.org` →
            `lb.download.kiwix.org`, whose MirrorBrain sends California to
            `wi.mirror.driftle.ss`; preflights answered 204), so once the mirrors do too, the

@@ -1,7 +1,16 @@
 {
   "name": "vrlbry",
   "version": "0.1.0",
-  "description": "A WebXR virtual library: browse and read the books inside the ZIM files in a directory, shelved in VR.",
+  "description": "A candle-lit 3D library for Kiwix ZIM files: walk the shelves and read Project Gutenberg, Wikipedia and Wikisource in VR (Meta Quest), on a desktop or a phone.",
+  "keywords": ["webxr", "virtual-reality", "threejs", "meta-quest", "kiwix", "zim", "openzim", "project-gutenberg", "wikipedia", "wikisource", "ebook-reader", "digital-library", "offline-first"],
+  "homepage": "https://ariamokr.github.io/vrlbry/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AriaMoKr/vrlbry.git"
+  },
+  "bugs": {
+    "url": "https://github.com/AriaMoKr/vrlbry/issues"
+  },
   "type": "module",
   "private": true,
   "license": "MIT",

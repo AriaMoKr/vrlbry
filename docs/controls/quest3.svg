@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 700" width="1200" height="700" role="img" aria-label="Meta Quest 3 controllers">
+<title>Meta Quest 3 controllers</title>
+<rect width="1200" height="700" rx="18" fill="#1b1510"/>
+<rect x="10" y="10" width="1180" height="680" rx="14" fill="#241c15" stroke="#5d4a33" stroke-width="1.5"/>
+<text x="40" y="62" font-family="Georgia, 'Times New Roman', serif" font-size="30" fill="#d6b06a">Meta Quest 3 controllers</text>
+<text x="40" y="92" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="16" fill="#b9a789">In VR: point with either controller. The Meta button opens the headset’s own menu.</text>
+
+<path d="M 223 388 L 273 568 Q 279 592 255 598 L 207 606 Q 183 609 179 586 L 151 404 Z" fill="#3b3026" stroke="#a88a55" stroke-width="2"/>
+<path d="M 253 470 L 275 554 L 263 558 L 241 474 Z" fill="#8f6c34" stroke="#d6b06a" stroke-width="1.5"/>
+<path d="M 269 252 Q 195 202 121 252 Q 195 226 269 252 Z" fill="#8f6c34" stroke="#d6b06a" stroke-width="1.5"/>
+<ellipse cx="195" cy="330" rx="108" ry="96" fill="#3b3026" stroke="#a88a55" stroke-width="2"/>
+
+<circle cx="157" cy="316" r="34" fill="#15100c" stroke="#a88a55" stroke-width="2"/>
+<circle cx="157" cy="316" r="23" fill="#2a221b" stroke="#d6b06a" stroke-width="2"/>
+<circle cx="157" cy="316" r="15" fill="none" stroke="#5d4a33" stroke-width="1.5"/>
+
+
+<circle cx="239" cy="284" r="19" fill="#2a221b" stroke="#d6b06a" stroke-width="2"/>
+<text x="239" y="289.76" text-anchor="middle" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="16" font-weight="700" fill="#f0e6d2">Y</text>
+
+<circle cx="253" cy="338" r="19" fill="#2a221b" stroke="#d6b06a" stroke-width="2"/>
+<text x="253" y="343.76" text-anchor="middle" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="16" font-weight="700" fill="#f0e6d2">X</text>
+<circle cx="215" cy="384" r="9" fill="#2a221b" stroke="#a88a55" stroke-width="1.5"/>
+<text x="215" y="412" text-anchor="middle" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#d6b06a">≡</text>
+<text x="195" y="208" text-anchor="middle" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#d6b06a">Trigger</text>
+<text x="269" y="630" text-anchor="middle" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#d6b06a">Grip</text>
+<text x="157" y="374" text-anchor="middle" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#d6b06a">Thumbstick</text>
+<path d="M 477 388 L 427 568 Q 421 592 445 598 L 493 606 Q 517 609 521 586 L 549 404 Z" fill="#3b3026" stroke="#a88a55" stroke-width="2"/>
+<path d="M 447 470 L 425 554 L 437 558 L 459 474 Z" fill="#8f6c34" stroke="#d6b06a" stroke-width="1.5"/>
+<path d="M 431 252 Q 505 202 579 252 Q 505 226 431 252 Z" fill="#8f6c34" stroke="#d6b06a" stroke-width="1.5"/>
+<ellipse cx="505" cy="330" rx="108" ry="96" fill="#3b3026" stroke="#a88a55" stroke-width="2"/>
+
+<circle cx="543" cy="316" r="34" fill="#15100c" stroke="#a88a55" stroke-width="2"/>
+<circle cx="543" cy="316" r="23" fill="#2a221b" stroke="#d6b06a" stroke-width="2"/>
+<circle cx="543" cy="316" r="15" fill="none" stroke="#5d4a33" stroke-width="1.5"/>
+
+
+<circle cx="461" cy="284" r="19" fill="#2a221b" stroke="#d6b06a" stroke-width="2"/>
+<text x="461" y="289.76" text-anchor="middle" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="16" font-weight="700" fill="#f0e6d2">B</text>
+
+<circle cx="447" cy="338" r="19" fill="#2a221b" stroke="#d6b06a" stroke-width="2"/>
+<text x="447" y="343.76" text-anchor="middle" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="16" font-weight="700" fill="#f0e6d2">A</text>
+<circle cx="485" cy="384" r="9" fill="#2a221b" stroke="#a88a55" stroke-width="1.5"/>
+<text x="485" y="412" text-anchor="middle" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#d6b06a">Meta</text>
+<text x="505" y="208" text-anchor="middle" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#d6b06a">Trigger</text>
+<text x="431" y="630" text-anchor="middle" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#d6b06a">Grip</text>
+<text x="543" y="374" text-anchor="middle" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#d6b06a">Thumbstick</text><text x="195" y="660" text-anchor="middle" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#b9a789">left</text><text x="505" y="660" text-anchor="middle" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#b9a789">right</text><text x="680" y="140" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="17" font-weight="600" fill="#d6b06a">Trigger</text>
+<text x="680" y="162" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#f0e6d2">Point and select: take a book, press a button, turn</text>
+<text x="680" y="182" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#f0e6d2">a page, follow a link (either hand; with hand</text>
+<text x="680" y="202" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#f0e6d2">tracking, pinch).</text>
+<text x="680" y="234" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="17" font-weight="600" fill="#d6b06a">B or Y</text>
+<text x="680" y="256" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#f0e6d2">Back: put a book back, close it, go back along the</text>
+<text x="680" y="276" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#f0e6d2">links you followed. Hold it for a second while</text>
+<text x="680" y="296" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#f0e6d2">browsing to leave VR.</text>
+<text x="680" y="328" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="17" font-weight="600" fill="#d6b06a">A</text>
+<text x="680" y="350" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#f0e6d2">Read the book in your hand.</text>
+<text x="680" y="382" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="17" font-weight="600" fill="#d6b06a">Right thumbstick</text>
+<text x="680" y="404" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#f0e6d2">Push forward, aim the arc and let go to teleport;</text>
+<text x="680" y="424" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#f0e6d2">flick left or right to turn. Reading: flick to turn</text>
+<text x="680" y="444" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#f0e6d2">pages, up or down to bring the book nearer or</text>
+<text x="680" y="464" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#f0e6d2">farther.</text>
+<text x="680" y="496" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="17" font-weight="600" fill="#d6b06a">Left thumbstick</text>
+<text x="680" y="518" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#f0e6d2">Walk (with Stick walking on). Reading: up or down to</text>
+<text x="680" y="538" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#f0e6d2">make the book bigger or smaller.</text>
+<text x="680" y="570" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="17" font-weight="600" fill="#d6b06a">Thumbstick press</text>
+<text x="680" y="592" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#f0e6d2">The book you hold or read comes in front of you.</text>
+<text x="680" y="624" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="17" font-weight="600" fill="#d6b06a">Grip</text>
+<text x="680" y="646" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#f0e6d2">Hold it to move the book.</text>
+
+</svg>

@@ -96,12 +96,41 @@ Each library is its own **room**: the hall shows one collection at a time, and t
 the catalogue stand switches between them. A library as large as Wikisource is narrowed down with
 two filters that can be used together or alone: a genre (Novels, Poetry, Drama, History &
 biography, Court decisions, …) and the letter titles start with — say, poems starting with A.
-Tap a filter again to remove it; with both removed you get the whole library. Up to 3,000 books
-are shelved at a time. As an experiment, **All libraries** puts all your libraries in one big
-hall of up to 200 bookcases: small libraries whole, and the first books of the large ones
-(each large library gets an equal share). You stay where you are while the shelves change around you. Search still
-covers every book of every library: picking one that is not on the shelves takes you to its
-room.
+Tap a filter again to remove it; with both removed you get the whole library. Up to 10,000 books
+are shelved at a time; a bigger room has pages (**Previous** / **Next** on the catalogue stand),
+and a Gutenberg collection shelves its most-read books first. As an experiment, **All libraries**
+puts all your libraries in one big hall of up to 200 bookcases: small libraries whole, and the
+first books of the large ones (each large library gets an equal share). You stay where you are
+while the shelves change around you. Search still covers every book of every library: picking
+one that is not on the shelves takes you to its room.
+
+## Reading ZIM files in the browser
+
+"Open ZIM files…" under the library list (or dropping `.zim` files on the page) reads ZIMs from
+your own device in the browser, in the online version as well as beside a server's libraries:
+nothing is uploaded, and only the parts of the file a page needs are read, so even very large
+files open quickly. A Wikipedia or Wikisource ZIM is indexed in the browser the first time (a
+big one takes minutes on a headset) and the index is kept. The files stay open until the page
+is reloaded; where the browser allows it (desktop Chrome and Edge, Quest Browser) the card
+offers to reopen them. On a Quest, open them before entering VR.
+
+A ZIM can also be read straight from the web, without downloading it: choose one in Kiwix's
+library ("Browse Kiwix's library…" in the card, or the Kiwix tab of the catalogue stand, also in
+VR), paste its address into the field under the button (or drop its link on the page), or read
+the example from the card.
+Kiwix's download links work: they are turned into the same file on Kiwix's own mirror,
+`mirror.download.kiwix.org`, the one that lets a web page read its files (its other mirrors do
+not). Only what is shown is fetched, a few kilobytes at a time. On a Quest 3 in California,
+through the site's proxy, a Gutenberg ZIM opens in about 2 s and the 49 GB
+top-million Wikipedia in 2.4 s, finding an article in it in 5 s; from Kiwix's mirror directly
+those take 7-9 s, 6-7 s and 10-11 s. Web addresses reopen by themselves when
+the page loads; a library's × closes it. A Wikipedia or Wikisource from the web needs a
+prebuilt index unless it is small (building one reads most of the file).
+
+The online version reads Kiwix's files through a small edge proxy that picks the mirror nearest
+you, when it has one ([how it works and how to run one](docs/DEVELOPMENT.md#reading-zims-from-the-web)).
+Only Kiwix's own mirror lets a web page read its files; if you run or know one of the others,
+[here is what it would take](docs/MIRRORS.md).
 
 ## Using a VR headset
 
@@ -127,11 +156,19 @@ Then press **Enter VR**.
 | Turn pages | ← → Space, or click a page | swipe, or tap a page | bumpers, or D-pad ← → | flick the right stick, or trigger on a page |
 | Text size, theme, contents | + / −, toolbar | toolbar | D-pad ↑ ↓ · **Y** · **X** | toolbar |
 | Book distance / size | mouse wheel | pinch | triggers | right stick up/down · left stick up/down · grip to move the book |
+| Follow a link | click it | tap it | **A** on it | trigger on it |
+| Back (along links, then close) | Backspace, or **↩ Back** | **↩ Back** | **B** | **B** or **Y** |
 | Close / put back | Esc | **✕** / **Put back** | **B** | **B** or **Y** |
+| Book out of sight | **F** | **Bring the book in front of me** (in **?**) | press the right stick | press a thumbstick |
+| Back to the start | Home, or **Reset view** (in **?**) | **Reset view** (in **?**) | | |
 | Leave VR | | | | hold **B** or **Y** for a second while browsing, or **Exit VR** on the catalogue stand (or the headset's Meta button) |
+
+![The Meta Quest 3 controllers and what each button does](docs/controls/quest3.svg)
 
 A gamepad (Xbox, PlayStation or another Bluetooth pad) works on a desktop or a phone; it takes
 over as soon as you use it, and moving the mouse hands control back.
+
+![A gamepad and what each button does, with Xbox and PlayStation names](docs/controls/gamepad.svg)
 
 The catalogue stand next to where you start lets you re-shelve the books by title, author or
 popularity, jump to a letter, pick a book at random ("Surprise me"), reopen recently read books,
@@ -153,235 +190,20 @@ the room, where you stand and look, the book you have open and its page, and the
 **Restore scene** takes you back there. In the help you can also paste a scene, or a debug report
 someone sent you, and restore it: you see what they saw.
 
-## Development
+## The online version
 
-```bash
-npm test
-```
+<https://ariamokr.github.io/vrlbry/> is the same app as a static website, without the Node server.
+It has a demo set of Kiwix's ZIM files (a Gutenberg collection, Wikipedia 100, and Wikipedia's
+Chemistry, Medicine, Mathematics, Physics and Golf), opens more from Kiwix's library or from your
+device, and notices a new version within seconds and offers to reload. How it is built and
+deployed is in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#the-online-version-github-pages).
 
-```bash
-node --test test/zim.test.js
-```
+## Developing
 
-- No build step. The browser loads plain ES modules from `public/`; Three.js comes from
-  `node_modules` via an import map.
-- Tests that need the reference ZIM (`gutenberg_en_lcc-pe_2026-03.zim` in the repo root) are skipped
-  when it is not there. Wikisource support is tested on a miniature synthetic archive.
-- Dev pages: `/reader-test.html` (the page renderer as a 2D reader) and `/dev/world-test.html` (the
-  room with an orbit camera).
-- `/?xr=emulate` replaces WebXR with Meta's IWER emulator (a virtual Quest 3), so the VR controls
-  can be exercised in a desktop browser. `window.__vrlbry` exposes the app for scripted tests;
-  `__vrlbry.tick(dt, n)` advances frames manually when the page is not being painted.
+Tests, the static site's build and workflow, the edge proxy and measuring performance on a Quest
+are in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md). [SPEC.md](SPEC.md) is the contract between the
+modules and [TODO.md](TODO.md) lists open work.
 
-## Online version (GitHub Pages)
+## License
 
-The same client can run as a static website, without the Node server:
-
-```bash
-npm run build:pages
-```
-
-This writes `dist/`: the client, the few Three.js and IWER files it imports, and static answers
-in place of the API. The page addresses everything relative to itself, so it works under a path
-such as `https://<user>.github.io/vrlbry/`. Module URLs carry a version tag, so a plain reload
-picks up a new deploy even though Pages lets browsers cache files for 10 minutes. A page left open
-notices a new deploy within 10 seconds and offers to reload.
-
-`npm run build:pages -- --zims <folder>` also pre-renders the ZIMs in that folder: the server runs
-inside the build and every answer the client can ask for (book lists, each book's chunks, the
-images) is saved as a file, so the site needs nothing but static hosting. Searching Wikipedia
-articles then happens in the browser, over a saved title list (by title only: redirects are not
-included). A first visit opens the *Demo set* place when the site has it.
-
-`--zim-files <folder>` instead puts the ZIM files themselves on the site: the page opens them
-in the browser with every visit, reading them from the site as it reads ZIMs from the web, with
-their indexes built at deploy time.
-
-The workflow in `.github/workflows/pages.yml` runs the tests, downloads the demo set (the ZIMs
-listed in `tools/demo-set.txt`: Gutenberg LCC-P, the Wikipedia Mathematics, Physics, Chemistry
-and Medicine minis, Wikipedia 100, and Golf with pictures, cached between runs) and publishes it
-on every push to `main`; enable it once in the repository's Settings → Pages → Source: *GitHub
-Actions*. Each demo ZIM is on the site in its smaller form: LCC-P, Chemistry, Medicine and
-Wikipedia 100 pre-rendered, Mathematics, Physics and Golf as ZIM files (the second word `file`
-in the list), about 460 MB (pre-rendering all seven made 605 MB in 176,000 files; Pages allows
-1 GB). The site also ships the prebuilt indexes this repository has (its release "indexes" and
-the workflow's cache), as many as fit in 950 MB, and reads Kiwix's files through the edge proxy
-when the repository variable `ZIM_PROXY` names one. It needs nothing from the other two sites
-(below).
-
-### Your own ZIM files, without the server
-
-"Open ZIM files…" under the library list (or dropping `.zim` files on the page) reads ZIMs from
-your own device in the browser, in the online version as well as beside a server's libraries:
-nothing is uploaded, and only the parts of the file a page needs are read, so even very large
-files open quickly. A Wikipedia or Wikisource ZIM is indexed in the browser the first time (a
-big one takes minutes on a headset) and the index is kept. The files stay open until the page
-is reloaded; where the browser allows it (desktop Chrome and Edge, Quest Browser) the card
-offers to reopen them. On a Quest, open them before entering VR.
-
-A ZIM can also be read straight from the web, without downloading it: choose one in Kiwix's
-library ("Browse Kiwix's library…" in the card, or the Kiwix tab of the catalogue stand, also in
-VR), paste its address into the field under the button (or drop its link on the page), or read
-the example from the card.
-Kiwix's download links work: they are turned into the same file on Kiwix's own mirror,
-`mirror.download.kiwix.org`, the one that lets a web page read its files (its other mirrors do
-not). Only what is shown is fetched, a few kilobytes at a time. On a Quest 3 in California,
-through the site's proxy (below), a Gutenberg ZIM opens in about 2 s and the 49 GB
-top-million Wikipedia in 2.4 s, finding an article in it in 5 s; from Kiwix's mirror directly
-those take 7-9 s, 6-7 s and 10-11 s. Web addresses reopen by themselves when
-the page loads; a library's × closes it. A Wikipedia or Wikisource from the web needs a
-prebuilt index unless it is small (building one reads most of the file). The site publishes
-those of `tools/indexes.txt` under `indexes/`: `node tools/build-indexes.mjs --zims <folder>`
-builds them from local copies of the ZIMs into `.indexes/` (or `--web`, from Kiwix's mirror), and
-the Pages workflow ships those it has, as many as fit (see `.github/workflows/pages.yml`).
-
-Kiwix's own mirror is in France, so from far away every read costs a long round trip. An
-optional edge proxy, `tools/zim-proxy/` (a Cloudflare Worker), reads the mirror nearest each
-visitor instead and adds the CORS headers the other mirrors lack: from California the top 1M
-Wikipedia opened in 0.8 s instead of 2.4-4.3 s. It relays only parts of Kiwix's files, from
-those mirrors, and only for the pages of the sites listed in `tools/zim-proxy/wrangler.toml`
-(`ALLOWED_ORIGINS`). Cloudflare's free plan (no card needed) allows 100,000 requests a day;
-past that the Worker answers an error and the page reads Kiwix's mirror directly, as it does
-whenever the proxy fails. To deploy it with your Cloudflare account:
-
-```bash
-cd tools/zim-proxy
-npx wrangler login
-npx wrangler deploy
-```
-
-The deploy prints its address, `https://vrlbry-zim-proxy.<your subdomain>.workers.dev`. Set the
-repository variable `ZIM_PROXY` to it (Settings → Secrets and variables → Actions → Variables),
-and the next Pages build names it in the page. To try it before that, add
-`?zimproxy=<its address>` to the site's address. `node tools/zim-proxy/serve.mjs` runs it on
-this machine instead, for `http://localhost:8080/?zimproxy=http://localhost:8090/`.
-
-#### Why only Kiwix's own mirror: CORS
-
-A web page may read a file from another site only when that site's answer says it may, with
-CORS headers (Cross-Origin Resource Sharing). Downloads don't need them (a browser's download,
-curl, torrent clients, Kiwix's own apps), but a page that reads a ZIM in place does. Of the seven
-mirrors that `download.kiwix.org` sends people to, only Kiwix's own sends them (checked
-2026-10-10):
-
-| Mirror | Where | CORS |
-|---|---|---|
-| `mirror.download.kiwix.org` | France | yes |
-| `ftp.nluug.nl` | the Netherlands | no |
-| `wi.mirror.driftle.ss`, `ny.mirror.driftle.ss` | United States | no |
-| `dumps.wikimedia.org` | United States | no |
-| `ftpmirror.your.org` | United States | no |
-| `mirror-sites-in.mblibrary.info` | India | no |
-
-All seven serve range requests, and Kiwix's own redirects already send the headers:
-`download.kiwix.org` sends a browser to `lb.download.kiwix.org`, which picks a mirror near the
-visitor (for California, `wi.mirror.driftle.ss`). The browser only stops at the last step,
-because the mirror sends no headers. So the headers on the mirrors are all that is missing.
-
-So every visitor reads from France, however far away. From California a read takes 160-180 ms
-there and 80-90 ms from a US mirror. The 49 GB top-million Wikipedia opens in 2.4-4.3 s instead
-of 0.7-0.8 s, and finding an article in it takes 7.4 s instead of 3.4 s. The proxy above works
-around this, but someone has to run it. If the mirrors sent the headers, every page that reads
-ZIMs in the browser would get the speed with no proxy at all. If you run one of these mirrors,
-or would like to ask their operators or Kiwix (who keeps the list), here is what it takes.
-
-The response headers, as Kiwix's mirror sends them:
-
-```
-Access-Control-Allow-Origin: *
-Access-Control-Expose-Headers: Content-Range, Content-Length, Accept-Ranges
-```
-
-A page that sends a `Range` header first asks with an `OPTIONS` request (a preflight). That
-request needs an answer (204 or 200) with:
-
-```
-Access-Control-Allow-Origin: *
-Access-Control-Allow-Methods: GET, HEAD, OPTIONS
-Access-Control-Allow-Headers: Range
-Access-Control-Max-Age: 86400
-```
-
-In nginx (five of the six), add this to the `location` that serves the Kiwix files (its path
-differs per mirror). The headers are repeated inside the `if` because nginx drops the outer
-`add_header`s there:
-
-```nginx
-location /kiwix/ {
-    add_header Access-Control-Allow-Origin "*" always;
-    add_header Access-Control-Expose-Headers "Content-Range, Content-Length, Accept-Ranges" always;
-    if ($request_method = OPTIONS) {
-        add_header Access-Control-Allow-Origin "*";
-        add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS";
-        add_header Access-Control-Allow-Headers "Range";
-        add_header Access-Control-Max-Age "86400";
-        return 204;
-    }
-}
-```
-
-In Apache (with mod_headers), in the `<Directory>` or `<Location>` that serves them:
-
-```apache
-Header always set Access-Control-Allow-Origin "*"
-Header always set Access-Control-Expose-Headers "Content-Range, Content-Length, Accept-Ranges"
-Header always set Access-Control-Allow-Methods "GET, HEAD, OPTIONS"
-Header always set Access-Control-Allow-Headers "Range"
-```
-
-This is safe for a public file mirror:
-- `Access-Control-Allow-Origin: *` without credentials lets a page read only what anyone can
-  already download. No cookies or logins are sent, and nothing else about the server changes.
-- The traffic is range reads of a few kilobytes each, not whole files. Opening a book or an
-  article takes a few dozen of them.
-
-To check a mirror, send it a preflight:
-
-```bash
-curl -i -X OPTIONS -H "Origin: https://example.org" -H "Access-Control-Request-Method: GET" -H "Access-Control-Request-Headers: range" https://mirror.download.kiwix.org/zim/gutenberg/gutenberg_en_lcc-p_2026-03.zim
-```
-
-Kiwix's mirror answers `204 No Content` with the headers above. Today the nginx mirrors answer
-`405 Not Allowed`, and the Apache one answers `200 OK` without them.
-
-With the headers on the mirrors, no proxy would be needed: a page could follow Kiwix's redirect
-once to learn the mirror chosen for its visitor, then read that mirror directly.
-
-## Measuring performance on a Quest
-
-`/?perf` turns on a recorder in the page: every frame's timing, room switches, atlas painting,
-page turns, long tasks and memory. `tools/quest-perf.mjs` reads it from the headset over adb,
-together with the headset's own per-second numbers (FPS, stale frames, CPU/GPU load,
-temperature), the browser's memory and the battery, and saves one JSON file in `perf/`. While
-the scenarios run it also traces garbage collection, and shows per scenario how many dropped
-frames happened during a GC pause.
-
-Connect the Quest by USB (or adb over Wi-Fi), allow USB debugging for this computer, keep the
-server running, then:
-
-```bash
-node tools/quest-perf.mjs run --open
-```
-
-`--open` opens `http://localhost:8080/?perf` in Quest Browser (through `adb reverse`). Put the
-headset on and press **Enter VR**; the script then runs a fixed set of scenarios: standing in
-the smallest room, gliding along the aisles of a 3,000-book room, switching filters, entering,
-standing in and walking the all-libraries hall, and reading 20 pages; with a Wikipedia, also
-walking its largest room and reading a volume, including its longest article. They take about
-five minutes, move you around smoothly, and put your settings back at the end. If the open page has
-no `?perf`, or was loaded before the app last changed, `run` reloads it first (you then press
-**Enter VR** again), so the numbers always describe the current version. Use `--only
-small-idle,read` to run some of them.
-
-```bash
-node tools/quest-perf.mjs dump
-```
-
-`dump` saves what was recorded while you used the library yourself (opened with `?perf`), and
-`status` just checks the connection. `node tools/quest-perf.mjs --help` lists all options;
-`--cdp http://127.0.0.1:9222` runs the same against a desktop browser started with
-`--remote-debugging-port=9222` (with `?xr=emulate&perf` for an emulated headset).
-
-[SPEC.md](SPEC.md) describes the module contracts (ZIM reader, content format, HTTP API, client
-modules); [CLAUDE.md](CLAUDE.md) is a shorter architecture overview; [TODO.md](TODO.md) lists open
-work.
+[MIT](LICENSE).

@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 660" width="1200" height="660" role="img" aria-label="Gamepad: Xbox or PlayStation">
+<title>Gamepad: Xbox or PlayStation</title>
+<rect width="1200" height="660" rx="18" fill="#1b1510"/>
+<rect x="10" y="10" width="1180" height="640" rx="14" fill="#241c15" stroke="#5d4a33" stroke-width="1.5"/>
+<text x="40" y="62" font-family="Georgia, 'Times New Roman', serif" font-size="30" fill="#d6b06a">Gamepad: Xbox or PlayStation</text>
+<text x="40" y="92" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="16" fill="#b9a789">On a desktop or a phone: a crosshair in the middle of the screen aims.</text>
+
+<rect x="103" y="184" width="72" height="30" rx="11" fill="#2a221b" stroke="#d6b06a" stroke-width="2"/><rect x="495" y="184" width="72" height="30" rx="11" fill="#2a221b" stroke="#d6b06a" stroke-width="2"/>
+<text x="139" y="205" text-anchor="middle" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#d6b06a">LT</text><text x="531" y="205" text-anchor="middle" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#d6b06a">RT</text>
+<path d="M 185 250 C 115 238 69 268 53 330 C 33 422 35 512 85 536 C 130 558 165 520 195 475 C 225 436 265 430 335 430 C 405 430 445 436 475 475 C 505 520 540 558 585 536 C 635 512 637 422 617 330 C 601 268 555 238 485 250 C 415 234 255 234 185 250 Z" fill="#3b3026" stroke="#a88a55" stroke-width="2"/>
+<path d="M 85 260 C 109 230 159 222 217 234 L 215 246 C 161 236 119 242 95 266 Z" fill="#8f6c34" stroke="#d6b06a" stroke-width="1.5"/><path d="M 585 260 C 561 230 511 222 453 234 L 455 246 C 509 236 551 242 575 266 Z" fill="#8f6c34" stroke="#d6b06a" stroke-width="1.5"/>
+<text x="139" y="228" text-anchor="middle" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#d6b06a">LB</text><text x="531" y="228" text-anchor="middle" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#d6b06a">RB</text>
+
+<circle cx="165" cy="330" r="34" fill="#15100c" stroke="#a88a55" stroke-width="2"/>
+<circle cx="165" cy="330" r="23" fill="#2a221b" stroke="#d6b06a" stroke-width="2"/>
+<circle cx="165" cy="330" r="15" fill="none" stroke="#5d4a33" stroke-width="1.5"/>
+<text x="165" y="386" text-anchor="middle" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="13" fill="#b9a789">left stick</text>
+<path d="M 230 370 h 26 v 27 h 27 v 26 h -27 v 27 h -26 v -27 h -27 v -26 h 27 Z" fill="#2a221b" stroke="#d6b06a" stroke-width="2"/>
+<text x="243" y="472" text-anchor="middle" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#d6b06a">D-pad</text>
+
+<circle cx="427" cy="410" r="34" fill="#15100c" stroke="#a88a55" stroke-width="2"/>
+<circle cx="427" cy="410" r="23" fill="#2a221b" stroke="#d6b06a" stroke-width="2"/>
+<circle cx="427" cy="410" r="15" fill="none" stroke="#5d4a33" stroke-width="1.5"/>
+<text x="427" y="466" text-anchor="middle" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="13" fill="#b9a789">right stick</text>
+
+<circle cx="507" cy="290" r="18" fill="#2a221b" stroke="#d6b06a" stroke-width="2"/>
+<text x="507" y="295.76" text-anchor="middle" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="16" font-weight="700" fill="#f0e6d2">Y</text>
+<circle cx="469" cy="328" r="18" fill="#2a221b" stroke="#d6b06a" stroke-width="2"/>
+<text x="469" y="333.76" text-anchor="middle" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="16" font-weight="700" fill="#f0e6d2">X</text>
+<circle cx="545" cy="328" r="18" fill="#2a221b" stroke="#d6b06a" stroke-width="2"/>
+<text x="545" y="333.76" text-anchor="middle" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="16" font-weight="700" fill="#f0e6d2">B</text>
+<circle cx="507" cy="366" r="18" fill="#2a221b" stroke="#d6b06a" stroke-width="2"/>
+<text x="507" y="371.76" text-anchor="middle" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="16" font-weight="700" fill="#f0e6d2">A</text>
+<rect x="273" y="314" width="30" height="16" rx="8" fill="#2a221b" stroke="#d6b06a" stroke-width="1.5"/>
+<rect x="367" y="314" width="30" height="16" rx="8" fill="#2a221b" stroke="#a88a55" stroke-width="1.5"/>
+<circle cx="335" cy="278" r="15" fill="#2a221b" stroke="#a88a55" stroke-width="1.5"/>
+<text x="288" y="346" text-anchor="middle" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#d6b06a">View</text><text x="700" y="132" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="17" font-weight="600" fill="#d6b06a">A / ✕</text>
+<text x="700" y="154" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#f0e6d2">Select what the crosshair is on: take a book,</text>
+<text x="700" y="174" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#f0e6d2">Read, turn a page, follow a link.</text>
+<text x="700" y="202" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="17" font-weight="600" fill="#d6b06a">B / ○, View / Create</text>
+<text x="700" y="224" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#f0e6d2">Back: put a book back, close it, go back along the</text>
+<text x="700" y="244" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#f0e6d2">links you followed.</text>
+<text x="700" y="272" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="17" font-weight="600" fill="#d6b06a">X / □</text>
+<text x="700" y="294" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#f0e6d2">Contents.</text>
+<text x="700" y="322" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="17" font-weight="600" fill="#d6b06a">Y / △</text>
+<text x="700" y="344" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#f0e6d2">Page theme: paper, sepia, night.</text>
+<text x="700" y="372" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="17" font-weight="600" fill="#d6b06a">LB RB / L1 R1, D-pad ← →</text>
+<text x="700" y="394" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#f0e6d2">Turn the pages.</text>
+<text x="700" y="422" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="17" font-weight="600" fill="#d6b06a">D-pad ↑ ↓</text>
+<text x="700" y="444" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#f0e6d2">Text size.</text>
+<text x="700" y="472" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="17" font-weight="600" fill="#d6b06a">LT RT / L2 R2</text>
+<text x="700" y="494" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#f0e6d2">Bring the book nearer or farther; scroll the</text>
+<text x="700" y="514" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#f0e6d2">catalogue stand’s lists.</text>
+<text x="700" y="542" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="17" font-weight="600" fill="#d6b06a">Left stick</text>
+<text x="700" y="564" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#f0e6d2">Walk; press it to hurry.</text>
+<text x="700" y="592" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="17" font-weight="600" fill="#d6b06a">Right stick</text>
+<text x="700" y="614" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#f0e6d2">Look around; press it to bring the book in front</text>
+<text x="700" y="634" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="15" fill="#f0e6d2">of you.</text>
+
+</svg>
