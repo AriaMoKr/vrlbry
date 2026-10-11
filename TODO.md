@@ -106,7 +106,8 @@
   on the PC (dev server, Simple English): Einstein's 224 links resolve in 0.5 ms each; following
   one into another volume takes 3.6 s, most of it the put back / take out animations; within a
   book a link is a page turn (0.7 s). Wikipedia 100's static build resolved 1,485 links in its
-  9 s. Not yet tried on a Quest. Later:
+  9 s. On a Quest 3 in VR (2026-10-10, 72 Hz): a link within the book 0.57 s, into another
+  volume 3.6 s, back 3.5 s, 0.8-4.4 % of frames dropped; the hover mark costs under 0.1 ms. Later:
   - *Faster swaps:* following a link into another volume flies the book to its shelf and the
     other out (~3 s); a quicker exchange (the old volume vanishing onto its shelf, the new one
     arriving at once) may suit following many links.
