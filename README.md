@@ -5,7 +5,14 @@ books in a warm, candle-lit 3D reading room. Walk up to a shelf, pull a book out
 cover, open it and read it page by page. It works in a VR headset (Meta Quest and other WebXR
 browsers), on a desktop with mouse and keyboard, and on a phone.
 
-It understands two kinds of [Kiwix ZIM files](https://library.kiwix.org/) especially well:
+**Try it in your browser: <https://ariamokr.github.io/vrlbry/>.** There is nothing to install. On a
+Meta Quest, open the address in its browser and choose *Enter VR*. More books come from
+[Kiwix's library](https://library.kiwix.org/), right on the page or on the catalogue stand in VR,
+or from ZIM files on your own device.
+
+![An aisle of the library: Project Gutenberg's 10,000 most-read English books on facing bookcases](docs/screenshots/aisle.jpg)
+
+It understands three kinds of [Kiwix ZIM files](https://library.kiwix.org/) especially well:
 
 - **Project Gutenberg** (gutenberg2zim): real covers, authors, popularity ranks and the books' own
   illustrations.
@@ -20,6 +27,19 @@ It understands two kinds of [Kiwix ZIM files](https://library.kiwix.org/) especi
   articles are indexed in the background (about a minute for Simple English).
 
 Other ZIM files also work: their HTML articles become the books, up to 2,000 per file (`--max-generic`).
+
+## Screenshots
+
+| | |
+| --- | --- |
+| ![The whole library from above: rows of bookcases under a chandelier](docs/screenshots/library.jpg) | ![The Odyssey taken off the shelf, its cover beside the info panel](docs/screenshots/book.jpg) |
+| *Gutenberg · every book (EN): its 10,000 most-read books in rows, a room at a time* | *Take a book out: its cover, author and popularity, and Read* |
+| ![Alice's Adventures in Wonderland opened at its cover picture](docs/screenshots/alice-cover.jpg) | ![Chapter I of Alice beside the contents, whose entries are links](docs/screenshots/alice.jpg) |
+| *Open it and turn the pages: the book's own pictures* | *Links work: tap a chapter in the contents, a footnote, a Wikipedia reference* |
+| ![A Wikipedia article on tigers with photographs and a table](docs/screenshots/wikipedia.jpg) | ![Simple English Wikipedia as numbered encyclopedia volumes](docs/screenshots/volumes.jpg) |
+| *Wikipedia articles with their pictures, tables and links to other articles* | *A Wikipedia is a set of encyclopedia volumes, 1,000 articles each* |
+| ![The catalogue stand's Kiwix tab listing Gutenberg ZIM files](docs/screenshots/kiwix.jpg) | ![Close-up of Greek and Latin classics on the shelves](docs/screenshots/shelves.jpg) |
+| *Kiwix's library on the catalogue stand: open more books from the web, in VR too* | *Every spine shows its title and author* |
 
 ## Run it
 
