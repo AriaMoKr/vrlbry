@@ -62,12 +62,20 @@ describe('debug info', () => {
       getExtension: () => ({ UNMASKED_RENDERER_WEBGL: 3 }),
       getParameter: (p) => ({ 1: 'masked', 2: 8192, 3: 'Adreno (TM) 740', 4: 'WebGL 2.0 (OpenGL ES 3.0 Chromium)' }[p]),
       isContextLost: () => false,
+      getContextAttributes: () => ({ antialias: true }),
+      drawingBufferWidth: 800, drawingBufferHeight: 1500,
+      // The frame rendered for the report: the scene's background, a lighter middle.
+      readPixels: (x, y, w, h, f, t, out) => out.set(x === 400 && y === 750 ? [0x5a, 0x3b, 0x22, 255] : [13, 9, 6, 255]),
     };
+    let rendered = 0;
     const book = { libId: 'wp', id: 'v3', title: 'Banana – Éclair' };
     const shownLeft = { c: 2, p: 4 };
     const app = {
       version: '2026-10-05T12:00:00.000Z',
-      renderer: { getContext: () => gl, info: { render: { calls: 87 } }, xr: { isPresenting: false } },
+      renderer: {
+        getContext: () => gl, info: { render: { calls: 87 } }, xr: { isPresenting: false },
+        domElement: { clientWidth: 400, clientHeight: 750 }, setRenderTarget() {}, render: () => rendered++,
+      },
       xrDevice: null,
       settings: { place: 'demo', rooms: {}, sort: 'title', fontScale: 1.2, theme: 'night', readScale: 1, readDistance: 0.5, smoothMove: true, sound: false },
       world: { shelves: { cases: new Array(6) } },
@@ -83,7 +91,12 @@ describe('debug info', () => {
     const r = debugReport(app);
     assert.equal(r.app, 'vrlbry');
     assert.equal(r.version, app.version);
-    assert.deepEqual(r.gpu, { version: 'WebGL 2.0 (OpenGL ES 3.0 Chromium)', renderer: 'Adreno (TM) 740', maxTextureSize: 8192, drawCalls: 87 });
+    assert.deepEqual(r.gpu, {
+      version: 'WebGL 2.0 (OpenGL ES 3.0 Chromium)', renderer: 'Adreno (TM) 740', maxTextureSize: 8192,
+      antialias: true, buffer: [800, 1500], canvas: [400, 750], drawCalls: 87,
+      pixels: ['#5a3b22', '#0d0906', '#0d0906'],
+    });
+    assert.equal(rendered, 1); // a frame drawn for the report, read back before it is shown
     // A lost context (a black view) answers null to everything: the report says it was lost.
     gl.isContextLost = () => true;
     assert.deepEqual(debugReport(app).gpu, { contextLost: true, drawCalls: 87 });

@@ -1534,12 +1534,14 @@ States: `browse` → `inspect` → `opening` → `read` (and back), plus `busy` 
   narrowed to its title letter when the genre is over the cap); every loaded book carries its
   `libId` for this.
 - DOM overlay (non-VR): see `ui/overlay.js` — the help dialog and the loading error screen have
-  "Copy debug info" (`debug-info.js`): browser, GPU (WebGL version, renderer, or `contextLost`),
-  the site's version and the page's last 20 errors, plus the *scene* (`scene.js` `sceneOf`), as JSON, copied (or selected for copying by
+  "Copy debug info" (`debug-info.js`): browser, GPU (WebGL version, renderer, antialiasing, buffer
+  and canvas sizes, and `pixels`: three pixels of a frame drawn for the report, so a view drawn but
+  not shown reads as the room's colours; or `contextLost`), the site's version and the page's last 20 errors, plus the *scene* (`scene.js` `sceneOf`), as JSON, copied (or selected for copying by
   hand) and shown, for bug reports from other people's computers; no reading history. The help
   stays available (dimmed, in the corner) while a book is open. A lost WebGL context (the browser
   took the graphics memory back: the view goes black) shows an error toast until three gets it
-  back, then "The 3D view is back".
+  back, then "The 3D view is back". For a browser whose view stays blank, `?aa=0` turns
+  antialiasing off and `?dpr=<n>` caps the pixel ratio (2 by default).
 - Scenes (`scene.js`): `view` (state, place, room, sort, bookcases, and the viewpoint from
   `controls.viewpoint()`: x, z, eye height, yaw, pitch), `book` (library, id, title, page label,
   block anchor `{ c, b }` and the side of the spread it is on), `settings` (fontScale, theme,

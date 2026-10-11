@@ -78,6 +78,24 @@ export function noteError(kind, message) {
 export const recentErrors = () => errors.slice();
 
 /**
+ * What the GPU draws: three pixels (centre, lower middle, upper left) of a frame rendered now, as
+ * hex. A view that is drawn but never shown (a Pixel 11's Vivaldi showed the page's background,
+ * #17120d, where the scene's is #0d0906) then reads as the room's colours, one drawn black as black.
+ */
+function drawnPixels(app) {
+  const r = app.renderer;
+  if (r.xr.isPresenting) return null; // the headset's framebuffer is not the canvas's
+  r.setRenderTarget(null);
+  r.render(app.scene, app.camera);
+  const gl = r.getContext();
+  const px = new Uint8Array(4);
+  return [[0.5, 0.5], [0.5, 0.2], [0.2, 0.8]].map(([x, y]) => {
+    gl.readPixels(Math.floor(gl.drawingBufferWidth * x), Math.floor(gl.drawingBufferHeight * y), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    return `#${[...px.subarray(0, 3)].map((v) => v.toString(16).padStart(2, '0')).join('')}`;
+  });
+}
+
+/**
  * The report. Every part is collected on its own, so a broken one (or a page that failed before
  * the app existed) still leaves the rest.
  * @param {object} [app] window.__vrlbry (absent while loading or when loading failed)
@@ -113,7 +131,11 @@ export function debugReport(app, { overlay = app?.overlay } = {}) {
         version: gl.getParameter(gl.VERSION),
         renderer: gl.getParameter(dbg ? dbg.UNMASKED_RENDERER_WEBGL : gl.RENDERER),
         maxTextureSize: gl.getParameter(gl.MAX_TEXTURE_SIZE),
+        antialias: gl.getContextAttributes()?.antialias ?? null,
+        buffer: [gl.drawingBufferWidth, gl.drawingBufferHeight],
+        canvas: [r.domElement.clientWidth, r.domElement.clientHeight],
         drawCalls: r.info.render.calls,
+        pixels: part(() => drawnPixels(app)),
       };
     }),
     xr: part(() => ({ api: 'xr' in navigator, emulated: !!app.xrDevice, presenting: !!r.xr.isPresenting })),

@@ -53,12 +53,14 @@ async function start() {
   overlay.setLoading('Opening the library…', 0.02);
   let renderer;
   try {
-    renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    // ?aa=0 (no antialiasing) and ?dpr=<n> (the pixel ratio's cap) are for trying a browser whose
+    // view stays blank: a Pixel 11's Vivaldi drew frames but never showed them.
+    renderer = new THREE.WebGLRenderer({ antialias: params.get('aa') !== '0', powerPreference: 'high-performance' });
   } catch (err) {
     overlay.setError('This browser cannot show 3D graphics (WebGL is unavailable).');
     throw err;
   }
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.setPixelRatio(Math.min(devicePixelRatio, Number(params.get('dpr')) || 2));
   renderer.setSize(innerWidth, innerHeight);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.xr.enabled = true;
