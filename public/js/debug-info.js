@@ -105,8 +105,12 @@ export function debugReport(app, { overlay = app?.overlay } = {}) {
     })),
     gpu: part(() => {
       const gl = r.getContext();
+      // A lost context (the browser took back the graphics memory: the view goes black) answers
+      // null to every question.
+      if (gl.isContextLost?.()) return { contextLost: true, drawCalls: r.info.render.calls };
       const dbg = gl.getExtension('WEBGL_debug_renderer_info');
       return {
+        version: gl.getParameter(gl.VERSION),
         renderer: gl.getParameter(dbg ? dbg.UNMASKED_RENDERER_WEBGL : gl.RENDERER),
         maxTextureSize: gl.getParameter(gl.MAX_TEXTURE_SIZE),
         drawCalls: r.info.render.calls,

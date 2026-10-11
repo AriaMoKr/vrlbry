@@ -58,9 +58,10 @@ describe('debug info', () => {
 
   it('reports what it can, part by part', () => {
     const gl = {
-      RENDERER: 1, MAX_TEXTURE_SIZE: 2,
+      RENDERER: 1, MAX_TEXTURE_SIZE: 2, VERSION: 4,
       getExtension: () => ({ UNMASKED_RENDERER_WEBGL: 3 }),
-      getParameter: (p) => ({ 1: 'masked', 2: 8192, 3: 'Adreno (TM) 740' }[p]),
+      getParameter: (p) => ({ 1: 'masked', 2: 8192, 3: 'Adreno (TM) 740', 4: 'WebGL 2.0 (OpenGL ES 3.0 Chromium)' }[p]),
+      isContextLost: () => false,
     };
     const book = { libId: 'wp', id: 'v3', title: 'Banana – Éclair' };
     const shownLeft = { c: 2, p: 4 };
@@ -82,7 +83,10 @@ describe('debug info', () => {
     const r = debugReport(app);
     assert.equal(r.app, 'vrlbry');
     assert.equal(r.version, app.version);
-    assert.deepEqual(r.gpu, { renderer: 'Adreno (TM) 740', maxTextureSize: 8192, drawCalls: 87 });
+    assert.deepEqual(r.gpu, { version: 'WebGL 2.0 (OpenGL ES 3.0 Chromium)', renderer: 'Adreno (TM) 740', maxTextureSize: 8192, drawCalls: 87 });
+    // A lost context (a black view) answers null to everything: the report says it was lost.
+    gl.isContextLost = () => true;
+    assert.deepEqual(debugReport(app).gpu, { contextLost: true, drawCalls: 87 });
     assert.deepEqual(r.libraries, ['wp (wikipedia, 2)']);
     assert.deepEqual(r.view, {
       state: 'read', place: 'demo', room: null, sort: 'title', bookcases: 6,

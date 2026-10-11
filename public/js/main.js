@@ -203,6 +203,21 @@ async function start() {
   };
   overlay.onScene(sceneActions);
   overlay.onView({ reset: () => interaction.resetView(), toFront: () => interaction.bookToFront() });
+  // The browser can take the graphics context back (a phone short of memory, a GPU reset): the
+  // view goes black while the page goes on. three asks for it back; until then, say so (the error
+  // toast also goes into "Copy debug info"). Its textures come back with it (tried with
+  // WEBGL_lose_context).
+  let lostView = null;
+  renderer.domElement.addEventListener('webglcontextlost', () => {
+    lostView?.close();
+    lostView = overlay.showToast('The 3D view stopped: the browser took back its graphics memory. If it does not come back, reload the page.', 'error', Infinity);
+  });
+  renderer.domElement.addEventListener('webglcontextrestored', () => {
+    lostView?.close();
+    lostView = null;
+    console.warn('[vrlbry] The 3D view is back (WebGL context restored).');
+    overlay.showToast('The 3D view is back.', 'info', 4000);
+  });
   interaction.onSaveScene = sceneActions.save;
   interaction.onRestoreScene = sceneActions.restore;
   showSaved();
