@@ -308,7 +308,8 @@
         and a book of 362 pictures in 4 s, from a minute and half a minute this morning.
     - *Milestone 3: remote ZIMs* from Kiwix's mirror over HTTP range reads (a byte source like
       `BlobSource`), from a curated list. On branch `vrlbry-cloud` (repo AriaMoKr/vrlbry-cloud,
-      site https://ariamokr.github.io/vrlbry-cloud/), started 2026-10-10. *Mirrors (checked
+      site https://ariamokr.github.io/vrlbry-cloud/; both private since 2026-10-10, the site
+      gone), started 2026-10-10. *Mirrors (checked
       2026-10-10, the top 1M's first 80 bytes):* Kiwix's MirrorBrain lists seven, each holding
       a different subset (Gutenberg LCC-P on 5, the full English Wikipedia on 6, the top 1M on
       all 7): mirror.download.kiwix.org (Kiwix's own, France), ftp.nluug.nl (NL),
@@ -464,7 +465,8 @@
            English one is about 75 MB, 38 MB compressed: deltas of the order and a byte per
            size would shrink it several times), and other languages.
            *Shared storage, on purpose (decided 2026-10-10):* the three Pages sites (vrlbry,
-           vrlbry-standalone, vrlbry-cloud) are one origin, ariamokr.github.io, so they share
+           vrlbry-standalone, vrlbry-cloud; the other two private since 2026-10-10, their sites
+           gone, the rule kept for when they return) are one origin, ariamokr.github.io, so they share
            localStorage (`vrlbry:` keys: settings, reading positions, recent, the card, the
            remembered web addresses) and IndexedDB (`vrlbry-local` indexes, `vrlbry-files`
            handles, `vrlbry-blocks`). They are flavours of one app: most features will be merged
