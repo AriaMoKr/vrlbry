@@ -182,7 +182,9 @@ whole. It works on GitHub Pages (no server) and beside a server's own libraries.
   `util/progress.js` `progressText`) and "· N to index", with a bar from the worker's progress
   (how much of the catalogue is built, Gutenberg books looked up or generic entries scanned,
   `ArchiveLibrary.open`'s `onProgress`), until every file is open, however long that takes;
-  then the catalogue's "New library" toast or the file's error follows. With several files the
+  then the catalogue's "New library" toast or the file's error follows (no toast for the site's
+  own ZIM files or the addresses reopened as the page starts: they are not new to the visitor,
+  and the box showed them opening). With several files the
   box's head has a Stop: no more files are opened (`openFiles`' `stopped`; "Stopped: N files
   not opened."). Several files opened together go to the "Opened here" place (§5.6), one to its
   own room. Under the

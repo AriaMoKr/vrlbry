@@ -241,6 +241,9 @@ async function start() {
   // re-shelve (the rebuild waits until no book is open).
   let refreshing = false;
   let refreshAgain = false; // a refresh was asked for while one was being applied
+  // The web addresses reopened as the page starts (filled in below): their libraries are not new
+  // to the visitor, so the first time each appears it gets no "New library" toast.
+  const reopenedQuietly = new Set();
   async function applyCatalog(next, { manual = false } = {}) {
     if (refreshing) { // one is being applied: fetch and apply the newest once it is done
       refreshAgain = true;
@@ -265,6 +268,9 @@ async function start() {
       overlay.refreshKiwix?.(); // its Open buttons follow what is open
       for (const l of added) {
         if (l.indexing) continue; // its indexing toast says so (local), or the card does (server)
+        // The site's own files (every visit) and the addresses reopened as the page starts are
+        // not new, and the status box showed them opening: three toasts greeted every visitor.
+        if (l.site || reopenedQuietly.delete(l.url)) continue;
         overlay.showToast(`New library: ${l.title} (${(nextBooks[l.id]?.length || 0).toLocaleString()} books) — shelving…`, 'info', 6000);
       }
       for (const l of removed) overlay.showToast(`Library removed: ${l.title}`, 'info', 5000);
@@ -580,6 +586,7 @@ async function start() {
   // The web addresses opened before reopen now, in the background (the status box says so); the
   // place saved last time comes back once its library is open (openLocalFiles).
   const reopenUrls = remembered().map((r) => r.url);
+  for (const url of reopenUrls) reopenedQuietly.add(url);
   // The site's own ZIM files first (a static build's --zim-files: on the main site, part of the
   // demo set ships as ZIM files, read from the site itself like web addresses): opened with every
   // visit, in the Demo set (rooms.js), neither remembered nor in "Opened here".
