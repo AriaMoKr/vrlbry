@@ -535,6 +535,7 @@ export class Controls extends EventTarget {
         else if (name === 'rb' || name === 'right') key('ArrowRight', 'ArrowRight', pressed);
         else if (name === 'up') key('+', 'Equal', pressed); // text size
         else if (name === 'down') key('-', 'Minus', pressed);
+        else if (name === 'rs') key('f', 'KeyF', pressed); // the book in front, as a headset's stick press
       }
     };
     each(s.down, true);

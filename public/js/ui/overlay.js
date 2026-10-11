@@ -59,6 +59,7 @@ const HELP = {
     ['Text size, contents, theme', 'D-pad ↑ ↓ · X · Y'],
     ['Book distance', 'Triggers'],
     ['Put it back', 'B'],
+    ['Book out of sight', 'Press the right stick'],
   ],
   vr: [
     ['Point & select', 'Aim the ray, pull the trigger (or pinch with hand tracking)'],

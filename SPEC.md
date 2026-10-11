@@ -1352,7 +1352,8 @@ export class Controls extends EventTarget {
   unchanged:
   - A: `select` plus `button a`; B and Back: `button b`;
   - LB / RB and D-pad ← / →: `key` ArrowLeft / ArrowRight; D-pad ↑ / ↓: `key` `+` / `-`;
-  - X: `key t` (contents); Y: `key n` (theme);
+  - X: `key t` (contents); Y: `key n` (theme); right stick press: `key f` (the book in front, as
+    a headset's thumbstick press);
   - the triggers: a repeating `wheel` (100 · (RT − LT) every 0.12 s).
 - XR controller gamepads follow xr-standard: buttons 0 trigger, 1 squeeze, 3 thumbstick press,
   4 A/X, 5 B/Y; axes 2/3 thumbstick.
