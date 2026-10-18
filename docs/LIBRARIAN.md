@@ -210,3 +210,50 @@ node server/index.js --kiwix-serve http://192.168.50.204:8095/
 **Not done in the probe.** The kiosk's Search tab (VR) does not show text hits yet; the words are
 not highlighted on the page; no "more results"; libraries opened in the browser and the GitHub
 Pages site get none (only option 4 would reach them).
+
+### Spike: reading the Xapian databases ourselves (option 4, 2026-10-18)
+
+**Documentation.** None at the byte level. Xapian's [Administrator's Guide](https://xapian.org/docs/admin_notes.html)
+says a Glass table is a B-tree of 8 KB blocks and that single-file databases are made by
+compacting; the [Flint structure page](https://trac.xapian.org/wiki/FlintBackend/Structure)
+(2009) lists the tables as sorted key/tag pairs. The exact layout is defined only by
+xapian-core's code (GPL). So the format was worked out from the bytes of the ZIMs' databases,
+without reading Xapian's code, and checked by lookups whose results hold the words looked up.
+The notes are at the top of `tools/xapian-spike.mjs`, which does the lookups (Node, local files;
+not used by the app).
+
+**What is known now.** Blocks, branch and leaf items, values split over several items and
+deflate-compressed values; the tables' roots in block 0 (read by a pattern, not yet properly); the
+main table's keys (metadata such as `language`=`eng`, `data`=`fullPath`, `valuesmap`=`title:0;
+targetPath:1`, values, terms); a term's posting list in chunks (counts, document numbers, how
+often the word occurs in each); document numbers as keys; each document's data, its ZIM path.
+
+**Measured** (local files, `node tools/xapian-spike.mjs <zim> <X path> <words>`):
+
+| Index | Query | Documents | Block reads (terms + 12 paths) | Time |
+|---|---|---|---|---|
+| Wikisource titles (290 MB) | moby dick | 144 (the novel and its chapters) | 6 + 3 | 9 ms |
+| Wikisource titles | war peace | 416 | 7 + 15 | 12 ms |
+| Wikisource full text (816 MB) | whale | 5,641 of 706,864 pages, 7 chunks | 6 + 12 | 11 ms |
+| Gutenberg full text (667 MB, 2023) | queequeg harpoon razor | 7 books, the same as kiwix-serve's | 11 + 10 | 15 ms |
+| Wikipedia top 1M titles (1 GB) | everest | 139 | 4 + 15 | 7 ms |
+
+A term costs its tree's depth in reads (3: root, branch, leaf) plus its chunks; a path 1–3 reads
+(the tree's top blocks are shared). Over the network (a round trip 0.3–0.8 s, the reads of one
+level in parallel) a two-word query and ten paths would take about 1–3 s; from a file on a Quest
+(~65 ms a read alone, ~11 ms each in parallel) a fraction of a second. A word in nearly every page
+("the") has a posting list of megabytes: it needs a cap or to be skipped, as search engines do.
+
+**Not yet.**
+- Ranking: results are in document order (the ZIM's path order). BM25 needs each document's length
+  (likely the main table's `\0\xe0` chunks, not yet decoded) and the totals in block 0.
+- Block 0 read properly, not by a pattern; a value continuing into the next leaf (not met yet).
+- Term forms: the title index holds lower-case words ("grey's" too); the full-text index has no
+  "Zwhale"-style stemmed terms, so how other word forms are found (stemming) is still to learn.
+- Snippets (from the page's text, as `find` does now), prefix search ("every" → "everest" as
+  typed), and the title index's positions table (phrases).
+
+**Verdict.** Feasible. A reader in `core/` for lookups and document paths is a few hundred lines
+and works on the server, on files in the browser and over HTTP range reads (the databases are
+uncompressed blobs). Ranking and term forms are the next unknowns; then a measurement on a Quest
+over the network.
