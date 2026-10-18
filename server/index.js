@@ -3,7 +3,8 @@
  * vrlbry CLI (SPEC §3.7): scans a directory for ZIM files and serves the library over HTTP(S).
  *
  *   node server/index.js [--dir <path>] [--port 8080] [--host 0.0.0.0] [--https] [--https-port 8443]
- *                        [--no-http] [--cert <file> --key <file>] [--max-generic 2000] [--no-watch] [--quiet]
+ *                        [--no-http] [--cert <file> --key <file>] [--max-generic 2000] [--no-watch]
+ *                        [--kiwix-serve <url>] [--quiet]
  */
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -14,6 +15,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { createApp } from './http.js';
+import { kiwixServe } from './kiwix-serve.js';
 import { Library } from './library.js';
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -39,6 +41,8 @@ Options:
   --key <file>         PEM private key for --https
   --max-generic <n>    max books listed from a non-Gutenberg ZIM (default 2000)
   --no-watch           do not pick up added/removed .zim files while running
+  --kiwix-serve <url>  full-text search through Kiwix's server (kiwix-serve) at <url>, for the
+                       libraries whose file it serves too (the same ZIM)
   --quiet              only print problems and the server URL
   -h, --help           show this help
 `;
@@ -47,7 +51,8 @@ Options:
  * Parses CLI arguments.
  * @param {string[]} argv arguments without node and script (process.argv.slice(2))
  * @returns {{ dir: string, port: number, host: string|undefined, https: boolean,
- *   cert: string|null, key: string|null, maxGeneric: number, watch: boolean, quiet: boolean, help: boolean }}
+ *   cert: string|null, key: string|null, maxGeneric: number, watch: boolean, kiwixServe: string|null,
+ *   quiet: boolean, help: boolean }}
  * @throws {Error} with a user-facing message on invalid arguments
  */
 export function parseCliArgs(argv) {
@@ -65,6 +70,7 @@ export function parseCliArgs(argv) {
       key: { type: 'string' },
       'max-generic': { type: 'string' },
       'no-watch': { type: 'boolean', default: false },
+      'kiwix-serve': { type: 'string' },
       quiet: { type: 'boolean', default: false },
       help: { type: 'boolean', short: 'h', default: false },
     },
@@ -87,11 +93,15 @@ export function parseCliArgs(argv) {
     key: values.key ?? null,
     maxGeneric: values['max-generic'] === undefined ? 2000 : int('max-generic', values['max-generic'], 1, 10_000_000),
     watch: !values['no-watch'],
+    kiwixServe: values['kiwix-serve'] ?? null,
     quiet: values.quiet,
     help: values.help,
   };
   if (!!opts.cert !== !!opts.key) throw new Error('--cert and --key must be given together');
   if (!opts.http && !opts.https) throw new Error('--no-http needs --https (otherwise nothing would be served)');
+  if (opts.kiwixServe !== null && !/^https?:\/\/[^/]/i.test(opts.kiwixServe)) {
+    throw new Error(`--kiwix-serve must be an http(s) address (got ${JSON.stringify(opts.kiwixServe)})`);
+  }
   return opts;
 }
 
@@ -266,7 +276,15 @@ export async function main(argv = process.argv.slice(2), { out = console.log, er
   info(`Scanning ${opts.dir} for .zim files…`);
   // Skipped files and broken archives go to stderr even with --quiet.
   const library = await Library.scan(opts.dir, { maxGenericBooks: opts.maxGeneric, log: info, warn: err });
-  const app = createApp(library, { log: err });
+  const kiwix = opts.kiwixServe ? kiwixServe(opts.kiwixServe) : null;
+  if (kiwix) {
+    const served = await kiwix.books();
+    const searchable = library.list().filter((l) => served.has(l.archive?.header?.uuid)).length;
+    info(served.size
+      ? `Full-text search through kiwix-serve at ${kiwix.url}: ${searchable} of ${library.list().length} libraries`
+      : `kiwix-serve at ${kiwix.url} cannot be reached (yet): full-text search once it can`);
+  }
+  const app = createApp(library, { log: err, kiwix });
 
   let tls = null;
   if (opts.https) {

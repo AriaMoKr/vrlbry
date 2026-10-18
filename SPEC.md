@@ -890,13 +890,19 @@ export class ArchiveLibrary {
 
 ### 3.7 `server/http.js` and `server/index.js`
 
-`export function createApp(library, { publicDir, vendorDirs, log })` → `(req, res) => void` handler.
+`export function createApp(library, { publicDir, vendorDirs, log, kiwix })` → `(req, res) => void` handler.
 `index.js` CLI:
 
 ```
 node server/index.js [--dir <path>] [--port 8080] [--host 0.0.0.0] [--https] [--https-port 8443]
-                     [--no-http] [--cert <file> --key <file>] [--max-generic 2000] [--no-watch] [--quiet]
+                     [--no-http] [--cert <file> --key <file>] [--max-generic 2000] [--no-watch]
+                     [--kiwix-serve <url>] [--quiet]
 ```
+- `--kiwix-serve <url>` (optional): full-text search through Kiwix's own server, kiwix-serve
+  (`server/kiwix-serve.js`), which searches the Xapian indexes inside ZIM files. A library whose
+  file it serves too (the same UUID, from its catalogue, asked again after a minute) gets
+  `"fulltext": true` in `GET /api/libraries` and the `text` and `find` routes (§4). Without it, or
+  while kiwix-serve cannot be reached, search is as before.
 - `--dir` defaults to `process.cwd()`. **Conventional ports: HTTP 8080 (`--port`), HTTPS 8443
   (`--https-port`).** `--https` (also implied by `--https-port`, `--cert`/`--key`) adds the HTTPS
   listener next to plain HTTP: one process, one shared `Library`, two servers; `--no-http` keeps
@@ -1075,6 +1081,28 @@ as typed, with a capital first letter, in capitals and in title case; at most 40
 spelling), each redirect resolved to its article's position in the index (`searchRedirects` in
 `wikipedia.js`; the spellings searched at once, a spelling's redirects resolved 8 at a time). Title matches come first, except that another name typed in full leads; an
 article appears once. `limit` defaults to 12, at most 50. Empty while indexing.
+
+**`GET /api/libraries/:lib/text?q=<words>&start=<n>&limit=<n>`** (libraries with `"fulltext":
+true`, 404 otherwise, 502 when kiwix-serve fails) → `{ "library": lib, "total", "results": [ {
+"title", "author"?, "snippet": [[text, hit]], "find": { "words", "hits", "terms" }, "words",
+"path", "to": { "book", "c", "b" } } ], "unplaced" }`: kiwix-serve's full-text hits in its order
+of relevance (`limit` defaults to 10, at most 50), each placed in the library (`placeOf`): the
+book (a Gutenberg book by the number in its page's name, titled and authored as the library
+lists it; a Wikipedia article's volume and chunk; a Wikisource page's work, its part placed by
+`find`). `snippet` is kiwix-serve's excerpt with its hit words marked (1); `find` is what to look
+for in the book (`snippetTarget`, `core/content/find.js`): up to 6 words in a row around the
+first hit, the hit words, the query's words. Hits that are no book (an image, a page outside the
+works) are dropped and counted in `unplaced`.
+
+**`GET /api/libraries/:lib/books/:id/find?t=<query words>&w=<words in a row>&h=<hit words>&path=<archive path>&c=<n>`**
+→ `{ "library": lib, "at": { "c", "b", "exact" } | null, "beyond"? }`: where a full-text hit is
+in the book (`findText`): the block, from the page `path` names (a Wikisource part, placed
+exactly now) or chunk `c`, holding most of the query's words (10 points each, other endings
+allowed: "harpoon" finds "harpoons"), then the snippet's words in a row (5, `exact`), then the hit
+words (1 each); the first among equals. A Wikipedia volume's article is one chunk and a
+Wikisource part is read for 8 chunks; a Gutenberg book is read whole. `beyond: true` (and no
+`at`) when the page belongs to this work but lies past what it holds (a work is cut at 1,200
+parts or 36 MB, §3.8).
 
 **`GET /zim/:lib/<archivePath>`** → raw entry content. `<archivePath>` is `ns/url` with each
 segment percent-encoded (decode each segment, join with `/`). Follows ZIM redirects internally.

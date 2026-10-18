@@ -1,8 +1,9 @@
 // Search (SPEC §5.6), shared by the DOM overlay and the kiosk's Search tab: books by title,
-// subtitle and author across every library (in the client), and Wikipedia articles by title
-// prefix (on the server, which holds the millions of titles).
+// subtitle and author across every library (in the client), Wikipedia articles by title prefix
+// (on the server, which holds the millions of titles), and the full text of the libraries the
+// server can search through kiwix-serve (`fulltext`).
 
-import { searchArticles } from './api.js';
+import { searchArticles, searchText } from './api.js';
 
 /** Lower case without accents, so "eclair" finds "Éclair". */
 export function fold(s) {
@@ -67,5 +68,19 @@ export async function findArticles(libraries, q, perLibrary = 8) {
   const wikis = libraries.filter((l) => l.kind === 'wikipedia');
   const found = await Promise.all(wikis.map((lib) => searchArticles(lib.id, s, perLibrary)
     .then((articles) => articles.map((article) => ({ article, lib })), () => [])));
+  return found.flat();
+}
+
+/**
+ * Pages whose text holds the words of `q`, from every library with `fulltext` (the server's,
+ * through kiwix-serve), in each library's order of relevance; failures give no results.
+ * @returns {Promise<Array<{ hit: object, lib }>>}
+ */
+export async function findInText(libraries, q, perLibrary = 4) {
+  const s = String(q ?? '').trim();
+  if (fold(s).length < 3) return [];
+  const searchable = libraries.filter((l) => l.fulltext);
+  const found = await Promise.all(searchable.map((lib) => searchText(lib.id, s, perLibrary)
+    .then((r) => r.results.map((hit) => ({ hit, lib })), () => [])));
   return found.flat();
 }

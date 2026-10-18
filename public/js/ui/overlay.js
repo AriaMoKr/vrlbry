@@ -5,14 +5,17 @@ import { imageSource } from '../api.js';
 import { EXAMPLE_ZIM, MORE_ZIMS_URL, isLocalUrl } from '../local/local.js';
 import { droppedHandles } from '../local/handles.js';
 import { KiwixDialog } from './kiwix-dialog.js';
-import { bookIndex, matchBooks, findArticles } from '../search.js';
+import { bookIndex, matchBooks, findArticles, findInText } from '../search.js';
 import { load, save } from '../util/storage.js';
 import { noteError } from '../debug-info.js';
 import { RESET_PARTS, defaultResetParts } from '../reset.js';
 
 const ARTICLE_RESULTS = 8; // per Wikipedia library
+const TEXT_RESULTS = 4; // full-text hits per library
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+/** A full-text hit's snippet ([text, hit] parts) as HTML, the hit words bold. */
+const snippetHtml = (parts) => parts.map(([t, hit]) => (hit ? `<b>${esc(t)}</b>` : esc(t))).join('');
 /** A web address's host, for a library read from the web ("mirror.download.kiwix.org"). */
 const hostOf = (url) => { try { return new URL(url).hostname; } catch { return 'the web'; } };
 
@@ -88,6 +91,7 @@ export class Overlay {
     this._booksByLib = {};
     this._books = []; // book results of the current query
     this._articles = []; // article results of the current query
+    this._texts = []; // full-text results of the current query
     this._searchToken = 0;
     this._searchTimer = 0;
     this._pickArticle = null;
@@ -451,6 +455,8 @@ export class Overlay {
   onSearchPick(cb) { this._pick = cb; }
   /** cb(libId, { title, book, n }) for a Wikipedia article chosen in the search results. */
   onArticlePick(cb) { this._pickArticle = cb; }
+  /** cb(libId, hit) for a full-text hit chosen in the search results (api.searchText). */
+  onTextPick(cb) { this._pickText = cb; }
   onRescan(cb) { this._rescan = cb; }
 
   /**
@@ -670,7 +676,9 @@ export class Overlay {
     const s = q.trim().toLowerCase();
     const token = ++this._searchToken;
     clearTimeout(this._searchTimer);
+    clearTimeout(this._textTimer);
     this._articles = [];
+    this._texts = [];
     if (!s) {
       list.hidden = true;
       this._results = [];
@@ -683,18 +691,33 @@ export class Overlay {
       this._articles = found;
       this._showResults();
     }, 150);
+    // Full text (through kiwix-serve): a little later, it is the slowest.
+    this._textTimer = setTimeout(async () => {
+      const found = await findInText(this._libraries, q, TEXT_RESULTS);
+      if (token !== this._searchToken || !found.length) return;
+      this._texts = found;
+      this._showResults();
+    }, 300);
     this._books = matchBooks(this._bookIndex(), q, 12);
     this._showResults();
   }
 
-  /** Lists the book results, then the article results (fewer books once articles arrive). */
+  /**
+   * Lists the book results, then the article results, then the full-text hits (fewer books once
+   * the others arrive).
+   */
   _showResults() {
     const list = this.$('.ov-results');
-    const books = this._articles.length ? this._books.slice(0, 6) : this._books;
-    this._results = [...books, ...this._articles];
+    const books = this._articles.length || this._texts.length ? this._books.slice(0, 6) : this._books;
+    this._results = [...books, ...this._articles, ...this._texts];
     this._sel = this._results.length ? 0 : -1;
+    const textHead = books.length + this._articles.length;
     list.innerHTML = this._results.length
-      ? this._results.map((e, i) => (e.article ? `
+      ? this._results.map((e, i) => (e.hit ? `${i === textHead ? '<li class="ov-r-head" aria-hidden="true">In the text</li>' : ''}
+        <li role="option" data-i="${i}" class="${i === this._sel ? 'sel' : ''}">
+          ${e.lib.illustration ? `<img class="ov-r-icon" ${imgSrc(e.lib.illustration)} alt="" width="34" height="34">` : '<span class="ov-nocover"></span>'}
+          <div><div class="ov-r-title">${esc(e.hit.title)}</div><div class="ov-r-snip">${snippetHtml(e.hit.snippet)}</div><div class="ov-r-sub">${e.hit.author ? `${esc(e.hit.author)} · ` : ''}${esc(e.lib.title)}</div></div>
+        </li>` : e.article ? `
         <li role="option" data-i="${i}" class="${i === this._sel ? 'sel' : ''}">
           ${e.lib.illustration ? `<img class="ov-r-icon" ${imgSrc(e.lib.illustration)} alt="" width="34" height="34">` : '<span class="ov-nocover"></span>'}
           <div><div class="ov-r-title">${e.article.from ? `${esc(e.article.from)} → ` : ''}${esc(e.article.title)}</div><div class="ov-r-sub">${esc(e.lib.title)} · Volume ${esc(e.article.book.slice(1))}</div></div>
@@ -738,7 +761,8 @@ export class Overlay {
     this.$('.ov-results').hidden = true;
     const input = this.$('.ov-search input');
     input.blur();
-    if (e.article) this._pickArticle?.(e.lib.id, e.article);
+    if (e.hit) this._pickText?.(e.lib.id, e.hit);
+    else if (e.article) this._pickArticle?.(e.lib.id, e.article);
     else this._pick?.(e.book);
   }
 }

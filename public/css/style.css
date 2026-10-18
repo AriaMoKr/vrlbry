@@ -92,6 +92,9 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .ov-r-title { font: 600 14px/1.25 var(--serif); }
 .ov-r-sub { color: var(--muted); font-size: 12px; }
 .ov-empty { color: var(--muted); cursor: default !important; }
+.ov-results li.ov-r-head { display: block; padding: 8px 8px 2px; color: var(--muted); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; cursor: default; background: none; }
+.ov-r-snip { font-size: 12px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.ov-r-snip b { color: var(--accent); font-weight: 600; }
 
 /* Bottom bar */
 .ov-bottom { position: fixed; left: 50%; bottom: max(18px, env(safe-area-inset-bottom)); transform: translateX(-50%); display: flex; gap: 12px; align-items: center; }

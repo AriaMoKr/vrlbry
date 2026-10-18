@@ -155,5 +155,58 @@ Ways to use them, each optional (search without them stays as it is):
    cache. The most work, and Glass is thinly documented; over the network a common word's long
    posting list would need a cap. Measure on the Quest.
 
-To learn what it gives first, 1 on the Pi 5 is a day; 4 is the one that fits vrlbry (`core/`
-reads everything itself, and GitHub Pages plus ZIMs from the web are its main use).
+To learn what it gives first, 1 on the Pi 5 is a day (done: below); 4 is the one that fits
+vrlbry (`core/` reads everything itself, and GitHub Pages plus ZIMs from the web are its main
+use).
+
+### Probe 1: kiwix-serve on the Pi 5 (2026-10-18)
+
+Built on this branch: the server's `--kiwix-serve <url>` (SPEC §3.7, §4: routes `text` and
+`find`), the overlay's "In the text" results and `interaction.openText`.
+
+**Setup.** Kiwix's own build, `kiwix-tools_linux-aarch64-3.8.2.tar.gz` (20 MB, md5 checked;
+kiwix-serve 3.8.2, libkiwix 14.2.0, libzim 9.5.0, Xapian 1.4.23), unpacked in `~/kiwix-tools` on
+the Pi 5 (Debian 13, 8 GB, NVMe; no sudo). It serves `~/Downloads`' ZIMs from a library file it
+watches, so a ZIM added with `kiwix-manage` needs no restart:
+
+```bash
+K=~/kiwix-tools/kiwix-tools_linux-aarch64-3.8.2
+$K/kiwix-manage ~/kiwix-tools/library.xml add ~/Downloads/<file>.zim
+$K/kiwix-serve --daemon --port 8095 --monitorLibrary --library ~/kiwix-tools/library.xml
+```
+
+It is not a service: after a reboot the last line starts it again. The ZIMs are the PC's (the same
+files, so the same UUIDs): Gutenberg all 2023-08 (already on the Pi), Wikisource all maxi 2026-09
+(copied in 74 s) and Wikipedia top 1M maxi 2026-04 (49 GB, 7 min), plus the Pi's own Wikipedia
+all mini 2024-04. Then on the PC:
+
+```bash
+node server/index.js --kiwix-serve http://192.168.50.204:8095/
+```
+
+**Measured** (the PC asking the Pi over the LAN):
+
+| | Gutenberg | Wikisource | Wikipedia top 1M |
+|---|---|---|---|
+| kiwix-serve search alone | 0.13–0.22 s | 0.25 s | 0.08–0.13 s (a word in every page, "the": 3 s) |
+| vrlbry's `text` (search and place the hits) | 0.13 s | 0.10 s | 0.08 s; 0.67 s cold |
+| `find` (the hit's block) | ~1 s (the book converted) | ~1 s (the work converted) | ~50 ms (one article) |
+| title suggestions by any word (`/suggest`) | none (no title index) | 25 ms | 89 ms |
+
+**Found.**
+- Results are Kiwix's, in Xapian's order: "white whale" in Wikipedia puts four dolphin and whale
+  articles before *Mocha Dick*; in Gutenberg, whale books before *Moby-Dick*.
+- Kiwix's snippet is not always the place to open: for "Queequeg harpoon razor" it is *Moby-Dick*'s
+  contents list ("110. Queequeg in His Coffin"). So `find` ranks a book's blocks by the query's
+  words first and uses the snippet to choose among them: that opens on the scene where Queequeg
+  shaves with his harpoon.
+- A Wikisource work is cut at 1,200 parts (§3.8), and Kiwix finds pages past the cut: *Popular
+  Science Monthly* is one "work" in the library, cut long before volume 55's "White Whales in
+  Confinement". Such a hit is reported (`beyond`: a notice, the book goes back), not opened at a
+  wrong place.
+- The list stays fast by placing a Wikisource hit only by its work; its part is placed when it is
+  opened (placing every hit's part converted every work: 12 s for four hits).
+
+**Not done in the probe.** The kiosk's Search tab (VR) does not show text hits yet; the words are
+not highlighted on the page; no "more results"; libraries opened in the browser and the GitHub
+Pages site get none (only option 4 would reach them).

@@ -11,6 +11,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import zlib from 'node:zlib';
+import { snippetTarget } from '../public/js/core/content/find.js';
 import { LibraryError } from './library.js';
 import { DEFAULT_VENDOR_DIRS, rewriteVendorImports, vendorFileOf } from './vendor.js';
 
@@ -84,9 +85,11 @@ class BadRequest extends Error {}
  * @param {Record<string, string>} [opts.vendorDirs] `/vendor/<name>/*` → directory
  *   (default: three → node_modules/three, iwer → node_modules/iwer/build)
  * @param {(msg: string) => void} [opts.log=console.error] error log
+ * @param {ReturnType<typeof import('./kiwix-serve.js').kiwixServe> | null} [opts.kiwix] full-text
+ *   search through kiwix-serve (--kiwix-serve), for the libraries whose file it serves too
  * @returns {(req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse) => void}
  */
-export function createApp(library, { publicDir = DEFAULT_PUBLIC_DIR, vendorDirs = DEFAULT_VENDOR_DIRS, log = console.error } = {}) {
+export function createApp(library, { publicDir = DEFAULT_PUBLIC_DIR, vendorDirs = DEFAULT_VENDOR_DIRS, log = console.error, kiwix = null } = {}) {
   const publicRoot = path.resolve(publicDir);
   const vendorRoots = new Map(Object.entries(vendorDirs).map(([k, v]) => [k, path.resolve(v)]));
   // Serialized JSON (+ gzip, + ETag) of long-lived objects: book lists and reading metadata.
@@ -101,6 +104,15 @@ export function createApp(library, { publicDir = DEFAULT_PUBLIC_DIR, vendorDirs 
     return s;
   };
 
+  /** Every library's info, with `fulltext: true` where kiwix-serve serves the same file (§4). */
+  async function librariesInfo() {
+    const libs = library.list();
+    const infos = await Promise.all(libs.map((l) => l.info()));
+    if (!kiwix) return infos;
+    const served = await kiwix.books();
+    return infos.map((info, i) => (served.has(libs[i].archive?.header?.uuid) ? { ...info, fulltext: true } : info));
+  }
+
   async function handle(req, res) {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     const { segments, trailingSlash } = parsePath(req.url);
@@ -108,7 +120,7 @@ export function createApp(library, { publicDir = DEFAULT_PUBLIC_DIR, vendorDirs 
     // The one state-changing endpoint: re-read the ZIM folder (harmless if triggered by anyone).
     if (req.method === 'POST' && area === 'api' && segments[1] === 'rescan' && segments.length === 2) {
       const result = await library.rescan();
-      const libraries = await Promise.all(library.list().map((l) => l.info()));
+      const libraries = await librariesInfo();
       return sendBody(req, res, serialize({ ...result, libraries }), { cacheControl: 'no-store' });
     }
     if (req.method !== 'GET' && req.method !== 'HEAD') {
@@ -152,7 +164,7 @@ export function createApp(library, { publicDir = DEFAULT_PUBLIC_DIR, vendorDirs 
     }
     if (segs[0] !== 'libraries') return sendError(req, res, 404, 'unknown API endpoint');
     if (segs.length === 1) {
-      const libraries = await Promise.all(library.list().map((l) => l.info()));
+      const libraries = await librariesInfo();
       return sendBody(req, res, serialize({ generation: library.generation ?? 0, libraries }), { cacheControl: 'no-cache' });
     }
     const lib = library.get(segs[1]);
@@ -163,6 +175,39 @@ export function createApp(library, { publicDir = DEFAULT_PUBLIC_DIR, vendorDirs 
       const params = new URL(req.url, 'http://x').searchParams;
       const articles = await lib.searchArticles(params.get('q') ?? '', Number(params.get('limit')) || undefined);
       return sendBody(req, res, new Body(Buffer.from(JSON.stringify({ library: lib.id, articles }), 'utf8')), { cacheControl: 'no-store' });
+    }
+    if (segs.length === 3 && segs[2] === 'text') {
+      // Full-text search through kiwix-serve (§4): ?q=<words>&start=<n>&limit=<n>.
+      if (!lib) return sendError(req, res, 404, `unknown library: ${segs[1]}`);
+      if (!kiwix) return sendError(req, res, 404, 'no full-text search here (the server runs without --kiwix-serve)');
+      const uuid = lib.archive.header.uuid;
+      if (!(await kiwix.books()).has(uuid)) return sendError(req, res, 404, `kiwix-serve (${kiwix.url}) does not serve this file`);
+      const params = new URL(req.url, 'http://x').searchParams;
+      const q = (params.get('q') ?? '').trim();
+      const start = Math.max(0, Number(params.get('start')) || 0);
+      const limit = Math.min(50, Math.max(1, Number(params.get('limit')) || 10));
+      if (!q) return sendBody(req, res, new Body(Buffer.from(JSON.stringify({ library: lib.id, total: 0, results: [] }), 'utf8')), { cacheControl: 'no-store' });
+      let found;
+      try {
+        found = await kiwix.search(uuid, q, { start, limit });
+      } catch (err) {
+        return sendError(req, res, 502, `kiwix-serve: ${err.message}`);
+      }
+      // Each hit's book (placeOf; a Wikisource part's work, the part placed by /find when opened).
+      const ns = lib.archive.newNamespaceScheme ? 'C/' : '';
+      const placed = await Promise.all(found.results.map(async (r) => {
+        const path = ns + r.path;
+        const to = await lib.placeOf(path, { exact: false }).catch(() => null);
+        if (!to) return null;
+        const book = lib.kind === 'gutenberg' ? await lib.book(to.book).catch(() => null) : null;
+        return {
+          title: book?.title ?? r.title, ...(book?.author ? { author: book.author } : {}),
+          snippet: r.snippet, find: snippetTarget(r.snippet, q), words: r.words, path, to,
+        };
+      }));
+      const results = placed.filter(Boolean);
+      const body = { library: lib.id, total: found.total, results, unplaced: placed.length - results.length };
+      return sendBody(req, res, new Body(Buffer.from(JSON.stringify(body), 'utf8')), { cacheControl: 'no-store' });
     }
     if (segs.length < 3 || segs[2] !== 'books') return sendError(req, res, 404, 'unknown API endpoint');
     if (!lib) return sendError(req, res, 404, `unknown library: ${segs[1]}`);
@@ -204,6 +249,21 @@ export function createApp(library, { publicDir = DEFAULT_PUBLIC_DIR, vendorDirs 
       const to = await lib.resolveLink(bookId, new URL(req.url, 'http://x').searchParams.get('to') ?? '');
       if (!to) return sendError(req, res, 404, 'that link leads to nothing in this library');
       return sendBody(req, res, new Body(Buffer.from(JSON.stringify({ library: lib.id, to }), 'utf8')), { cacheControl: 'no-cache' });
+    }
+
+    if (segs[4] === 'find' && segs.length === 5) {
+      // Where a full-text hit is in this book (§4): ?t=<query words>&w=<snippet words in a
+      // row>&h=<snippet hit words>, from the page `path` names (a Wikisource part) or chunk `c`.
+      const params = new URL(req.url, 'http://x').searchParams;
+      const list = (k) => (params.get(k) ?? '').split(' ').filter(Boolean).slice(0, 24);
+      const reply = (value) => sendBody(req, res, new Body(Buffer.from(JSON.stringify({ library: lib.id, ...value }), 'utf8')), { cacheControl: 'no-store' });
+      const path = params.get('path');
+      const page = path ? await lib.placeOf(path, { strict: true }).catch(() => null) : null;
+      // A page of this work past what the work holds (it was cut): `beyond`, nothing to find.
+      if (path && !page && (await lib.placeOf(path, { exact: false }).catch(() => null))?.book === book.id) return reply({ at: null, beyond: true });
+      const from = page?.book === book.id ? page : { c: Math.max(0, Number(params.get('c')) || 0), b: 0 };
+      const found = await lib.findText(bookId, { words: list('w'), hits: list('h'), terms: list('t') }, { c: from.c, b: from.b ?? 0 });
+      return reply({ at: found ?? (page?.book === book.id ? { c: page.c, b: page.b ?? 0, exact: false } : null) });
     }
 
     if (segs[4] === 'res' && segs.length >= 6) {
