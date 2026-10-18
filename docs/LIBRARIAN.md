@@ -257,3 +257,60 @@ level in parallel) a two-word query and ten paths would take about 1–3 s; from
 and works on the server, on files in the browser and over HTTP range reads (the databases are
 uncompressed blobs). Ranking and term forms are the next unknowns; then a measurement on a Quest
 over the network.
+
+### Step 2: ranking, word forms and the network (2026-10-18)
+
+Now a module: `public/js/core/zim/xapian.js` (`XapianDb.inArchive(archive, 'X/fulltext/xapian',
+{ stem })`, `search(q)`, `postings(term)`, `path(did)`, `prefetch`), measured with
+`tools/xapian-measure.mjs` (Node: a file or an address; `--kiwix` compares with kiwix-serve) and
+`public/dev/xapian-test.html` (a browser, through the proxy); tests in `test/xapian.test.js` (the
+real-file ones skip without the Wikisource ZIM). Not used by the app yet.
+
+**Decoded since the spike.** Block 0 in full: a 2-byte version, the UUID, the revision, the six
+tables in order (postlist, docdata, termlist, position, spelling, synonym: root, level, entries,
+block size, the least size compressed, the free list), then the totals (documents, length bounds,
+total length: Wikisource's full text 1.25 billion words, ~1,770 a page). The documents' lengths are
+a posting list under `\0\xe0`. A full-text index holds stems only ("whales", "whaling" → "whale";
+"moby" → "mobi"), Snowball's English as Xapian stems; a title index holds plain lower-case words.
+The measurements use the `porter2` package (MIT, Snowball's English; CommonJS, so not yet for the
+browser: `npm install --no-save porter2`).
+
+**Ranking.** Xapian's BM25 with its defaults (k1 1, b 0.5): candidates are the rarest word's
+documents, scored without lengths, then the best 50 again with them. Against kiwix-serve's top 10
+for six queries (white whale; harpooned whales; moby dick ahab; declaration of independence;
+abraham lincoln speech; steam engine boiler), how many of ours are among theirs:
+
+| Lengths read | Overlap with kiwix-serve |
+|---|---|
+| none, or 10 | 4 5 7 1 4 2 |
+| 20 | 7 6 8 1 7 8 |
+| 50 | 8 8 8 2 8 9 |
+
+The outlier: "declaration of independence", whose rarest stem ("independ") is in 59,000 pages,
+past the 20,000 candidates taken (in document order). Words that common need what Xapian does
+(skipping documents that cannot reach the top) or fewer candidates by a better rule.
+
+**The network.** A search reads the tree's levels in batches (`prefetch`): the words' lists, then
+the chunks of the other words holding the rarest's documents, then 50 lengths, then 10 paths;
+blocks up to 4 apart are read together, up to 256 KB. Wikisource's full-text index:
+
+| From | Opening (archive + index) | A search, first time | Requests |
+|---|---|---|---|
+| a local file | — | 6–35 ms | — |
+| Kiwix's mirror (France), Node | 2.0–3.4 s + 0.7 s | 4.0–7.6 s | 21–54 |
+| a US mirror (Wisconsin: where the proxy goes from here), Node | 1.0 s + 0.4 s | 0.55–1.9 s (merging blocks 16 apart: best) | 12–80 |
+| the browser through the proxy, 6 at once | 2.6 s + 0.5 s | 0.9–1.8 s | 21–48 |
+| the browser through the proxy, 32 at once | | ~0.9 s (a new query) | 28 |
+| the same query again | | 2 ms (all cached) | 0 |
+
+Kiwix's French mirror answered slowly that day: 0.5 s to the first byte and 80–180 KB/s; the US
+mirrors 0.1–0.15 s and 1.4–2.1 MB/s. Both speak HTTP/2, but the French one answered requests on
+one connection no faster than one after another.
+
+**Next.**
+- The Quest: `public/dev/xapian-test.html` there, over Wi-Fi through the proxy (it was off).
+- A stemmer for the browser: `porter2` wrapped as a module, or Snowball's English ported (BSD).
+- Common words: better candidates than the first 20,000 in document order.
+- Into the app: full-text search of the libraries opened from the web or from files (in the local
+  library's worker), beside kiwix-serve's for the server's; snippets from the page's text (as
+  `find` does), titles from the path or the title value.
