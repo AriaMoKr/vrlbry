@@ -52,7 +52,8 @@ export function snippetParts(html) {
  * @returns {{ total: number, results: Array<{ title: string, path: string, snippet: Array<[string, 0|1]>, words: number|null }> }}
  */
 export function parseSearchXml(xml) {
-  const total = Number(/totalResults>\s*(\d+)/.exec(xml)?.[1] ?? 0);
+  // Written with thousands separators, as the word counts are ("4,000"; an estimate when large).
+  const total = Number((/totalResults>([^<]*)</.exec(xml)?.[1] ?? '').replace(/\D/g, '')) || 0;
   const results = [];
   for (const [, item] of xml.matchAll(/<item>([\s\S]*?)<\/item>/g)) {
     const link = decodeEntities(tag(item, 'link') ?? '');

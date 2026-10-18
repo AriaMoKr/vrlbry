@@ -82,7 +82,7 @@ const SEARCH_XML = `<?xml version="1.0" encoding="UTF-8"?>
     <title>Search: white whale</title>
     <link>/search?pattern=white%20whale&amp;books.id=x&amp;format=xml</link>
     <description>Search result for white whale</description>
-    <opensearch:totalResults>9</opensearch:totalResults>
+    <opensearch:totalResults>4,000</opensearch:totalResults>
     <item>
       <title>Moby-Dick (1851) US edition/Chapter 41</title>
       <link>/content/wikisource_en_all_maxi_2026-09/Moby-Dick_(1851)_US_edition/Chapter_41</link>
@@ -108,7 +108,7 @@ describe('kiwix-serve answers (server/kiwix-serve.js)', () => {
 
   it('reads a search answer: total, titles, ZIM paths, snippets and word counts', () => {
     const { total, results } = parseSearchXml(SEARCH_XML);
-    assert.equal(total, 9);
+    assert.equal(total, 4000, 'kiwix-serve writes it with thousands separators');
     assert.deepEqual(results.map((r) => [r.title, r.path, r.words]), [
       ['Moby-Dick (1851) US edition/Chapter 41', 'Moby-Dick_(1851)_US_edition/Chapter_41', 3776],
       ['Moby-Dick; or, The Whale.15.html', 'Moby-Dick; or, The Whale.15.html', 212656],
