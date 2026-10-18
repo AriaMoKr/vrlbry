@@ -25,8 +25,9 @@ on the Quest.
 
 ### 2. "I can only find things": answers with citations
 
-A language model gets the library as tools: search titles, search articles, read a chunk of a
-book or article (`ArchiveLibrary.chunk`), open a book at a passage. Like Stephenson's Librarian,
+A language model gets the library as tools: search titles, search articles, search the full text
+(Kiwix's Xapian indexes, below), read a chunk of a book or article (`ArchiveLibrary.chunk`), open
+a book at a passage. Like Stephenson's Librarian,
 it never speculates: every statement points to a source, a book and a block anchor `{c, b}`, and
 selecting the source opens the book at that exact paragraph. This is the core of the idea, and the
 citation rule also keeps the model from making things up.
@@ -78,3 +79,81 @@ These follow the project's own (CLAUDE.md, TODO.md):
 - **The Quest is the target.** The figure and its panel stay within the draw-call budget, per-frame
   code allocates nothing, and nothing heavy runs in one frame.
 - **English first.**
+
+## What the ZIMs hold, and what the library reads
+
+Counted on 2026-10-18 over every entry of three ZIMs: Gutenberg `gutenberg_en_all_2023-08`,
+Wikipedia `wikipedia_en_top1m_maxi_2026-04` and Wikisource `wikisource_en_all_maxi_2026-09`
+(12 million entries, 4.3 million of them redirects). Other ZIMs may hold kinds these do not.
+
+In Wikipedia and Wikisource nearly every picture is WebP under its original extension: 3.5 million
+WebPs named `.jpg`, `.png` or `.gif`. The library goes by the bytes, not the name.
+
+### Read by the library
+
+| Type | Extensions | In the three ZIMs |
+|---|---|---|
+| Pages (books, articles, works) | `.html`, `.htm`; Wikipedia's and Wikisource's articles have none | 2.6 M (Gutenberg 132 k) |
+| E-books | `.epub` (Gutenberg's EPUB-only books) | 57 k |
+| Inside an EPUB | `.opf`, `.xhtml`/`.html`/`.xml`, and the pictures they show | |
+| Gutenberg's catalogue | `.js` read as data: `full_by_popularity.js`, `authors.js`, `lcc_shelves.js`, `languages.js`, `lang_<code>_by_popularity.js` | a handful |
+| Pictures | `.jpg`/`.jpeg`/`.jfif`, `.png` (6 animated APNGs too), `.gif`, `.webp`, `.svg`, `.bmp`; sizes sniffed for PNG, JPEG, GIF, WebP, BMP, SVG (`imageSize`) | WebP 3.5 M, JPEG 904 k, PNG 243 k, GIF 37 k, SVG 20 k, BMP 5 |
+| Formulas | `.svg` (MediaWiki's formula SVGs, set into lines of text) | 338 k (Wikipedia) |
+| Metadata | none: `M/Title`, `M/Description`, `M/Illustration_48x48@1`, … | |
+
+The library's own files: `.zim` (opened), `.json` (indexes, the server's cache), `.png` (Save
+screenshot).
+
+### In the ZIMs, not read
+
+| Type | Extensions (count) |
+|---|---|
+| Other e-book and document formats | `.pdf` (2,090: Gutenberg 2,063, Wikipedia 25, Wikisource 2; Gutenberg's are noticed, `formats.pdf`, never opened), `.mobi` (748), `.xml` (1,510, Gutenberg's book XML), `.txt` (7) |
+| Audio | `.mid`/`.midi` (4,465), `.mp3` (2,069), `.mp4` audio (32), `.ogg` (14), `.wav` (3); pages' `<audio>` is dropped |
+| Sheet music | `.ly` LilyPond (539), `.mxl` MusicXML (420), `.mscz` MuseScore (28), `.denemo` (28), `.mus` Finale (24) |
+| Video | `.mpg` (2), `.avi` (1); pages' `<video>` is dropped |
+| Pictures browsers cannot show, or unreferenced | `.psd` (3), `.xcf` (1), `.ico` (1, Gutenberg's favicon) |
+| Fonts | `.ttf` (15), `.otf` (2), `.woff` (1), `.eot` (1) |
+| Styles and scripts | `.css` (199), `.js` (the other ~77 k: Gutenberg's per-author lists `auth_<id>_by_popularity.js`, the sites' own scripts), `.xsl` (4) |
+| Kiwix's own indexes | Xapian full-text and title search (`X/fulltext/xapian`, `X/title/xapian`), title listings (`X/listing/titleOrdered/…`): no extensions |
+| Archives and strays | `.zip` (5), `.bin` (5), `.bak` (4), `.ini` (4), `.exe` (1, a pngcrush), `.lnk` (1), `.jbf` (1) |
+
+## Kiwix's search indexes (Xapian)
+
+Every Kiwix ZIM made by recent tools carries Xapian databases ("Glass" format, the file magic
+`\x0f\x0dXapian Glass`), each one blob in an uncompressed cluster of its own, so any part of one
+is a positional read into the ZIM, like everything else `core/zim` reads:
+
+| ZIM | `X/fulltext/xapian` | `X/title/xapian` |
+|---|---|---|
+| Wikipedia top 1M maxi (49 GB) | 2,584 MB | 1,032 MB |
+| Wikisource all maxi (8.6 GB) | 816 MB | 290 MB |
+| Gutenberg all (77 GB, 2023) | 667 MB | none |
+
+The full-text one finds the articles and books that contain words, ranked; the title one finds a
+title by any of its words ("war peace" → *War and Peace*). The library's own search matches title
+prefixes (Wikipedia's index and redirects) and the loaded books' metadata. A query reads a few
+B-tree pages and posting lists, not the database, so it suits range reads.
+
+Ways to use them, each optional (search without them stays as it is):
+
+1. **kiwix-serve beside the Node server** (on the PC or the Pi 5): a server route forwards a query
+   to its `/search` (HTML, or OpenSearch XML) or `/suggest` (JSON) for the same file and maps the
+   results to articles the library opens. Small, a separate process (no licence questions), server
+   mode only: not GitHub Pages, not files opened in the browser.
+2. **libzim in the Node server** (`@openzim/libzim`, with `Searcher` and `SuggestionSearcher`):
+   in-process, prebuilt for Linux and macOS (x64, arm, arm64: the Pi 5 yes, Windows needs libzim
+   built), GPL-3.0 (an optional dependency, not bundled). Server mode only.
+3. **libzim in WebAssembly in the browser's worker** (`openzim/javascript-libzim`, what Kiwix JS
+   uses): reads a `File` (Emscripten WORKERFS), so the local library's files; not a URL, so not
+   Kiwix's library from the web. GPL-3.0 shipped on an MIT site, several MB of WASM, and the
+   prebuilt versions have no snippets.
+4. **A read-only Glass reader in `core/`** (MIT, written from the format as Xapian documents it,
+   not by translating Xapian's GPL code): B-tree pages, keys and tags, posting lists, BM25, an
+   English stemmer (Snowball's), libzim's term and document-data conventions. Works wherever the
+   library does: the server, files in the browser, and ZIMs read from the web through the block
+   cache. The most work, and Glass is thinly documented; over the network a common word's long
+   posting list would need a cap. Measure on the Quest.
+
+To learn what it gives first, 1 on the Pi 5 is a day; 4 is the one that fits vrlbry (`core/`
+reads everything itself, and GitHub Pages plus ZIMs from the web are its main use).
