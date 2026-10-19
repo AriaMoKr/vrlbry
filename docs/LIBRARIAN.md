@@ -109,7 +109,7 @@ screenshot).
 | Type | Extensions (count) |
 |---|---|
 | Other e-book and document formats | `.pdf` (2,090: Gutenberg 2,063, Wikipedia 25, Wikisource 2; Gutenberg's are noticed, `formats.pdf`, never opened), `.mobi` (748), `.xml` (1,510, Gutenberg's book XML), `.txt` (7) |
-| Audio | `.mid`/`.midi` (4,465), `.mp3` (2,069), `.mp4` audio (32), `.ogg` (14), `.wav` (3); pages' `<audio>` is dropped |
+| Audio | `.mid`/`.midi` (4,465), `.mp3` (2,069), `.mp4` audio (32), `.ogg` (14), `.wav` (3): all Gutenberg's (below); pages' `<audio>` is dropped |
 | Sheet music | `.ly` LilyPond (539), `.mxl` MusicXML (420), `.mscz` MuseScore (28), `.denemo` (28), `.mus` Finale (24) |
 | Video | `.mpg` (2), `.avi` (1); pages' `<video>` is dropped |
 | Pictures browsers cannot show, or unreferenced | `.psd` (3), `.xcf` (1), `.ico` (1, Gutenberg's favicon) |
@@ -117,6 +117,52 @@ screenshot).
 | Styles and scripts | `.css` (199), `.js` (the other ~77 k: Gutenberg's per-author lists `auth_<id>_by_popularity.js`, the sites' own scripts), `.xsl` (4) |
 | Kiwix's own indexes | Xapian full-text and title search (`X/fulltext/xapian`, `X/title/xapian`), title listings (`X/listing/titleOrdered/…`): no extensions |
 | Archives and strays | `.zip` (5), `.bin` (5), `.bak` (4), `.ini` (4), `.exe` (1, a pngcrush), `.lnk` (1), `.jbf` (1) |
+
+### Audio and video (2026-10-18)
+
+Of the three ZIMs only Gutenberg's holds any: Wikipedia's and Wikisource's declare no audio or
+video MIME type. `gutenberg_en_all_2023-08` has 6,586 such files, about 1 GB, in 402 books:
+
+| Type | Files | Size |
+|---|---|---|
+| MIDI (`audio/midi`) | 4,465 | 6.4 MB |
+| MP3 (`audio/mpeg`) | 2,069 | 942 MB |
+| M4A (named `.mp4`) | 32 | 20.7 MB |
+| WAV | 3 | 30.5 MB |
+| Ogg | 14 | 7.3 MB |
+| AVI | 1 | 11 MB |
+| MPEG video | 2 | 0.6 MB |
+
+A book links its files from the text (`<a href="music/music011.mid">`), not with `<audio>`: *The
+Complete Opera Book* (40540) has 371 such links, *Principles of Orchestration* (33900) 407.
+
+Kiwix also publishes Gutenberg one LCC class per ZIM. Each class ZIM's book list
+(`C/full_by_popularity.js`, current editions, read from Kiwix's mirror; the all-books ZIM's own
+shelf column is empty) gives where the 398 books with MIDI or MP3 files are:
+
+| Class ZIM | Size | Books | MIDI | MP3 |
+|---|---|---|---|---|
+| `gutenberg_en_lcc-m_2026-03` (Music) | 3.99 GB | 103 | 2,932 | 1,750 (744 MB) |
+| `gutenberg_en_lcc-g_2026-03` | 8.10 GB | 20 | 479 | 11 |
+| `gutenberg_en_lcc-e_2026-03` | 10.20 GB | 16 | 251 | 24 |
+| `gutenberg_en_lcc-pz_2026-03` | 19.77 GB | 41 | 203 | 88 |
+| `gutenberg_en_lcc-a_2026-03` | 9.75 GB | 63 | 98 | 21 |
+| `gutenberg_en_lcc-ps_2026-03` | 16.02 GB | 32 | 87 | 22 |
+| `gutenberg_en_lcc-d_2025-12` | 40.25 GB | 40 | 80 | 43 |
+| `gutenberg_en_lcc-pr_2026-03` | 16.15 GB | 27 | 79 | 58 |
+| `gutenberg_en_lcc-l_2026-03` | 0.63 GB | 4 | 73 | 1 |
+| `gutenberg_en_lcc-pn_2026-03` | 3.25 GB | 10 | 44 | 20 |
+| `gutenberg_en_lcc-u_2026-03` | 1.29 GB | 1 | 42 | 0 |
+| `gutenberg_en_lcc-f_2026-03` | 9.89 GB | 8 | 32 | 4 |
+| `gutenberg_en_lcc-pe_2026-03` (the tests' reference ZIM) | 0.79 GB | 1 | 0 | 14 |
+
+A few more hold a handful each (q, b, pm, r, s, pa, c, t, pt, h, n, v, j, pj; `lcc-pm`, 0.05 GB,
+has 8 MIDI files in *The Esperantist*). *Society's Child (audiofile)* is in no class ZIM, only in
+the all-books ones. The Music ZIM holds about 70 % of the files and 79 % of their bytes (*Principles
+of Orchestration*, *The Complete Opera Book*, *Music: An Art and a Language*); the other classes'
+are mostly folk and traditional songs (*Jamaican Song and Story*, Ojibwa *Mide'wiwin* songs,
+nursery songs, *The English and Scottish Popular Ballads*). The current class ZIMs carry the
+files themselves: `lcc-m_2026-03` has 407 of book 33900's 408 and all 371 of book 40540's.
 
 ## Kiwix's search indexes (Xapian)
 
