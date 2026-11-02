@@ -2266,7 +2266,7 @@ export class Interaction {
     this.settings.theme = name;
     save('settings', this.settings);
     this.reader.setTheme(name);
-    await this._jumpInPlace(this._currentRef());
+    await this._redraw();
   }
 
   /** Whether the spread shown holds some of block b of part c (anchor { c, b }). */
@@ -2296,7 +2296,7 @@ export class Interaction {
     this.settings.theme = t;
     save('settings', this.settings);
     this.reader.setTheme(t);
-    await this._jumpInPlace(this._currentRef());
+    await this._redraw();
   }
 
   /** Whether the single-page view is wanted now: the setting, 'auto' deciding by the screen. */
@@ -2367,20 +2367,33 @@ export class Interaction {
     }, 300);
   }
 
-  /** Re-renders the current position without a turn animation (font / theme changes). */
-  async _jumpInPlace(ref) {
+  /**
+   * Re-renders the current position without a turn animation (font / theme changes): the spread
+   * of `ref`, or `spread` as it is (_redraw).
+   */
+  async _jumpInPlace(ref, spread = null) {
     this._turnBusy = true;
     try {
       this._prepToken = (this._prepToken || 0) + 1;
       this._next = null;
       this._prev = null;
-      const shown = await this._renderSpread(await this._spreadAt(ref));
+      const shown = await this._renderSpread(spread ?? await this._spreadAt(ref));
       this._cur = shown;
       this.book3d.setPages(shown.left, shown.right);
       this._afterTurn();
     } finally {
       this._turnBusy = false;
     }
+  }
+
+  /**
+   * Draws the spread shown again, its pages as they are (a theme changed: nothing moves). Found
+   * again from the page read they could pair otherwise, since spreadAt pairs pages by their number
+   * and the numbers before the part read are estimates until its layout is in: a theme and then
+   * another stood the book a page back each time, behind the text view too.
+   */
+  _redraw() {
+    return this._jumpInPlace(null, this._cur.spread);
   }
 
   toggleToc(show = !this.tocPanel.visible) {

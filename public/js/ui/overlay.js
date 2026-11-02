@@ -164,7 +164,7 @@ export class Overlay {
           <button data-key="Enter">Read</button><button data-key="t" data-code="KeyT">Read as text</button><button data-key="f" data-code="KeyF">In front of me</button><button data-key="Escape">Put back</button>
         </span>
         <span class="ov-book ov-book-open" role="group" aria-label="The open book">
-          <button class="ov-b-toc" data-key="c" data-code="KeyC" aria-pressed="false">Contents</button><button data-key="-" data-code="Minus" aria-label="Smaller text">A−</button><button data-key="+" data-code="Equal" aria-label="Larger text">A+</button><button data-key="n" data-code="KeyN">Theme</button><button class="ov-b-pages" data-key="p" data-code="KeyP">1 page</button><button data-key="f" data-code="KeyF">In front of me</button><button class="ov-b-back" data-key="Backspace" hidden>↩ Back</button><button data-key="Escape">Put back</button>
+          <button class="ov-b-toc" data-key="c" data-code="KeyC" aria-pressed="false">Contents</button><button data-key="-" data-code="Minus" aria-label="A− smaller text">A−</button><button data-key="+" data-code="Equal" aria-label="A+ larger text">A+</button><button data-key="n" data-code="KeyN">Theme</button><button class="ov-b-pages" data-key="p" data-code="KeyP">1 page</button><button data-key="f" data-code="KeyF">In front of me</button><button class="ov-b-back" data-key="Backspace" hidden>↩ Back</button><button data-key="Escape">Put back</button>
         </span>
         <button class="ov-textview" title="The part you are reading, as a page of text (T)">Text view</button>
         <button class="ov-vr" hidden>Enter VR</button>

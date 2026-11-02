@@ -1503,7 +1503,9 @@ States: `browse` → `inspect` → `opening` → `read` (and back), plus `busy` 
   "2 pages", theme, Close.
   **One page or two** (`reader/spreads.js`): a spread is `{ left, right }`, each a PageRef, `'ex'`
   (the ex-libris before the first page), `'blank'` or null. Two pages pair by page number (odd on
-  the right) and turn two at a time. The single-page view shows only the right-hand page: the
+  the right) and turn two at a time. A theme draws the spread shown again as it is (`_redraw`), not
+  paired again: before the part read the numbers are estimates until its layout is in, and pairing
+  again stood the book a page back. The single-page view shows only the right-hand page: the
   book's left half (the cover and its pages) is hidden once the cover has swung past edge-on
   (`Book3D.single`, `setSingle`), no left canvas is drawn (the spread's left, `'ex'` before the
   first page or `'blank'`, is not shown), the page lies flat (a spread's halves rise toward the
@@ -1937,7 +1939,8 @@ the view says as a book comes out, opens and closes (`bookInHand`, `openOnRead`,
   - the theme: paper, sepia or night (`setTheme`), in the reader's `THEMES` colours (a test keeps
     them the same), each with its `color-scheme` (night's `dark`);
   - the page label, and a slider (`aria-valuetext` "Page x of y", `jumpToProgress`);
-  - ↩ Back (while there is a trail), Put back, and Next part →.
+  - ↩ Back (while there is a trail), Put back, and Next part →. Back's last step, which hides it,
+    leaves the focus on the view's home (the title; on a TV the view), not on the page.
 
   In a Wikipedia volume the parts are called articles. The part buttons are repeated at the
   part's end.
@@ -1983,8 +1986,8 @@ the view says as a book comes out, opens and closes (`bookInHand`, `openOnRead`,
     would count the toolbar's own buttons as hidden).
 - **Tests.** `test/client-text-view.test.js` covers blocks to DOM (with `test/helpers/fake-dom.js`),
   links, heading levels, the top block, the round trip from a page to the view and back to the
-  same block, and the themes' colours and color-schemes in common's `TEXT_VIEW_CSS` (style.css
-  sets none of them).
+  same block, the focus after ↩ Back's last step, and the themes' colours and color-schemes in
+  common's `TEXT_VIEW_CSS` (style.css sets none of them).
 
 ### 5.9 TV remote (`ui/remote.js`, `back-step.js`)
 
@@ -2047,9 +2050,9 @@ ui/text-view.js, ui/remote.js); main.js only wires them.
     data…".
   - **The book's buttons** stand in for the letter keys (`.ov-book`, shown in TV mode): in hand
     Read, Read as text (T), In front of me (F), Put back; open Contents (C, `aria-pressed`),
-    A− / A+, Theme (N), 1 page / 2 pages (P), In front of me, ↩ Back (while there is a trail),
-    Put back, and Text view. Each presses its key (`overlay.onBookKey` →
-    `interaction.pressKey`); the open book's follow its toolbar (`setBookButtons`). Contents
+    A− / A+ (named as the text view's), Theme (N), 1 page / 2 pages (P), In front of me, ↩ Back
+    (while there is a trail), Put back, and Text view. Each presses its key (`overlay.onBookKey`
+    → `interaction.pressKey`); the open book's follow its toolbar (`setBookButtons`). Contents
     chosen there returns to walking, the dot on them.
   - Enter or Space on a button or link presses it and is not the view's key too (controls.js
     `pressesControl`).

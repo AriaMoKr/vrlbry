@@ -418,10 +418,17 @@
     controller (entering VR closes the view); axe with `label-content-name-mismatch` on: nothing,
     in the three themes, with and without the contents.
   - Not yet: a real headset, and the TV (that session's).
-  - Seen alike before and after, not changed here: after the theme changes the 3D book behind the
-    view stood a spread or two back (1:18 → 1:8 → 1:0, the view still at block 26) until the
-    reader scrolled; and ↩ Back in the view hides itself once the trail is empty, so the focus
-    falls to the page (`body`).
+  - Seen alike before and after, and fixed after it the same day: a theme stood the 3D book a page
+    back (1:18 → 1:8 → 1:0 at the first two, the view still at block 26, until the reader
+    scrolled). It found the spread again from the page read, and pages pair by their number,
+    estimated before the part read until its layout is in (≈31, then 31 when it was in): now the
+    spread shown is drawn again as it is (`_redraw`; SPEC §5.2), in the 3D book (N) too. And ↩
+    Back in the view, which hides itself at the trail's last step, dropped the focus to the page
+    (`body`): it goes to the view's home (the title; on a TV the view, where walking again put it
+    before; SPEC §5.8). The card's A− and A+ (a TV's) are named as the view's now. Checked live
+    as above (a theme, N three times: the same spread, each in its own paper; the last Back, on a
+    screen and with `?tv=emulate`), and the view's Back by a test. The card's ↩ Back on a TV is
+    left as it is: its last step goes back to walking, as SPEC §5.9 has it.
 - **All-libraries hall draw calls.** On the Quest: 380 → 104 standing (both eyes), 142 → 56
   walking, with one draw call per sign and no books drawn behind a nearer row. The room itself
   (chandeliers, walls, wainscots, ~31 calls per eye) could still be merged per material.

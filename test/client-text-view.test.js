@@ -1,7 +1,8 @@
 // The text view (public/js/ui/text-view.js, SPEC §5.8): a chunk's blocks as DOM nodes (each block
 // type, the styles, pictures' alt, every kind of link, an empty part), the block at the top of
 // the view, the reading position's round trip: page → text view → page lands on the same block,
-// and its themes (common's shell, TEXT_VIEW_CSS) in the reader's colours.
+// ↩ Back's last step leaving the focus in the view, and its themes (common's shell, TEXT_VIEW_CSS)
+// in the reader's colours.
 
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -17,7 +18,7 @@ globalThis.OffscreenCanvas = class {
   }
 };
 
-const { renderBlocks, runsText, topBlock } = await import('../public/js/ui/text-view.js');
+const { renderBlocks, runsText, topBlock, TextView } = await import('../public/js/ui/text-view.js');
 const { BookReader, THEMES } = await import('../public/js/reader/reader.js');
 const { TEXT_VIEW_CSS } = await import('../public/vendor/common/text-view.js');
 
@@ -169,6 +170,43 @@ describe('the text view: the reading position', () => {
       assert.equal(back.p, pageOf(a.b), `page ${page}: back on the page where block ${a.b} starts`);
       assert.ok(back.p <= page && page - back.p <= 1, `page ${page}: the same page, or the one before when the block began there`);
     }
+  });
+});
+
+describe('the text view: ↩ Back', () => {
+  it('leaves the focus on the view\'s home, not the page, once Back takes the trail\'s last step', () => {
+    const doc = { activeElement: null };
+    // Whatever the header sets, each element takes; focus() makes it the active one.
+    const element = () => ({ hidden: false, textContent: '', value: '', setAttribute() {}, querySelector: () => element(), focus() { doc.activeElement = this; } });
+    const els = new Map();
+    const $ = (sel) => els.get(sel) ?? els.set(sel, element()).get(sel);
+    const I = { _trail: [{ c: 0, b: 0 }] };
+    const view = Object.assign(Object.create(TextView.prototype), {
+      doc, $, I, tv: false, part: 0, el: { ...element(), querySelectorAll: () => [] },
+      label: () => '4 / 9', progress: () => 0.4, partCount: () => 1, partWord: () => 'part',
+    });
+    view._header();
+    assert.equal($('.tv-back').hidden, false, 'a trail: Back shown');
+    $('.tv-back').focus();
+    I._trail.pop(); // Back taken, within the part shown: the shell only redraws the header
+    view._header();
+    assert.equal($('.tv-back').hidden, true);
+    assert.equal(doc.activeElement, $('.tv-title'), 'on the title, as after a Back into another part');
+    // Back hidden with the focus elsewhere: it stays there.
+    I._trail.push({ c: 0, b: 3 });
+    view._header();
+    $('.tv-toc-btn').focus();
+    I._trail.pop();
+    view._header();
+    assert.equal(doc.activeElement, $('.tv-toc-btn'));
+    // A TV's remote: the view's home is the view itself.
+    view.tv = true;
+    I._trail.push({ c: 0, b: 5 });
+    view._header();
+    $('.tv-back').focus();
+    I._trail.pop();
+    view._header();
+    assert.equal(doc.activeElement, view.el);
   });
 });
 

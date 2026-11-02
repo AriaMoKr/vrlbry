@@ -534,6 +534,19 @@ export class TextView extends Shell {
     return !!this.I._trail?.length;
   }
 
+  /**
+   * The header, as the shell has it; but Back hidden with the focus on it (the trail gone back along
+   * to its end, within the part shown) would drop the focus to the page: it goes to the view's home,
+   * as after a Back into another part.
+   * @protected
+   */
+  _header() {
+    const back = this.$('.tv-back');
+    const held = this.doc.activeElement === back;
+    super._header();
+    if (held && back.hidden) this._home().focus({ preventScroll: true });
+  }
+
   /** A Wikipedia volume's parts are its articles, and are called so. */
   partWord() {
     return this._wikipedia() ? 'article' : 'part';
