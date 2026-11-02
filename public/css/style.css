@@ -264,50 +264,9 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .ov-kiwix-index.build { border-style: dashed; }
 
 /* The text view (ui/text-view.js, SPEC §5.8): the open book's part as a page of text, over the 3D
-   view, in the reader's themes (reader.js THEMES: a test keeps these the same). */
-.tv-view { --tv-paper: #f6efdf; --tv-ink: #231d16; --tv-link: #24508c; --tv-rule: #b9a78a; --tv-scale: 1;
-  position: fixed; inset: 0; z-index: 3; overflow-y: auto; overscroll-behavior: contain;
-  background: var(--tv-paper); color: var(--tv-ink); font-family: Georgia, "Iowan Old Style", "Times New Roman", serif; }
-.tv-view[hidden] { display: none; }
-.tv-view[data-theme="sepia"] { --tv-paper: #ecdcbc; --tv-ink: #3b2a17; --tv-link: #2c4c7c; --tv-rule: #a68a5f; }
-.tv-view[data-theme="night"] { --tv-paper: #24221f; --tv-ink: #d9d0c0; --tv-link: #93b4dc; --tv-rule: #5f574b; }
-.tv-view:focus { outline: none; }
-.tv-bar { position: sticky; top: 0; z-index: 1; display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center;
-  padding: max(8px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) 8px max(12px, env(safe-area-inset-left));
-  background: var(--tv-paper); border-bottom: 1px solid var(--tv-rule); font: 15px/1.3 system-ui, -apple-system, "Segoe UI", sans-serif; }
-.tv-bar button, .tv-parts button, .tv-bar select { font: inherit; color: var(--tv-ink); background: transparent; border: 1px solid var(--tv-rule);
-  border-radius: 8px; padding: 4px 10px; min-height: 32px; cursor: pointer; }
-.tv-bar label { display: inline-flex; align-items: center; gap: 6px; }
-/* Slid away while reading down a short screen (text-view.js _headroom); sliding only with full motion. */
-.tv-bar.tv-away { transform: translateY(-100%); }
-.tv-view[data-motion="full"] .tv-bar { transition: transform .2s ease; }
-.tv-size { display: inline-flex; gap: 4px; }
-.tv-bar .tv-next { margin-left: auto; } /* the parts at the toolbar's two ends */
-.tv-view button:disabled { cursor: default; opacity: .5; }
-.tv-view button:focus-visible, .tv-view a:focus-visible, .tv-view select:focus-visible, .tv-view input:focus-visible, .tv-title:focus-visible {
-  outline: 2px solid var(--tv-link); outline-offset: 2px; }
-.tv-where { display: inline-flex; align-items: center; gap: 8px; flex: 1 1 180px; min-width: 0; }
-.tv-label { white-space: nowrap; }
-.tv-slider { flex: 1; min-width: 80px; accent-color: var(--tv-link); }
-/* A panel under the toolbar, over the text (its top set when shown), so the reader's place stays put. */
-.tv-toc { position: fixed; left: 0; right: 0; z-index: 2; box-sizing: border-box; width: min(70ch, 100%); max-height: 60vh; overflow-y: auto;
-  margin: 0 auto; padding: 8px 20px 12px; background: var(--tv-paper); border: 1px solid var(--tv-rule); border-top: 0;
-  box-shadow: 0 8px 24px rgb(0 0 0 / .25); font: 16px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
-.tv-toc[hidden] { display: none; }
-.tv-toc ol { list-style: none; margin: 0; padding: 0; }
-.tv-toc li { padding-block: 2px; }
-.tv-toc-l2 { padding-left: 1em; } .tv-toc-l3 { padding-left: 2em; }
-.tv-toc-l4, .tv-toc-l5, .tv-toc-l6 { padding-left: 3em; }
-.tv-col { max-width: 70ch; margin: 0 auto; padding: 16px 20px 56px; font-size: calc(1.125rem * var(--tv-scale)); line-height: 1.6; overflow-wrap: break-word; }
-.tv-col * { scroll-margin-top: var(--tv-bar-h, 0px); } /* below the sticky toolbar (text-view.js sets it) */
-.tv-view a { color: var(--tv-link); text-decoration: underline; text-underline-offset: 2px; }
-.tv-title { font-size: 1.6em; line-height: 1.25; margin: .3em 0 .2em; }
-.tv-sub { margin: 0 0 1em; font: 15px/1.3 system-ui, -apple-system, "Segoe UI", sans-serif; }
-.tv-sub:empty { display: none; }
-.tv-partno { margin: 0; font: 13px/1.3 system-ui, -apple-system, "Segoe UI", sans-serif; }
-.tv-partno:empty { display: none; }
-.tv-parts { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; margin: 8px 0;
-  font: 15px/1.3 system-ui, -apple-system, "Segoe UI", sans-serif; }
+   view. The view itself is common's (text-view.js TEXT_VIEW_CSS, put first in <head>, so these come
+   after it): its themes (the reader's, reader.js THEMES: a test keeps them the same), toolbar,
+   contents, column, title and parts. Here, the text's own. */
 .tv-body h2, .tv-body h3, .tv-body h4, .tv-body h5, .tv-body h6 { line-height: 1.3; margin: 1.4em 0 .5em; }
 .tv-body p { margin: 0 0 .8em; text-align: justify; hyphens: auto; }
 .tv-body .tv-verse { text-align: left; hyphens: manual; }
@@ -323,14 +282,6 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .tv-list li { margin: .2em 0; }
 .tv-smallcaps { font-variant: small-caps; } .tv-larger { font-size: 1.15em; }
 .tv-view hr { border: 0; border-top: 1px solid var(--tv-rule); margin: 1.5em 0; }
-@media (max-width: 640px) {
-  .tv-col { padding: 12px 14px 48px; }
-  .tv-bar { font-size: 14px; }
-  /* Two rows at 320 px: the part buttons as arrows, "Close", no "Theme" or page label (the names
-     stay: aria-label, the slider's value) */
-  .tv-bar .tv-wide { display: none; }
-  .tv-where { flex-basis: 60px; }
-}
 /* The overlay's "Text view" button: only while a book is open (on a screen: the overlay is not drawn in VR). */
 .ov-textview { height: 42px; padding: 0 16px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); color: var(--accent); font-weight: 600; backdrop-filter: blur(8px); }
 #overlay:not(.ov-reading) .ov-textview { display: none; }

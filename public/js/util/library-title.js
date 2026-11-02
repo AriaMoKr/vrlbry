@@ -1,3 +1,4 @@
+// @ts-check
 // A library's title as the app shows it (§4), from its ZIM's metadata or a catalogue entry (Kiwix's
 // OPDS: local/kiwix.js): shared by the core (core/library.js) and the page. No imports, so a
 // worker or the page can load it as it is.

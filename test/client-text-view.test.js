@@ -1,11 +1,13 @@
 // The text view (public/js/ui/text-view.js, SPEC §5.8): a chunk's blocks as DOM nodes (each block
 // type, the styles, pictures' alt, every kind of link, an empty part), the block at the top of
-// the view, and the reading position's round trip: page → text view → page lands on the same block.
+// the view, the reading position's round trip: page → text view → page lands on the same block,
+// and its themes (common's shell, TEXT_VIEW_CSS) in the reader's colours.
 
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { describe, it } from 'node:test';
 import { fakeDocument, inner, markup } from './helpers/fake-dom.js';
+import './helpers/vendor.js'; // text-view.js extends ../../vendor/common/text-view.js
 
 /** Width ∝ characters × font px (as in client-reader.test.js), for the reader's layout. */
 const width = (text, font) => text.length * parseFloat(/([\d.]+)px/.exec(font)[1]) * 0.5;
@@ -17,6 +19,7 @@ globalThis.OffscreenCanvas = class {
 
 const { renderBlocks, runsText, topBlock } = await import('../public/js/ui/text-view.js');
 const { BookReader, THEMES } = await import('../public/js/reader/reader.js');
+const { TEXT_VIEW_CSS } = await import('../public/vendor/common/text-view.js');
 
 /** renderBlocks into a fresh container: its markup, and what the links and pictures asked for. */
 function render(blocks, c = 0) {
@@ -170,17 +173,25 @@ describe('the text view: the reading position', () => {
 });
 
 describe('the text view: its themes', () => {
-  it('has the reader\'s paper, ink and link colours in each theme', () => {
-    const css = fs.readFileSync(new URL('../public/css/style.css', import.meta.url), 'utf8');
+  it('has the reader\'s paper, ink and link colours in each theme of common\'s shell, each its color-scheme', () => {
     const block = (sel) => {
-      const i = css.indexOf(`${sel} {`);
+      const i = TEXT_VIEW_CSS.indexOf(`${sel} {`);
       assert.ok(i >= 0, sel);
-      return css.slice(i, css.indexOf('}', i));
+      return TEXT_VIEW_CSS.slice(i, TEXT_VIEW_CSS.indexOf('}', i));
     };
     const vars = (text) => Object.fromEntries([...text.matchAll(/--tv-(paper|ink|link): (#[0-9a-f]{6})/g)].map((m) => [m[1], m[2]]));
-    const themes = { paper: vars(block('.tv-view')), sepia: vars(block('.tv-view[data-theme="sepia"]')), night: vars(block('.tv-view[data-theme="night"]')) };
+    const css = { paper: block('.tv-view'), sepia: block('.tv-view[data-theme="sepia"]'), night: block('.tv-view[data-theme="night"]') };
     for (const name of Object.keys(THEMES)) {
-      assert.deepEqual(themes[name], { paper: THEMES[name].paper, ink: THEMES[name].ink, link: THEMES[name].link }, name);
+      assert.deepEqual(vars(css[name]), { paper: THEMES[name].paper, ink: THEMES[name].ink, link: THEMES[name].link }, name);
     }
+    // The select, slider and scroll bar drawn for the paper: light on paper (and sepia, which keeps it), dark at night.
+    assert.match(css.paper, /color-scheme: light/);
+    assert.doesNotMatch(css.sepia, /color-scheme/);
+    assert.match(css.night, /color-scheme: dark/);
+  });
+
+  it('leaves the themes to the shell: style.css sets none of their colours', () => {
+    const css = fs.readFileSync(new URL('../public/css/style.css', import.meta.url), 'utf8');
+    assert.doesNotMatch(css, /--tv-(paper|ink|link|rule):/, 'a theme of its own would override common\'s');
   });
 });

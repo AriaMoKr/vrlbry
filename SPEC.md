@@ -14,9 +14,11 @@ If you must deviate, keep the deviation minimal and report it.
 ## 1. Ground rules
 
 - **Runtime:** Node.js ≥ 22.15 (uses built-in `zlib.zstdDecompress`). ES modules everywhere
-  (`"type": "module"`). No build step, no bundler, no TypeScript.
+  (`"type": "module"`). No build step, no bundler. Types are JSDoc, which tsc checks a file at a time
+  (`tsconfig.json`: a file with `// @ts-check`; `npm test` runs it), never compiled.
 - **Dependencies (already installed):** `three@0.186` (client), `htmlparser2@12` (server HTML
-  parsing), `selfsigned@5` (server `--https`), dev: `iwer@2.5` (WebXR emulation for testing).
+  parsing), `selfsigned@5` (server `--https`), dev: `iwer@2.5` (WebXR emulation for testing),
+  `typescript@5.9` and `@types/three` (the type check).
   Do not add other runtime dependencies. Node built-ins only otherwise.
 - **Client** is plain ES modules served from `public/`. Three.js is loaded through an import map:
   `"three": "/vendor/three/build/three.module.js"`, `"three/addons/": "/vendor/three/examples/jsm/"`.
@@ -1124,7 +1126,7 @@ public/
     world/book3d.js      a single free-standing book: closed/open, cover, pages, page turn anim.
     world/world.js       World facade: builds room + shelves from libraries, layout, collisions.
     xr/controls.js       input: XR controllers/hands, desktop mouse+keyboard, touch; locomotion.
-    ui/panel.js          canvas-texture UI panels with buttons/text, hover & click via UV.
+    ui/text-view.js      the text view (§5.8): the library's book in AriaMoKr/common's TextView.
     ui/overlay.js        DOM overlay: library info, search, help (non-VR); setReading(bool) fades it while a book is open.
     interaction.js       app state machine: browse → inspect → opening → read; wires everything.
     rooms.js             which books are shelved: the current place (one library, or one room of a huge one).
@@ -1433,24 +1435,31 @@ export class Controls extends EventTarget {
 - XR controller gamepads follow xr-standard: buttons 0 trigger, 1 squeeze, 3 thumbstick press,
   4 A/X, 5 B/Y; axes 2/3 thumbstick.
 
-### 5.5 Panels (`ui/panel.js`)
+### 5.5 Panels (AriaMoKr/common's `panel.js`)
+
+The 3D panels are common's (`../vendor/common/panel.js`, v0.8.1; its README, "panel.js", has
+the whole interface), shared with the Hallway's other sites. What interaction.js uses:
 
 ```js
-export class Panel {
-  constructor({ width, height /* metres */, pxPerMeter = 1200, background = 'rgba(25,20,16,0.92)', radius = 24 })
+import { Panel, Label, UI } from '../vendor/common/panel.js';
+class Panel {
+  constructor({ width, height /* metres */, pxPerMeter = 1200, ring = 0 /* vrlbry's lists: no outline */ })
   mesh: THREE.Mesh          // PlaneGeometry; mesh.userData.panel = this
-  canvas, ctx
-  clear(); add(element); remove(id); get(id)
-  // element = { id, type: 'button'|'text'|'image'|'list'|'slider', x, y, w, h (px), label, value,
-  //             onClick(uvPx, element), disabled, active, font, color, align }
-  redraw()                  // repaint (only when dirty — call markDirty())
-  pointerMove(uv) / pointerLeave(); click(uv): boolean   // uv from raycast intersection (0..1)
-  pressAt(uv): boolean; dragTo(uv); release(); dragging   // a list's scroll bar: press the thumb
+  canvas, ctx, w, h         // the canvas's pixels, which the elements' boxes are in
+  clear(); add(element); remove(id); get(id); set(id, fields)   // set: drawn again only on a change
+  // element = { id, type: 'button'|'text'|'image'|'list'|'slider'|'rect'|'custom', x, y, w, h (px),
+  //             label, text, value, items, scroll, onClick, disabled, active, hidden, size, … }
+  update(); markDirty()     // drawn again on the next update() (each frame) after a change, never else
+  pointerMove(u, v) / pointerLeave(); click(u, v): boolean   // u, v from the ray's hit (0..1, from
+  //   the bottom left; panelUv in interaction.js, the same object each time: nothing allocated per
+  //   ray); leaving clears what was lit, a slider's mark (hoverValue) too
+  pressAt(u, v): boolean; dragTo(u, v); release(); dragging   // a list's scroll bar: press the thumb
   //   (or the track beside it: a page towards the press) and drag; interaction.js calls them on
   //   selectstart / every frame (the ray on the panel's plane, so off the panel too) / selectend,
   //   holds looking around meanwhile, and swallows the release's click
   visible
 }
+class Label { constructor({ width, height }); setText(title, sub); visible; panel; mesh }   // tooltip, notice
 ```
 
 ### 5.6 Interaction (`interaction.js`) — the state machine
@@ -1872,6 +1881,17 @@ readers, the keyboard, zoom and phones. The module is shared with the sites made
 (music): it gets what it uses from `main.js` (the interaction, `getChunk`, `imageSource`, the
 overlay's `announce`).
 
+The view itself, its toolbar, keys, place and CSS, is AriaMoKr/common's `TextView`
+(`../vendor/common/text-view.js`, v0.8.1; its README, "text-view.js"), which outside's and
+music's views extend too. `ui/text-view.js` keeps the pure part (`renderBlocks`, `topBlock`,
+`runsText` and the rest), and its `TextView` extends common's with the library's book, all through
+the interaction: a part is a chunk (`renderPart`: `getChunk`, then `renderBlocks`), a place is a
+block anchor `{ c, b }` (with `f` for an element a link leads to: `placeAimed` shows the 3D page's
+place for it), the contents are `reader.meta.toc`, and the toolbar's actions are the 3D book's
+(`turnPage` is its turn; common's `turn(side)` brings the book to the reader's place first). What
+the view says as a book comes out, opens and closes (`bookInHand`, `openOnRead`, `bookOpened`,
+`bookClosing`) stays the library's.
+
 - **Opening and closing.** While a book is open on a screen (not in a headset):
   - Ways in: T, the overlay's "Text view" button (shown only while reading), or the help
     dialog's "Open books as text" (`settings.textView`), which opens each book in it at once.
@@ -1912,9 +1932,10 @@ overlay's `announce`).
   "Part n of N").
 - **The toolbar** is a sticky header. In order:
   - ← Previous part, Close, and Contents;
-  - A− / A+ (`changeFont`);
+  - A− / A+ (`changeFont`), named "A− smaller text" and "A+ larger text" (the names start with
+    what the buttons show);
   - the theme: paper, sepia or night (`setTheme`), in the reader's `THEMES` colours (a test keeps
-    them the same);
+    them the same), each with its `color-scheme` (night's `dark`);
   - the page label, and a slider (`aria-valuetext` "Page x of y", `jumpToProgress`);
   - ↩ Back (while there is a trail), Put back, and Next part →.
 
@@ -1922,7 +1943,7 @@ overlay's `announce`).
   part's end.
   - Contents is a panel under the toolbar, over the text, so the reader's place stays. It is
     filled when first opened, with focus on the entry at or before the part shown. Choosing one
-    is `jumpToToc`.
+    is `jumpToToc` (`useContents`), its block put just below the toolbar.
   - At ≤ 640 px wide the toolbar drops words, to fit two rows at 320 px: arrows for the parts,
     "Close", no "Theme" and no page label. The accessible names stay whole.
   - On a short screen (≤ 420 px tall: a phone held sideways, 400 % zoom) the toolbar slides away
@@ -1930,7 +1951,8 @@ overlay's `announce`).
     text the browser scrolled towards it is put back.
 - **One place.** The view and the 3D book share the reader's place, a block anchor `{ c, b }`.
   - Opening: the view opens at `anchorOf` the page shown, or at its own last place while the 3D
-    book still shows it.
+    book still shows it; a frame on, once drawn, it is put there again unless the reader has
+    scrolled.
   - A turn, jump, link, Back or contents entry in the 3D book: the view shows that part and
     scrolls to the block (`follow`, called from `_afterTurn`). A place aimed at (`aim`: a link's
     or an entry's block, a part's start) wins over the spread's left page, which may end the
@@ -1944,6 +1966,10 @@ overlay's `announce`).
     - The view's own scrolls are not the reader's: near a part's end, the block aimed at cannot
       reach the top.
   - Closing leaves the 3D book at that place.
+  - A change of width (a phone turned, a window resized, the browser's zoom) reflows the text or
+    wraps the toolbar under the scroll: the view goes back to the reader's place, taken as they
+    scrolled, before the text moved, and the 3D book stays where it is. A change of height alone
+    moves nothing.
   - Smooth scrolling only with full motion (`interaction.reduced`).
 - **Layout.**
   - A 70ch column on a desktop, the full width on a phone. The text size is
@@ -1957,7 +1983,8 @@ overlay's `announce`).
     would count the toolbar's own buttons as hidden).
 - **Tests.** `test/client-text-view.test.js` covers blocks to DOM (with `test/helpers/fake-dom.js`),
   links, heading levels, the top block, the round trip from a page to the view and back to the
-  same block, and the themes' colours.
+  same block, and the themes' colours and color-schemes in common's `TEXT_VIEW_CSS` (style.css
+  sets none of them).
 
 ### 5.9 TV remote (`ui/remote.js`, `back-step.js`)
 

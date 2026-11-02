@@ -1,3 +1,4 @@
+// @ts-check
 // Built-in performance scenarios (?perf), started by tools/quest-perf.mjs through
 // window.__vrlbry.perf.run(). Each one is a recorder segment, so the dump breaks the numbers down
 // per scenario. They drive the real app: room switches, walking (the rig glides along aisles),

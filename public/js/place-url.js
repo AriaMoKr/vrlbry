@@ -1,3 +1,4 @@
+// @ts-check
 // The address says where the visitor is (SPEC §5.6 "Rooms"): the place, `?place=<library id>` or
 // a group place's id (demo, local, *), and in a large library its room, `&genre=`, `&letter=` and
 // `&page=` (from 2), kept up to date as the room changes (history.replaceState in main.js), so it

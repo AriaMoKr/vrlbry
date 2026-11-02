@@ -1,3 +1,4 @@
+// @ts-check
 // Scenes: what a page shows, as data: the place, room and sort, the viewpoint, the book out and the
 // page shown (and on which side of the spread), the reading settings, and the dialogs (the page's
 // own menus and the 3D panels). "Save scene" / "Restore scene" (help dialog, kiosk) keep one in the

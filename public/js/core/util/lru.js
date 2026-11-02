@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * Small LRU cache with an optional byte budget (§3, shared helper).
  *

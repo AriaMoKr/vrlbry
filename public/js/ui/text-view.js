@@ -1,3 +1,4 @@
+// @ts-check
 // The text view (SPEC §5.8): on a screen, the open book's current part as a page of text over
 // the 3D view, for screen readers, the keyboard, zoom and phones. It shows the chunk the open
 // page is in (a chapter-sized part, or one Wikipedia article), built from its blocks (§3.5) as
@@ -8,9 +9,19 @@
 // itself holds the remote's focus while reading: ↑ ↓ scroll it, ← → turn the 3D book's pages, and
 // its toolbar and links are the card that Menu and OK go into (ui/remote.js).
 //
+// The view itself, its toolbar, keys, place and CSS, is AriaMoKr/common's TextView (text-view.js,
+// the shell music's and outside's views extend too); this module gives it the library's book.
 // renderBlocks and topBlock are pure (a document passed in), for the tests; TextView is the page's.
 
-/** Style bits (§3.5) and the element each is shown with, outermost first. */
+import { TextView as Shell } from '../../vendor/common/text-view.js';
+
+/**
+ * The reader's driver, interaction.js's Interaction, with what the view reads of the two fields its
+ * constructor sets with Object.assign, which tsc does not see.
+ * @typedef {import('../interaction.js').Interaction & { controls: { presenting: boolean }, settings: { theme?: string, fontScale?: number, textView?: boolean } }} Interaction
+ */
+
+/** Style bits (§3.5) and the element each is shown with, outermost first. @type {[number, string, string | null][]} */
 const STYLE_TAGS = [
   [256, 'span', 'tv-larger'],
   [128, 'small', null],
@@ -238,360 +249,68 @@ export function topBlock(rects, top) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// The view on the page
-
-const STATIC = `
-  <header class="tv-bar">
-    <button type="button" class="tv-prev" aria-label="Previous part">←<span class="tv-wide"> Previous part</span></button>
-    <button type="button" class="tv-close" aria-label="Close text view" title="Back to the book in 3D (T or Esc)">Close<span class="tv-wide"> text view</span></button>
-    <button type="button" class="tv-toc-btn" aria-expanded="false" aria-controls="tv-toc">Contents</button>
-    <span class="tv-size" role="group" aria-label="Text size">
-      <button type="button" class="tv-smaller" aria-label="Smaller text">A−</button><button type="button" class="tv-bigger" aria-label="Larger text">A+</button>
-    </span>
-    <label class="tv-theme"><span class="tv-wide">Theme</span> <select class="tv-theme-sel" aria-label="Theme"><option value="paper">Paper</option><option value="sepia">Sepia</option><option value="night">Night</option></select></label>
-    <span class="tv-where"><span class="tv-label tv-wide" aria-hidden="true"></span><input class="tv-slider" type="range" min="0" max="1000" step="1" aria-label="Where in the book"></span>
-    <button type="button" class="tv-back" hidden>↩ Back</button>
-    <button type="button" class="tv-putback">Put back</button>
-    <button type="button" class="tv-next" aria-label="Next part"><span class="tv-wide">Next part </span>→</button>
-  </header>
-  <nav class="tv-toc" id="tv-toc" aria-label="Contents" hidden><ol class="tv-toc-list"></ol></nav>
-  <div class="tv-col">
-    <p class="tv-partno"></p>
-    <h1 id="tv-title" class="tv-title" tabindex="-1"></h1>
-    <p class="tv-sub"></p>
-    <div class="tv-body"></div>
-    <nav class="tv-parts" aria-label="At the end"><button type="button" class="tv-prev" aria-label="Previous part">←<span class="tv-wide"> Previous part</span></button><button type="button" class="tv-next" aria-label="Next part"><span class="tv-wide">Next part </span>→</button></nav>
-  </div>`;
-
-const isField = (t) => t && /^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName);
-
-/** A screen too short for a toolbar that stays (style.css: the same height). */
-const SHORT = typeof matchMedia === 'function' ? matchMedia('(max-height: 420px)') : { matches: false };
+// The view on the page: common's shell (text-view.js) with the library's book
 
 /**
- * The text view of the open book, on a screen. `interaction` is the reader's driver
- * (interaction.js): it calls follow() after every page turn or jump, bookClosing() and
- * bookOpened() around a book, and toggle() for T.
+ * A place in the open book: a part (chunk) c and a block b in it, with f for an element a link
+ * leads to (the 3D page finds it).
+ * @typedef {{ c: number, b: number, f?: string | null }} Place
  */
-export class TextView {
+
+/** A picture of the part shown, loaded as the 3D reader loads it (api.imageSource). @typedef {{ url: string | null, release(): void }} ImageSource */
+
+/**
+ * The text view of the open book, on a screen: common's TextView, the book being interaction.js's
+ * (`interaction`, the reader's driver). It calls follow() after every page turn or jump, aim()
+ * before a jump to a place, bookClosing() and bookOpened() around a book, and toggle() for T.
+ * @extends {Shell<Place>}
+ */
+export class TextView extends Shell {
   /**
    * @param {object} o
    * @param {HTMLElement} o.root where the view goes (the overlay, inside the page's <main>)
-   * @param {object} o.interaction interaction.js's Interaction
+   * @param {Interaction} o.interaction interaction.js's Interaction
    * @param {(libId: string, bookId: string, c: number) => Promise<object[]>} o.getChunk api.js
-   * @param {(src: string) => Promise<{ url: string|null, release(): void }>} o.imageSource api.js
+   * @param {(src: string) => Promise<ImageSource | null>} o.imageSource api.js
    * @param {(text: string) => void} o.announce a polite status (overlay.announce)
-   * @param {(away: boolean) => HTMLElement|null} [o.returnFocus] where focus goes when the view
-   *   closes (away: the book is being put back)
+   * @param {(away: boolean) => HTMLElement | null | undefined} [o.returnFocus] where focus goes when
+   *   the view closes (away: the book is being put back)
    * @param {boolean} [o.tv] a TV's remote (common's tvMode): the view holds the focus, not its title
    */
   constructor({ root, interaction, getChunk, imageSource, announce, returnFocus, tv = false }) {
-    Object.assign(this, { I: interaction, getChunk, imageSource, announce, returnFocus, tv });
-    const doc = root.ownerDocument;
-    this.doc = doc;
-    const el = doc.createElement('article');
-    el.className = 'tv-view';
-    el.hidden = true;
-    el.tabIndex = -1; // a click on its text keeps the keys here (the controls leave them alone: data-own-keys)
-    el.setAttribute('aria-labelledby', 'tv-title');
-    el.setAttribute('data-own-keys', '');
-    el.innerHTML = STATIC; // the view's own markup only: the book's text goes in as text (renderBlocks)
-    root.append(el);
-    this.el = el;
-    this.$ = (sel) => el.querySelector(sel);
-    this.c = -1; // the part shown
-    this.bookKey = null;
-    this._open = false;
-    this._showing = Promise.resolve();
-    // The place shared with the 3D book, { c, b }: where the view put itself, or the block at its
-    // top once the reader's own scrolling rests (_sync). The view's own scrolls are not reading
-    // (near a part's end the block aimed at cannot reach the top): _self while a smooth one runs,
-    // _selfTop where an instant one left the view (or put the text back: a slid-away toolbar).
-    // _moved: the reader has scrolled since the place was taken.
-    this._at = null;
-    this._self = false;
-    this._selfTop = null;
-    this._moved = false;
-    this._quiet = false; // a jump of the 3D book to the view's place: the view stays as it is
-    this._wire();
-  }
-
-  /** The height of the sticky toolbar over the text (0 while it is slid away). */
-  _barH() {
-    const bar = this.$('.tv-bar');
-    return bar.classList.contains('tv-away') ? 0 : bar.getBoundingClientRect().height;
+    super({ root, tv, returnFocus });
+    /** The reader's driver. */
+    this.I = interaction;
+    /** A part's blocks (§3.5). */
+    this.getChunk = getChunk;
+    /** A picture's source (a blob URL for a local book's). */
+    this.imageSource = imageSource;
+    /** A polite status, for a screen reader. */
+    this.announce = announce;
+    /** T with a book in hand: it goes straight into the view once open (openOnRead). */
+    this._onRead = false;
+    /** The pictures of the part shown, let go with it (_release). @type {ImageSource[]} */
+    this._sources = [];
   }
 
   /**
-   * On a short screen (a phone held sideways, 400% zoom) the toolbar slides away while the reader
-   * scrolls down and comes back when they scroll up or reach it with Tab: it would otherwise
-   * cover half the text, and one that scrolled away would take the reader to the top, away from
-   * their place, for a size or a theme.
-   */
-  _headroom() {
-    const y = this.el.scrollTop;
-    const dy = y - (this._lastY ?? y);
-    this._lastY = y;
-    const bar = this.$('.tv-bar');
-    if (!SHORT.matches || !this.$('.tv-toc').hidden) bar.classList.remove('tv-away');
-    else if (dy > 2 && y > bar.offsetHeight) bar.classList.add('tv-away');
-    else if (dy < -2) bar.classList.remove('tv-away');
-  }
-
-  get isOpen() { return this._open; }
-
-  _wire() {
-    const I = this.I;
-    const q = (sel, fn) => this.el.querySelectorAll(sel).forEach((b) => b.addEventListener('click', fn));
-    // What starts from the reader's place brings the 3D book there first (_sync), so a size, Back
-    // or a turn starts from where the view is, not from where the 3D book was left.
-    const synced = (fn) => () => this._sync().then(fn);
-    q('.tv-close', () => this.close());
-    q('.tv-toc-btn', () => this._toggleToc());
-    q('.tv-smaller', synced(() => this._size(-1)));
-    q('.tv-bigger', synced(() => this._size(1)));
-    q('.tv-back', synced(() => I.goBack()));
-    q('.tv-putback', synced(() => I.putBack()));
-    q('.tv-prev', () => this._part(-1));
-    q('.tv-next', () => this._part(1));
-    this.$('.tv-theme-sel').addEventListener('change', (e) => this._theme(e.target.value));
-    this.$('.tv-slider').addEventListener('change', (e) => I.jumpToProgress(Number(e.target.value) / 1000));
-    this.el.addEventListener('scroll', () => {
-      if (!this._self && this.el.scrollTop !== this._selfTop) this._moved = true;
-      this._headroom();
-      this._restSoon();
-    }, { passive: true });
-    const bar = this.$('.tv-bar');
-    // Reached with Tab, a slid-away toolbar comes back. The browser has scrolled the text towards
-    // its button already (before the scroll's event): the text goes back, the reader's place stays.
-    bar.addEventListener('focusin', (e) => {
-      this._barFocus = e.target; // where Menu comes back to on a TV (cardStart)
-      bar.classList.remove('tv-away');
-      if (this._lastY != null && this.el.scrollTop !== this._lastY) {
-        this.el.scrollTop = this._lastY;
-        this._selfTop = this._lastY;
-      }
-    });
-    // What Tab or a jump scrolls to stops below the sticky toolbar, not under it (scroll-margin on
-    // the text: a scroll-padding would count the toolbar's own buttons as hidden and scroll to them).
-    new ResizeObserver(() => { this.el.style.setProperty('--tv-bar-h', `${bar.offsetHeight}px`); }).observe(bar);
-    this.el.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        if (!this.$('.tv-toc').hidden) this._toggleToc(false);
-        else this.close();
-      } else if (isField(e.target) || e.ctrlKey || e.metaKey || e.altKey) {
-        // the slider's and the theme's own keys
-      } else if (e.code === 'KeyT') {
-        e.preventDefault();
-        this.close();
-      } else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
-        e.preventDefault();
-        const dir = e.key === 'ArrowRight' ? 1 : -1;
-        this._sync().then(() => I.turn(dir));
-      } else if (this.tv && e.target === this.el && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
-        // A TV's remote while reading: the text scrolls (the WebView would move the focus instead).
-        e.preventDefault();
-        const step = Math.round((this.el.clientHeight - this._barH()) * 0.4) * (e.key === 'ArrowDown' ? 1 : -1);
-        this.el.scrollBy({ top: step, behavior: e.repeat || I.reduced ? 'auto' : 'smooth' });
-      }
-    });
-  }
-
-  /** The text size, one step, the view staying at its place. */
-  async _size(step) {
-    this.aim(this._at);
-    try {
-      await this.I.changeFont(step);
-    } finally {
-      this._aim = null;
-    }
-  }
-
-  /** A theme: the colours change, the text and its place do not. */
-  async _theme(name) {
-    this._quiet = true;
-    try {
-      await this.I.setTheme(name);
-    } finally {
-      this._quiet = false;
-    }
-  }
-
-  /** The view scrolled: once it rests (a quarter second), its place is shared (_rest). */
-  _restSoon() {
-    clearTimeout(this._restTimer);
-    this._restTimer = setTimeout(() => this._rest(), 250);
-  }
-
-  /** A smooth scroll of the view's own: its scroll events, until the next rest, are not the reader's. */
-  _selfScrolled() {
-    this._self = true;
-    this._restSoon(); // ends it even when nothing scrolled
-  }
-
-  _rest() {
-    this._self = false;
-    if (this._moved) this._sync();
-  }
-
-  /**
-   * The reader's place, the block at the view's top once they have scrolled, becomes the shared
-   * one: the 3D book goes there in place (the view covers it), unless it shows that block
-   * already. Also at once, before anything that starts from the place (a size, Back, a turn).
-   */
-  async _sync() {
-    const I = this.I;
-    if (!this._open || I.state !== 'read' || this.c < 0) return;
-    if (this._moved) this._at = { c: this.c, b: this._topBlock() };
-    this._moved = false;
-    if (!this._at) return;
-    this._quiet = true;
-    try {
-      await I.jumpToAnchor(this._at, { inPlace: true });
-    } finally {
-      this._quiet = false;
-    }
-  }
-
-  /** T, and the overlay's "Text view" button: opens it, or closes it back to the 3D book. */
-  toggle() {
-    return this._open ? this.close() : this.open();
-  }
-
-  /**
-   * Opens it at the open page's first block, or at the view's own last place while the 3D book
-   * still shows it (closed and opened again). A screen only: in a headset nothing changes.
-   */
-  async open() {
-    const I = this.I;
-    if (this._open || I.state !== 'read' || I.controls.presenting) return;
-    this._open = true;
-    this.el.hidden = false;
-    this._style();
-    const same = this.bookKey === `${I.book.libId}\n${I.book.id}` && this._at && I._showsBlock(this._at);
-    await this._show(same ? this._at : I.reader.anchorOf(I._currentRef()), { smooth: false });
-    this._home().focus({ preventScroll: true });
-  }
-
-  /**
-   * Where the focus goes in the view: its title, for the keyboard and a screen reader to carry on
-   * from; on a TV the view itself, which holds the remote's focus while reading (ui/remote.js).
-   */
-  _home() {
-    return this.tv ? this.el : this.$('.tv-title');
-  }
-
-  /** Whether its contents are open. */
-  get tocOpen() {
-    return this._open && !this.$('.tv-toc').hidden;
-  }
-
-  /** Closes its contents (Back on a TV). */
-  closeToc() {
-    this._toggleToc(false);
-  }
-
-  /** What a TV remote's card is while the view is open: its contents when open, else the whole view. */
-  layer() {
-    return this.tocOpen ? this.$('.tv-toc') : this.el;
-  }
-
-  /** Menu on a TV: the toolbar's control used last, else its first that can be used. */
-  cardStart() {
-    const bar = this.$('.tv-bar');
-    const usable = (e) => e && bar.contains(e) && !e.disabled && !e.hidden && e.getClientRects().length > 0;
-    return usable(this._barFocus) ? this._barFocus : [...bar.querySelectorAll('button, select, input')].find(usable) ?? null;
-  }
-
-  /** OK on a TV: the first link on the screen, below the toolbar, to go on from link to link; or none. */
-  linkHere() {
-    const bottom = this.el.getBoundingClientRect().bottom;
-    for (const a of this.$('.tv-body').querySelectorAll('a[href]')) {
-      if (this.onScreen(a)) return a;
-      if (a.getBoundingClientRect().top >= bottom) break;
-    }
-    return null;
-  }
-
-  /** Whether a control is in its toolbar (a TV remote's ↑ ↓ between it and the text: ui/remote.js). */
-  inBar(el) {
-    return this.$('.tv-bar').contains(el);
-  }
-
-  /** Whether an element's top is on the screen, below the toolbar: the focus can go there without a scroll. */
-  onScreen(el) {
-    const view = this.el.getBoundingClientRect();
-    const r = el.getBoundingClientRect();
-    return r.height > 0 && r.top >= view.top + this._barH() - 1 && r.top < view.bottom;
-  }
-
-  /**
-   * Closes it, leaving the 3D book open at the block at the top of the view (keepPlace), and
-   * gives focus back.
-   */
-  async close({ keepPlace = true } = {}) {
-    if (!this._open) return;
-    const I = this.I;
-    const place = keepPlace && I.state === 'read' && this.c >= 0;
-    if (place && this._moved) this._at = { c: this.c, b: this._topBlock() };
-    clearTimeout(this._restTimer);
-    this._moved = this._self = false;
-    this._open = false;
-    this._toggleToc(false);
-    this.el.hidden = true;
-    if (place && this._at) await I.jumpToAnchor(this._at, { inPlace: true });
-    this.returnFocus?.(!keepPlace)?.focus?.({ preventScroll: true });
-  }
-
-  /**
-   * Where a jump is going (a link, Back, the contents, a part): { c, b?, f? }. A spread of two
-   * pages can begin on the part before (its left page), so the view shows the place aimed at,
-   * not the spread's first page.
+   * Where a jump is going (a link, Back, the contents, a part): { c, b?, f? }, kept as a place.
+   * @param {Partial<Place> | null | undefined} at
    */
   aim(at) {
-    this._aim = at && Number.isInteger(at.c) ? { c: at.c, b: at.b ?? 0, f: at.f ?? null } : null;
-  }
-
-  /** After every page turn or jump of the 3D book: the view follows it. */
-  follow() {
-    const I = this.I;
-    this._style();
-    const aim = this._aim;
-    this._aim = null;
-    if (!this._open || I.state !== 'read') return;
-    if (this._quiet) return this._header(); // the 3D book came to the view's place
-    const shown = I.reader.anchorOf(I._currentRef());
-    let anchor = shown;
-    // A place aimed at: its block, unless it named an element (f) the 3D page already found.
-    if (aim && (aim.c !== shown.c || !aim.f)) anchor = { c: aim.c, b: aim.f ? 0 : aim.b };
-    this._show(anchor);
+    super.aim(at && Number.isInteger(at.c) ? { c: /** @type {number} */ (at.c), b: at.b ?? 0, f: at.f ?? null } : null);
   }
 
   /**
    * The book is being put back: the view closes, unless a link is taking the reader to another
    * book (keepTrail), whose part it shows once open.
+   * @param {boolean} [keepTrail]
    */
   bookClosing(keepTrail) {
     this._onRead = false;
-    if (!this._open) return;
+    if (!this.isOpen) return;
     if (keepTrail) this.$('.tv-body').replaceChildren(this.doc.createTextNode('Opening…'));
     else this.close({ keepPlace: false });
-  }
-
-  /**
-   * What the part shown is called: in a Wikipedia volume, whose parts are articles, the
-   * article's title (its contents entry); elsewhere null (the book's title says it).
-   */
-  _partTitle(c) {
-    if (!this._wikipedia()) return null;
-    return this.I.reader?.meta?.toc?.find((e) => e.c === c)?.title ?? null;
-  }
-
-  /** Whether the open book is a Wikipedia volume (its parts are articles). */
-  _wikipedia() {
-    const I = this.I;
-    return I.libraries?.find((l) => l.id === I.book?.libId)?.kind === 'wikipedia';
   }
 
   /**
@@ -617,197 +336,218 @@ export class TextView {
     const title = part ?? I.book?.title ?? 'The book';
     const wanted = (!!I.settings.textView || this._onRead) && !I.controls.presenting;
     this._onRead = false;
-    this.announce?.(`${title} is open.${this._open || wanted || I.controls.presenting ? '' : ' Text view: T.'}`);
-    if (wanted && !this._open) this.open();
+    this.announce?.(`${title} is open.${this.isOpen || wanted || I.controls.presenting ? '' : ' Text view: T.'}`);
+    if (wanted && !this.isOpen) this.open();
   }
 
-  /** The theme's colours and the text size, as the 3D book has them. */
-  _style() {
-    const s = this.I.settings;
-    this.el.setAttribute('data-theme', s.theme || 'paper');
-    this.el.setAttribute('data-motion', this.I.reduced ? 'less' : 'full');
-    this.el.style.setProperty('--tv-scale', String(s.fontScale || 1));
-    this.$('.tv-theme-sel').value = s.theme || 'paper';
+  /**
+   * What the part shown is called: in a Wikipedia volume, whose parts are articles, the article's
+   * title (its contents entry); elsewhere null (the book's title says it).
+   * @param {number} c
+   * @returns {string | null}
+   */
+  _partTitle(c) {
+    if (!this._wikipedia()) return null;
+    return this.I.reader?.meta?.toc?.find((/** @type {{ c: number }} */ e) => e.c === c)?.title ?? null;
   }
 
-  /** Shows the part an anchor is in (rendering it when it is another), scrolled to its block. */
-  _show(anchor, { smooth = true } = {}) {
-    const run = this._showing.then(() => this._showNow(anchor, smooth)).catch((err) => console.warn('text view', err));
-    this._showing = run;
-    return run;
-  }
-
-  async _showNow(anchor, smooth) {
+  /** Whether the open book is a Wikipedia volume (its parts are articles). */
+  _wikipedia() {
     const I = this.I;
-    if (!this._open || I.state !== 'read') return;
-    const book = I.book;
-    const key = `${book.libId}\n${book.id}`;
-    if (key !== this.bookKey || anchor.c !== this.c) {
-      const blocks = await this.getChunk(book.libId, book.id, anchor.c);
-      if (!this._open || I.book !== book) return;
-      // Focus in the view (a link just followed, which goes with the old part) moves to the new
-      // part's heading, so the keyboard and a screen reader carry on from there.
-      const active = this.doc.activeElement;
-      const refocus = !active || active === this.doc.body || this.el.contains(active);
-      const body = this.$('.tv-body');
-      body.replaceChildren();
-      this._release();
-      const part = this._partTitle(anchor.c);
-      renderBlocks(this.doc, body, blocks, {
-        c: anchor.c,
-        // An article begins with its title as a heading: the view's own title says it already.
-        skip: part && blocks[0]?.t === 'h' && runsText(blocks[0].r) === part.replace(/\s+/g, ' ').trim() ? 0 : -1,
-        onLink: (link) => this._sync().then(() => I.followLink(link)), // Back returns here
-        image: (img, src) => this._image(img, src),
-      });
-      this.$('.tv-title').textContent = part ?? book.title;
-      this.$('.tv-sub').textContent = part ? `Volume: ${book.title}` : '';
-      this.c = anchor.c;
-      if (key !== this.bookKey) this._tocFilled = false;
-      this.bookKey = key;
-      smooth = false;
-      if (refocus) this._home().focus({ preventScroll: true });
-    }
-    this._header();
-    this._at = { c: anchor.c, b: anchor.b };
-    this._moved = false;
-    // The place lands below the toolbar, shown for the jump: its height now, since the observer
-    // last saw it hidden (0) when the view opens and has not run again yet.
-    const bar = this.$('.tv-bar');
-    bar.classList.remove('tv-away');
-    this.el.style.setProperty('--tv-bar-h', `${bar.offsetHeight}px`);
-    const target = anchor.b > 0 ? this.el.querySelector(`[data-b="${anchor.b}"]`) : null;
-    const smoothly = !!target && smooth && !I.reduced;
-    if (smoothly) this._selfScrolled(); // a while: its scroll events until it rests are its own
-    if (target) target.scrollIntoView({ block: 'start', behavior: smoothly ? 'smooth' : 'auto' });
-    else this.el.scrollTo({ top: 0, behavior: 'auto' });
-    // An instant scroll is done at once: its event is known by where it leaves the view.
-    this._selfTop = smoothly ? null : this.el.scrollTop;
-    this._lastY = this.el.scrollTop;
+    return I.libraries?.find((/** @type {{ id: string }} */ l) => l.id === I.book?.libId)?.kind === 'wikipedia';
   }
 
-  /** Where the reader is, Back, and the parts. */
-  _header() {
+  /**
+   * A picture: loaded as the 3D reader loads it (api.imageSource), let go with its part.
+   * @param {Element} img
+   * @param {string} src
+   */
+  _image(img, src) {
+    this.imageSource(src).then((source) => {
+      if (!source?.url) return;
+      this._sources.push(source);
+      /** @type {HTMLImageElement} */ (img).src = source.url;
+    }).catch(() => {});
+  }
+
+  /** Lets go of the pictures of the part shown before (local books' blob URLs). */
+  _release() {
+    for (const s of this._sources) s.release?.();
+    this._sources = [];
+  }
+
+  // ── What the shell asks of the book ────────────────────────────────────────
+
+  bookOpen() {
+    return this.I.state === 'read' && !!this.I.reader;
+  }
+
+  presenting() {
+    return !!this.I.controls.presenting;
+  }
+
+  bookKey() {
+    const book = this.I.book;
+    return book ? `${book.libId}\n${book.id}` : null;
+  }
+
+  partCount() {
+    return this.I.reader?.chunkCount ?? 0;
+  }
+
+  /** @param {Place} place */
+  partOf(place) {
+    return place.c;
+  }
+
+  /** @param {number} c */
+  partStart(c) {
+    return { c, b: 0 };
+  }
+
+  /**
+   * The part's blocks, as text (renderBlocks); the last part's pictures let go of. A Wikipedia
+   * article is called by its title, and the view's own heading says it, so its first is left out.
+   * @param {HTMLElement} body
+   * @param {number} c
+   * @param {{ onLink: (link: unknown) => void }} options
+   */
+  async renderPart(body, c, { onLink }) {
+    const book = this.I.book;
+    const blocks = /** @type {any[]} */ (await this.getChunk(book.libId, book.id, c));
+    if (this.I.book !== book) return {}; // another book meanwhile: the shell drops this part
+    this._release();
+    const part = this._partTitle(c);
+    renderBlocks(this.doc, body, blocks, {
+      c,
+      skip: part && blocks[0]?.t === 'h' && runsText(blocks[0].r) === part.replace(/\s+/g, ' ').trim() ? 0 : -1,
+      onLink,
+      image: (img, src) => this._image(img, src),
+    });
+    return { title: part ?? book.title, subtitle: part ? `Volume: ${book.title}` : '' };
+  }
+
+  placeShown() {
     const I = this.I;
-    const r = I.reader;
-    const ref = I._currentRef();
-    const label = r.labelOf(ref);
-    this.$('.tv-label').textContent = label;
-    const slider = this.$('.tv-slider');
-    slider.value = String(Math.round(r.progressOf(ref) * 1000));
-    slider.setAttribute('aria-valuetext', `Page ${label.replace(' / ', ' of ')}`);
-    this.$('.tv-back').hidden = !I._trail?.length;
-    const n = r.chunkCount;
-    // A Wikipedia volume's parts are its articles, and are called so.
-    const word = this._wikipedia() ? 'article' : 'part';
-    for (const [sel, name, wide] of [['.tv-prev', `Previous ${word}`, ` Previous ${word}`], ['.tv-next', `Next ${word}`, `Next ${word} `]]) {
-      for (const b of this.el.querySelectorAll(sel)) {
-        b.disabled = sel === '.tv-prev' ? this.c <= 0 : this.c >= n - 1;
-        b.setAttribute('aria-label', name);
-        b.querySelector('.tv-wide').textContent = wide;
-      }
-    }
-    this.$('.tv-partno').textContent = n > 1 ? `${word === 'article' ? 'Article' : 'Part'} ${this.c + 1} of ${n}` : '';
+    return I.reader ? I.reader.anchorOf(I._currentRef()) : null;
   }
 
-  /** The previous or next part, from its start. */
-  async _part(dir) {
-    const n = this.I.reader?.chunkCount ?? 0;
-    const c = this.c + dir;
-    if (c < 0 || c >= n) return;
-    this.aim({ c, b: 0 });
-    try {
-      // The spread may show the part's start already (on its right): the view goes there anyway.
-      if (!(await this.I.jumpToAnchor({ c, b: 0 }))) this.follow();
-    } finally {
-      this._aim = null;
-    }
-    this._home().focus({ preventScroll: true });
+  /** @param {Place} place */
+  showsPlace(place) {
+    return this.I._showsBlock(place);
   }
 
-  /** The contents (the book's, or a Wikipedia volume's articles: a list that scrolls). */
-  _toggleToc(show = this.$('.tv-toc').hidden) {
-    const nav = this.$('.tv-toc');
-    const btn = this.$('.tv-toc-btn');
-    if (show && !this._tocFilled) {
-      const list = this.$('.tv-toc-list');
-      list.replaceChildren();
-      for (const entry of this.I.reader?.meta?.toc ?? []) {
-        const li = this.doc.createElement('li');
-        li.className = `tv-toc-l${Math.min(6, entry.level || 1)}`;
-        const a = this.doc.createElement('a');
-        a.href = `#tv-${entry.c}-${entry.b}`;
-        a.textContent = entry.title;
-        a.addEventListener('click', (e) => {
-          e.preventDefault();
-          this._toggleToc(false);
-          this.I.jumpToToc(entry).then(() => this._home().focus({ preventScroll: true }));
-        });
-        li.append(a);
-        list.append(li);
-      }
-      if (!list.children.length) {
-        const li = this.doc.createElement('li');
-        li.textContent = 'This book has no contents.';
-        list.append(li);
-      }
-      this._tocFilled = true;
-    }
-    // Closed from inside (Esc), focus goes back to its button, not to the page.
-    if (!show && !nav.hidden && nav.contains(this.doc.activeElement)) btn.focus({ preventScroll: true });
-    // A panel under the toolbar, over the text, so the reader's place stays where it is.
-    if (show) {
-      const top = Math.max(0, this.$('.tv-bar').getBoundingClientRect().bottom);
-      nav.style.top = `${top}px`;
-      nav.style.maxHeight = `min(60vh, ${Math.max(80, innerHeight - top - 8)}px)`;
-    }
-    nav.hidden = !show;
-    btn.setAttribute('aria-expanded', String(!!show));
-    if (show) {
-      // Focus on where the reader is (the last entry at or before the part shown), not the
-      // first of a thousand, in the middle of the list.
-      const links = [...nav.querySelectorAll('a')];
-      const toc = this.I.reader?.meta?.toc ?? [];
-      let i = 0;
-      toc.forEach((e, k) => { if (e.c <= this.c) i = k; });
-      const here = links[Math.min(i, links.length - 1)];
-      if (here) {
-        const r = here.getBoundingClientRect();
-        const n = nav.getBoundingClientRect();
-        nav.scrollTop += r.top - n.top - (n.height - r.height) / 2;
-        here.focus({ preventScroll: true });
-      }
-    }
+  /**
+   * A place aimed at: its block, unless it named an element (f) the 3D page already found, whose
+   * page's place it shows.
+   * @param {Place} aim
+   */
+  placeAimed(aim) {
+    const shown = this.placeShown();
+    if (shown && aim.f && aim.c === shown.c) return shown;
+    return { c: aim.c, b: aim.f ? 0 : aim.b };
   }
 
-  /** The block at the top of the view: its index in the part shown. */
-  _topBlock() {
-    const top = this.el.getBoundingClientRect().top + this._barH();
+  /** Its block's top; the part's own top for its first block. @param {Place} place */
+  placeTop(place) {
+    if (!(place.b > 0)) return null;
+    return this.$('.tv-body').querySelector(`[data-b="${place.b}"]`)?.getBoundingClientRect().top ?? null;
+  }
+
+  /** The block at the view's top (topBlock), top being the toolbar's foot. @param {number} top */
+  placeAt(top) {
     const rects = [];
-    for (const n of this.$('.tv-body').querySelectorAll('[data-b]')) {
+    for (const n of Array.from(this.$('.tv-body').querySelectorAll('[data-b]'))) {
       const r = n.getBoundingClientRect();
       // An item's own lines end where a list inside it begins (that list's items are blocks).
       const inner = n.tagName === 'LI' ? n.querySelector(':scope > ul') : null;
       const bottom = inner ? Math.min(r.bottom, inner.getBoundingClientRect().top) : r.bottom;
       rects.push({ b: Number(n.getAttribute('data-b')), top: r.top, bottom });
     }
-    return topBlock(rects, top);
+    return { c: this.part, b: topBlock(rects, top) };
   }
 
-  /** A picture: loaded as the 3D reader loads it (api.imageSource), let go with its part. */
-  _image(img, src) {
-    this._sources ??= [];
-    this.imageSource(src).then((source) => {
-      if (!source?.url) return;
-      this._sources.push(source);
-      img.src = source.url;
-    }).catch(() => {});
+  /**
+   * @param {Place} place
+   * @param {{ inPlace: boolean }} options
+   */
+  jumpTo(place, { inPlace }) {
+    return this.I.jumpToAnchor(place, { inPlace });
   }
 
-  /** Lets go of the pictures of the part shown before (local books' blob URLs). */
-  _release() {
-    for (const s of this._sources ?? []) s.release?.();
-    this._sources = [];
+  /** @param {number} dir */
+  turnPage(dir) {
+    return this.I.turn(dir);
+  }
+
+  /** @param {number} f */
+  jumpToProgress(f) {
+    return this.I.jumpToProgress(f);
+  }
+
+  /** @param {number} step */
+  changeFont(step) {
+    return this.I.changeFont(step);
+  }
+
+  /** @param {string} name */
+  setTheme(name) {
+    return this.I.setTheme(name);
+  }
+
+  goBack() {
+    return this.I.goBack();
+  }
+
+  putBack() {
+    return this.I.putBack();
+  }
+
+  /** Back returns here: the shell has brought the 3D book to the reader's place. @param {unknown} link */
+  followLink(link) {
+    return this.I.followLink(link);
+  }
+
+  /** The book's contents (the reader's), by level; a Wikipedia volume's articles. */
+  contents() {
+    return (this.I.reader?.meta?.toc ?? []).map((/** @type {{ title: string, c: number, b: number, level?: number }} */ e) => ({
+      title: e.title, place: { c: e.c, b: e.b }, level: e.level, href: `#tv-${e.c}-${e.b}`,
+    }));
+  }
+
+  /** As the 3D contents goes there. @param {import('../../vendor/common/text-view.js').ContentsEntry<Place>} entry */
+  useContents(entry) {
+    return this.I.jumpToToc(entry.place);
+  }
+
+  label() {
+    const I = this.I;
+    return I.reader?.labelOf(I._currentRef()) ?? '';
+  }
+
+  progress() {
+    const I = this.I;
+    return I.reader?.progressOf(I._currentRef()) ?? 0;
+  }
+
+  hasTrail() {
+    return !!this.I._trail?.length;
+  }
+
+  /** A Wikipedia volume's parts are its articles, and are called so. */
+  partWord() {
+    return this._wikipedia() ? 'article' : 'part';
+  }
+
+  theme() {
+    return this.I.settings.theme || 'paper';
+  }
+
+  fontScale() {
+    return this.I.settings.fontScale || 1;
+  }
+
+  reduced() {
+    return !!this.I.reduced;
   }
 }
-

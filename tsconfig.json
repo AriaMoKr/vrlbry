@@ -1,0 +1,23 @@
+{
+  // The page's modules type-checked as they are served, from their JSDoc: nothing is built or
+  // emitted, and the import map stays. A file at a time: checkJs is off, and a file joins with
+  // `// @ts-check` at its top (CLAUDE.md, "Types"); the others are read for their types only.
+  // test/types.test.js runs it (npm test, so the Pages workflow too); npm run types runs it alone.
+  //
+  // The page names common by its served URL (../vendor/common/<module>.js, server/vendor.js), which
+  // is no folder here: rootDirs lays types/served over public, where one .d.ts per module
+  // re-exports the package's own types.
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": false,
+    "noEmit": true,
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": [],
+    "skipLibCheck": true,
+    "rootDirs": ["public", "types/served"]
+  },
+  "include": ["public/js/**/*.js", "types/**/*.d.ts"]
+}

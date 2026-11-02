@@ -397,6 +397,31 @@
     has the TalkBack line.
   - Reading in 3D the spread is small on a TV (the reading pose of a desktop screen); the text
     view is the readable way for now.
+- **The text view and the 3D panel on common's** (requested 2026-11-01; done the same day; SPEC
+  §5.5, §5.8). common v0.6.1 → v0.8.1: `ui/panel.js` went for common's `panel.js`, and the text
+  view is common's `TextView` with the library's book in a subclass (`ui/text-view.js`), as
+  outside's and music's are to be. With it the first `tsconfig.json`: tsc in `npm test`, a file at
+  a time (28 files with `// @ts-check`, the subclass first; CLAUDE.md, "Types").
+  - New to the view: each theme's `color-scheme` (night's `dark`; it was `dark` in all three), A−
+    and A+ named "A− smaller text" and "A+ larger text" (axe's `label-content-name-mismatch` found
+    the old names), the place kept through a change of width, and the view put at its place again
+    a frame after it opens. New to the panels: nothing allocated per ray, `set` drawing again only
+    on a change, and a slider's mark cleared when the pointer leaves.
+  - Checked live in headless Chrome (common's `launchChrome`; the bad-password count stayed 0),
+    beside the old code (`eb0dfab`), with real keys, clicks and wheel turns: open and close at the
+    place (the focus back on "Text view"), A+, A− and the themes, ← and →, the contents, a link
+    and ↩ Back, the parts; 1280 × 800, 375 × 812, 740 × 360 and 320 × 256 with no sideways
+    scroll and the toolbar sliding away on the short two; 1280 → 375 → 1280 twice with the same
+    block at the top (the old code lost it at 375); `?tv=emulate` (the view keeps the focus, ↑ ↓
+    scroll, Menu to the toolbar and out, OK to a link on the screen, Back to walking); the 3D
+    toolbar, slider, contents scroll bar and tooltip by pointer, and with `?xr=emulate` by a
+    controller (entering VR closes the view); axe with `label-content-name-mismatch` on: nothing,
+    in the three themes, with and without the contents.
+  - Not yet: a real headset, and the TV (that session's).
+  - Seen alike before and after, not changed here: after the theme changes the 3D book behind the
+    view stood a spread or two back (1:18 → 1:8 → 1:0, the view still at block 26) until the
+    reader scrolled; and ↩ Back in the view hides itself once the trail is empty, so the focus
+    falls to the page (`body`).
 - **All-libraries hall draw calls.** On the Quest: 380 → 104 standing (both eyes), 142 → 56
   walking, with one draw call per sign and no books drawn behind a nearer row. The room itself
   (chandeliers, walls, wainscots, ~31 calls per eye) could still be merged per material.

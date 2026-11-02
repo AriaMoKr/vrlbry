@@ -1,3 +1,4 @@
+// @ts-check
 // The versions of the derived indexes (core/wikipedia.js, core/wikisource.js), which their names
 // carry: here, without imports, so that the page (Kiwix's library, local/kiwix.js) names an index
 // as the core does and tells a usable one from a stale one. Bump a version when its index's format

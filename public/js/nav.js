@@ -1,3 +1,4 @@
+// @ts-check
 // How the viewer moves in VR (SPEC §5.6 "Kiosk panel"): the Hallway's choice, which its control
 // panel keeps in localStorage as `hallway.nav` = { move: 'smooth' | 'teleport', turn: 'snap' |
 // 'smooth' }, read and written by AriaMoKr/common's nav.js (its README, "Moving in VR"). The sites

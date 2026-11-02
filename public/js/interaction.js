@@ -9,7 +9,7 @@ import {
   currentRef, currentSide, fitOnePage, isPage, nextSpread, pageViewSetting, prevSpread, sameSpread, singlePage, spreadAt,
 } from './reader/spreads.js';
 import { bookIndex, matchBooks, findArticles } from './search.js';
-import { Panel, Label, UI } from './ui/panel.js';
+import { Panel, Label, UI } from '../vendor/common/panel.js';
 import { audio } from './audio.js';
 import { perf } from './perf.js';
 import { load, save } from './util/storage.js';
@@ -54,8 +54,9 @@ const _normal = new THREE.Vector3();
 const _meshes = [];
 const _hits = [];
 const _head = new THREE.Vector3();
+const _uv = { x: 0, y: 0 };
 
-/** Where a ray meets a panel's plane, as panel uv (beyond 0..1 off the panel), or null. */
+/** Where a ray meets a panel's plane, as panel uv (beyond 0..1 off the panel), or null: the same object each time. */
 function panelUv(panel, ray) {
   const m = panel.mesh;
   m.updateMatrixWorld();
@@ -63,7 +64,9 @@ function panelUv(panel, ray) {
   _plane.setFromNormalAndCoplanarPoint(_normal, m.getWorldPosition(_onPlane));
   if (!ray.intersectPlane(_plane, _onPlane)) return null;
   m.worldToLocal(_onPlane);
-  return { x: _onPlane.x / panel.width + 0.5, y: _onPlane.y / panel.height + 0.5 };
+  _uv.x = _onPlane.x / panel.width + 0.5;
+  _uv.y = _onPlane.y / panel.height + 0.5;
+  return _uv;
 }
 
 /** The reader's toolbar: its width (m), and how far below the page's foot its own foot is (m). */
@@ -1148,7 +1151,7 @@ export class Interaction {
     this._swallowSelect = null;
     if (this.state === 'busy' || pointer.teleporting || this._panelDrag) return;
     const hit = this._hitTest(pointer);
-    if (hit?.kind !== 'panel' || !hit.panel.pressAt(hit.uv)) return;
+    if (hit?.kind !== 'panel' || !hit.panel.pressAt(hit.uv.x, hit.uv.y)) return;
     this._panelDrag = { pointer, panel: hit.panel, look: this.controls.lookEnabled };
     this.controls.lookEnabled = false;
   }
@@ -1179,7 +1182,7 @@ export class Interaction {
     if (this._search.focus && !(hit?.kind === 'panel' && hit.panel === this.kiosk)) this._focusSearch(false);
     if (!hit) return;
     if (hit.kind === 'panel') {
-      if (hit.panel.click(hit.uv)) audio.click();
+      if (hit.panel.click(hit.uv.x, hit.uv.y)) audio.click();
     } else if (hit.kind === 'book' && this.state === 'browse') {
       this.pick(hit.book);
     } else if (hit.kind === 'door' && this.state === 'browse') {
@@ -2890,7 +2893,7 @@ export class Interaction {
       if (prev && prev !== hit?.panel) prev.pointerLeave();
       let interactive = false;
       if (hit?.kind === 'panel') {
-        interactive = hit.panel.pointerMove(hit.uv);
+        interactive = hit.panel.pointerMove(hit.uv.x, hit.uv.y);
         // A TV's dot on a list that scrolls: the remote's ↑ ↓ are its (scrollUnderDot).
         const el = this.tv && pointer.id === 'gamepad' ? hit.panel.hover : null;
         if (el && hit.panel.scrolls(el) && (this.state !== 'browse' || hit.distance <= TV_REACH)) {
@@ -2932,7 +2935,7 @@ export class Interaction {
       if (!panel.visible || !this.controls.pointers.includes(pointer)) this._endPanelDrag();
       else {
         const uv = panelUv(panel, pointer.raycaster.ray);
-        if (uv) panel.dragTo(uv);
+        if (uv) panel.dragTo(uv.x, uv.y);
       }
     }
     if (this.state === 'browse') {

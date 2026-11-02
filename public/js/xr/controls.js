@@ -44,7 +44,7 @@ function makePointerVisual() {
   line.name = 'pointer-ray';
   const cursor = new THREE.Mesh(
     new THREE.RingGeometry(0.006, 0.011, 24),
-    // forceSinglePass: one pass, not two with a program check each (see ui/panel.js); flat.
+    // forceSinglePass: one pass, not two with a program check each (see common's panel.js); flat.
     new THREE.MeshBasicMaterial({ color: 0xfff1d0, transparent: true, opacity: 0.95, depthTest: false, side: THREE.DoubleSide, forceSinglePass: true }),
   );
   cursor.renderOrder = 30;
@@ -346,7 +346,7 @@ export class Controls extends EventTarget {
     const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0x9be7ff, transparent: true, opacity: 0.85 }));
     line.frustumCulled = false;
     const ring = new THREE.Mesh(new THREE.RingGeometry(0.22, 0.27, 40),
-      // One pass (see ui/panel.js): of one colour, the arrow's faces blend the same in any order.
+      // One pass (see common's panel.js): of one colour, the arrow's faces blend the same in any order.
       new THREE.MeshBasicMaterial({ color: 0x9be7ff, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false, forceSinglePass: true }));
     ring.rotation.x = -Math.PI / 2;
     const arrow = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.16, 12), ring.material);

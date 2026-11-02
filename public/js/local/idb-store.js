@@ -1,3 +1,4 @@
+// @ts-check
 // The local library's store for derived indexes (core/library.js `store`: Wikisource works,
 // Wikipedia articles and its checkpoint), in IndexedDB, so a file's index is built once and
 // found again after a reload: names carry the ZIM's UUID (core/wikipedia.js indexName), which

@@ -1,3 +1,4 @@
+// @ts-check
 // Shared constants. Units are metres / radians unless noted. See SPEC.md §5.
 
 export const BOOK = {

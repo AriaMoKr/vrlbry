@@ -1,3 +1,4 @@
+// @ts-check
 // The way out (SPEC §5.6 "Kiosk panel"): the card's and the catalogue stand's "← Hallway" lead to
 // the Hallway, in front of this library's door (config.js DOOR_ID), or to whatever place has it
 // behind one of its doors and says so in the link that brings visitors here:

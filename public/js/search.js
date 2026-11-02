@@ -1,3 +1,4 @@
+// @ts-check
 // Search (SPEC §5.6), shared by the DOM overlay and the kiosk's Search tab: books by title,
 // subtitle and author across every library (in the client), and Wikipedia articles by title
 // prefix (on the server, which holds the millions of titles).

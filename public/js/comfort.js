@@ -1,3 +1,4 @@
+// @ts-check
 // The accessibility settings in words (SPEC §5.6 "Kiosk panel"): AriaMoKr/common's access.js keeps
 // them for every site on this origin under `hallway.access` = { motion: 'system' | 'reduce' |
 // 'full', vignette, seated }; these are the kiosk's buttons and the help dialog's choices for them.

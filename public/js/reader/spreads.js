@@ -1,3 +1,4 @@
+// @ts-check
 // Spreads (SPEC §5.6): what the open book shows, { left, right }, each a page (PageRef), 'ex'
 // (the ex-libris endpaper before the first page), 'blank' or null (no page after the last). Two
 // pages: pages paired by their number, odd ones on the right, turned two at a time. One page (the

@@ -1,3 +1,4 @@
+// @ts-check
 // Kiwix's library in the page (milestone 3, step 5; optional): the ZIMs this app reads well, by
 // kind and language, from Kiwix's catalogue (local/kiwix.js). The card's "Browse Kiwix's
 // library…" opens it (ui/overlay.js); Open reads one from the web (main.js openUrls). When the

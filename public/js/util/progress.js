@@ -1,3 +1,4 @@
+// @ts-check
 // Time on a progress indicator: how long so far and, once the fraction done says enough, about
 // how long is left. Shared by the "Opening <file>…" toast (main.js) and the inspect panel's
 // "Opening…" (interaction.js), so they read alike.

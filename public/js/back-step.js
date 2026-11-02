@@ -1,3 +1,4 @@
+// @ts-check
 // One step back (SPEC §5.9): what Back on a TV's remote does while walking (common's tv.js, the
 // Remote's step), from what is open, the latest first. Pure, for the tests: interaction.step() does
 // it. The book's history entries and its links' (common's back-history.js) are the app's own Back,

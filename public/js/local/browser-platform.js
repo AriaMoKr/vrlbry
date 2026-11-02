@@ -1,3 +1,4 @@
+// @ts-check
 // The shared core's platform in a browser (core/platform.js), made from the libraries the local
 // library's worker loads (worker.js): fzstd for zstd, fflate for zlib and raw deflate, and
 // htmlparser2's Parser. They are passed in, so Node tests build the very same platform from

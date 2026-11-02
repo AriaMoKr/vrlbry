@@ -1,3 +1,4 @@
+// @ts-check
 // Pure parts of the shared session (together.js), for the tests: where in the library a visitor
 // is, so only those in the same room are drawn (each place and room is laid out on its own), and
 // the session in words.

@@ -24,11 +24,12 @@
     "start": "node server/index.js",
     "start:https": "node server/index.js --https",
     "test": "node --test \"test/*.test.js\"",
+    "types": "tsc -p tsconfig.json",
     "perf:quest": "node tools/quest-perf.mjs",
     "build:pages": "node tools/build-pages.mjs"
   },
   "dependencies": {
-    "common": "github:AriaMoKr/common#v0.6.1",
+    "common": "github:AriaMoKr/common#v0.8.1",
     "fflate": "^0.8.3",
     "fzstd": "^0.1.1",
     "htmlparser2": "^12.0.0",
@@ -38,7 +39,9 @@
     "trystero": "0.26.0"
   },
   "devDependencies": {
+    "@types/three": "0.186.0",
     "fake-indexeddb": "^6.2.5",
-    "iwer": "^2.5.0"
+    "iwer": "^2.5.0",
+    "typescript": "5.9.3"
   }
 }
