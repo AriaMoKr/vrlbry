@@ -2027,23 +2027,30 @@ export class Interaction {
     return found && { ...found, side: hit.side };
   }
 
-  /** Where the reader is, to come back to (the trail). */
-  _here() {
+  /**
+   * Where the reader is, to come back to (the trail): the page, and the text view's own place when
+   * it is open (`view`, the block at its top: the page may begin blocks before it).
+   * @param {{ c: number, b: number } | null} [view]
+   */
+  _here(view = null) {
     const s = this._cur.spread;
     const side = currentSide(s);
     const page = s[side];
     return {
       libId: this.book.libId, id: this.book.id, at: this.reader.anchorOf(page), side,
       page: { c: page.c, p: page.p }, fontScale: this.reader.fontScale,
+      ...(view ? { view: { c: view.c, b: view.b } } : {}),
     };
   }
 
   /**
    * Follows a link of the open book (SPEC §3.5): `at` is a place in it, `to` one in another of
    * the library's books, `href` is asked of the library first (resolveLink). Where the reader was
-   * goes on the trail, for back().
+   * goes on the trail, for back(): with `view`, the text view's place, which Back brings it to.
+   * @param {object} link
+   * @param {{ view?: { c: number, b: number } | null }} [options]
    */
-  async followLink(link) {
+  async followLink(link, { view = null } = {}) {
     if (this.state !== 'read' || this._turnBusy || this._following) return;
     this._following = true; // one link at a time: a second tap waits for nothing
     try {
@@ -2069,7 +2076,7 @@ export class Interaction {
         dest = { libId: book.libId, id: to.book, at: { c: to.c, b: to.b ?? 0, ...(to.f ? { f: to.f } : {}) } };
       }
       audio.click();
-      const from = this._here();
+      const from = this._here(view);
       this._trail.push(from);
       if (this._trail.length > 100) {
         this._trail.shift();
@@ -2126,15 +2133,18 @@ export class Interaction {
   }
 
   /**
-   * Shows a place { libId, id, at, page?, fontScale?, side? }: in the open book with a turn, in
-   * another of the library's books by putting this one back and taking that one out (a Wikipedia
-   * volume, a Wikisource work). `page` (a trail's) is used while the font size is the same.
+   * Shows a place { libId, id, at, page?, fontScale?, side?, view? }: in the open book with a turn,
+   * in another of the library's books by putting this one back and taking that one out (a Wikipedia
+   * volume, a Wikisource work). `page` (a trail's) is used while the font size is the same. A
+   * trail's `view` (followed from the text view) is the place while the view is open: it shows
+   * that block again, not the page's first, and the 3D book goes there at another font size.
    * @returns {Promise<boolean>} whether the place is shown
    */
   async _goTo(dest) {
-    this.textView?.aim(dest.at); // the text view shows the place, not a spread's left page
+    const at = (this.textView?.isOpen && dest.view) || dest.at;
+    this.textView?.aim(at); // the text view shows the place, not a spread's left page
     try {
-      return await this._goToNow(dest);
+      return await this._goToNow(at === dest.at ? dest : { ...dest, at });
     } finally {
       this.textView?.aim(null);
     }

@@ -291,6 +291,11 @@ export class TextView extends Shell {
     this._onRead = false;
     /** The pictures of the part shown, let go with it (_release). @type {ImageSource[]} */
     this._sources = [];
+    /**
+     * The reader's place as the shell last brought the 3D book there (jumpTo in place: _sync, before
+     * a link): a link followed from the view keeps it on the trail, for Back. @type {Place | null}
+     */
+    this._shared = null;
   }
 
   /**
@@ -472,6 +477,7 @@ export class TextView extends Shell {
    * @param {{ inPlace: boolean }} options
    */
   jumpTo(place, { inPlace }) {
+    if (inPlace) this._shared = place;
     return this.I.jumpToAnchor(place, { inPlace });
   }
 
@@ -503,9 +509,13 @@ export class TextView extends Shell {
     return this.I.putBack();
   }
 
-  /** Back returns here: the shell has brought the 3D book to the reader's place. @param {unknown} link */
+  /**
+   * Back returns here: the shell has brought the 3D book to the reader's place, and the trail keeps
+   * that place too (view), the block at the view's top, which the 3D page may begin blocks before.
+   * @param {unknown} link
+   */
   followLink(link) {
-    return this.I.followLink(link);
+    return this.I.followLink(/** @type {object} */ (link), { view: this.isOpen ? this._shared : null });
   }
 
   /** The book's contents (the reader's), by level; a Wikipedia volume's articles. */

@@ -29,7 +29,7 @@
     "build:pages": "node tools/build-pages.mjs"
   },
   "dependencies": {
-    "common": "github:AriaMoKr/common#v0.8.1",
+    "common": "github:AriaMoKr/common#v0.8.3",
     "fflate": "^0.8.3",
     "fzstd": "^0.1.1",
     "htmlparser2": "^12.0.0",

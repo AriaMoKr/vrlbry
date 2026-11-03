@@ -429,6 +429,23 @@
     as above (a theme, N three times: the same spread, each in its own paper; the last Back, on a
     screen and with `?tv=emulate`), and the view's Back by a test. The card's ↩ Back on a TV is
     left as it is: its last step goes back to walking, as SPEC §5.9 has it.
+- **↩ Back to the reader's place in the text view, common v0.8.3** (requested 2026-11-02; done
+  the same day; SPEC §5.2, §5.8). A link followed from the middle of a part, with the view open,
+  came back to the page's first block (Jespersen's *Language*, chapter III's part, from 164 px
+  into block 3 to block 0): the trail kept only the 3D page. Its step now keeps the view's place
+  as well (`view`, the block the shell brought the 3D book to before the link), which Back and
+  the browser's Back aim the view at; in the 3D book alone Back goes to the page, as before.
+  Nothing more was needed from common's shell. common v0.8.1 → v0.8.3: the view stays at its
+  place while the 3D book's pages shown again show it (v0.8.2), and its own smooth scrolls leave
+  the toolbar of a short screen in sight (v0.8.3).
+  - A test: the trail itself (interaction.js) with common's shell, a stand-in reader and 3D turn;
+    Back, the browser's Back, another font size, the view closed, a link of the 3D book's own.
+  - Checked live in headless Chrome (the bad-password count stayed 0): at 1280 × 800 a link from
+    the middle of a part and ↩ Back by its button, by Enter and by the browser's Back, each time
+    the block left at the top (the reader was 164, 300 and 250 px into it); at
+    740 × 360 A+ and A− clicked with the toolbar shown leave it shown; with `?tv=emulate` axe
+    finds nothing with the card's book buttons out (the book in hand and open). The earlier
+    checks (place, link, sizes, width, TV, themes, axe) as before.
 - **All-libraries hall draw calls.** On the Quest: 380 → 104 standing (both eyes), 142 → 56
   walking, with one draw call per sign and no books drawn behind a nearer row. The room itself
   (chandeliers, walls, wainscots, ~31 calls per eye) could still be merged per material.

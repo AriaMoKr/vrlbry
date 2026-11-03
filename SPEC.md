@@ -1437,7 +1437,7 @@ export class Controls extends EventTarget {
 
 ### 5.5 Panels (AriaMoKr/common's `panel.js`)
 
-The 3D panels are common's (`../vendor/common/panel.js`, v0.8.1; its README, "panel.js", has
+The 3D panels are common's (`../vendor/common/panel.js`, v0.8.3; its README, "panel.js", has
 the whole interface), shared with the Hallway's other sites. What interaction.js uses:
 
 ```js
@@ -1538,7 +1538,8 @@ States: `browse` → `inspect` → `opening` → `read` (and back), plus `busy` 
   back and that one taken out and opened there (a Wikipedia volume, a Wikisource work), at the
   block with the link's `f` when that chunk has one. A link that leads nowhere says so in a
   notice. Where the reader was goes on a trail (up to 100: the book, the spread's page and side,
-  the font size), kept while links swap books and dropped when the book is closed; the toolbar's
+  the font size, and for a link followed in the text view its place, `view`: §5.8), kept while
+  links swap books and dropped when the book is closed; the toolbar's
   "↩ Back" (beside the progress bar while there is a trail), B/Y and Backspace go back along it,
   to the same spread while the font size is the same. So does the browser's Back (its button, a
   phone's back gesture, a mouse's back button, Quest Browser's: AriaMoKr/common's
@@ -1884,7 +1885,7 @@ readers, the keyboard, zoom and phones. The module is shared with the sites made
 overlay's `announce`).
 
 The view itself, its toolbar, keys, place and CSS, is AriaMoKr/common's `TextView`
-(`../vendor/common/text-view.js`, v0.8.1; its README, "text-view.js"), which outside's and
+(`../vendor/common/text-view.js`, v0.8.3; its README, "text-view.js"), which outside's and
 music's views extend too. `ui/text-view.js` keeps the pure part (`renderBlocks`, `topBlock`,
 `runsText` and the rest), and its `TextView` extends common's with the library's book, all through
 the interaction: a part is a chunk (`renderPart`: `getChunk`, then `renderBlocks`), a place is a
@@ -1951,7 +1952,9 @@ the view says as a book comes out, opens and closes (`bookInHand`, `openOnRead`,
     "Close", no "Theme" and no page label. The accessible names stay whole.
   - On a short screen (≤ 420 px tall: a phone held sideways, 400 % zoom) the toolbar slides away
     while the reader scrolls down. It comes back on a scroll up, or when focus reaches it; the
-    text the browser scrolled towards it is put back.
+    text the browser scrolled towards it is put back. The view's own smooth scrolls (to the place
+    after a size, a turn or Back) leave it in sight (common v0.8.3; before, a click on A+ slid it
+    away).
 - **One place.** The view and the 3D book share the reader's place, a block anchor `{ c, b }`.
   - Opening: the view opens at `anchorOf` the page shown, or at its own last place while the 3D
     book still shows it; a frame on, once drawn, it is put there again unless the reader has
@@ -1959,7 +1962,15 @@ the view says as a book comes out, opens and closes (`bookInHand`, `openOnRead`,
   - A turn, jump, link, Back or contents entry in the 3D book: the view shows that part and
     scrolls to the block (`follow`, called from `_afterTurn`). A place aimed at (`aim`: a link's
     or an entry's block, a part's start) wins over the spread's left page, which may end the
-    part before.
+    part before. The 3D book's pages shown again with the view's place still on them (1 page or
+    2, a phone turned) leave the view at it (common v0.8.2); a turn of the view's own (← →) goes
+    to the new pages' first block.
+  - A link followed in the view keeps the view's place on the trail as well (`view`: the place the
+    shell brought the 3D book to just before, which `jumpTo` in place hands the library's
+    `TextView`; the page may begin blocks before it). Back with the view open (↩ Back clicked or
+    by Enter, the browser's Back: `_goTo`) aims the view at that block, not at the page's first,
+    and at another font size takes the 3D book to that block's page. With the view closed, Back
+    goes to the page, as from a link of the 3D book's own.
   - The reader's own scrolling: once it rests (250 ms), the block at the view's top becomes the
     place (`topBlock`, measured below the sticky toolbar). So it does at once before anything that
     starts from the place: a size, Back, a link, a turn, closing.
@@ -1986,7 +1997,9 @@ the view says as a book comes out, opens and closes (`bookInHand`, `openOnRead`,
     would count the toolbar's own buttons as hidden).
 - **Tests.** `test/client-text-view.test.js` covers blocks to DOM (with `test/helpers/fake-dom.js`),
   links, heading levels, the top block, the round trip from a page to the view and back to the
-  same block, the focus after ↩ Back's last step, and the themes' colours and color-schemes in
+  same block, the focus after ↩ Back's last step, Back to the block a link was followed from
+  (interaction.js's trail itself, with common's shell, a stand-in reader and 3D turn: Back, the
+  browser's Back, another font size, the view closed), and the themes' colours and color-schemes in
   common's `TEXT_VIEW_CSS` (style.css sets none of them).
 
 ### 5.9 TV remote (`ui/remote.js`, `back-step.js`)

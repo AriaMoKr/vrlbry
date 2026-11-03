@@ -208,6 +208,73 @@ describe('the text view: ↩ Back', () => {
     view._header();
     assert.equal(doc.activeElement, view.el);
   });
+
+  it('brings the view back to the block a link was followed from (Back, the browser\'s Back), the 3D book alone to its page', async () => {
+    const { Interaction } = await import('../public/js/interaction.js');
+    // interaction.js's trail and jumps as they are; the reader and the 3D book's turn stand-ins: a page
+    // p of a part holds its blocks 10p to 10p + 9.
+    const reader = {
+      fontScale: 1,
+      anchorOf: (ref) => ({ c: ref.c, b: ref.p * 10 }),
+      blocksOn: (ref) => ({ first: ref.p * 10, last: ref.p * 10 + 9 }),
+      refForAnchor: async (at) => ({ c: at.c, p: Math.floor(at.b / 10) }),
+    };
+    const I = Object.assign(Object.create(Interaction.prototype), {
+      state: 'read', _turnBusy: false, _following: false, _trail: [], _trailBase: 0, backHistory: null,
+      book: { libId: 'lib', id: 'book' }, reader, settings: { fontScale: 1 }, toolbar: { w: 1000, set() {} },
+      _cur: { spread: { left: { c: 1, p: 0 }, right: { c: 1, p: 1 } } },
+    });
+    const jumps = [];
+    I._jump = async (ref, side) => { // the spread with that page on its side; the view follows it (_afterTurn)
+      jumps.push({ ref, side });
+      I._cur = { spread: side === 'right' ? { left: { c: ref.c, p: ref.p - 1 }, right: ref } : { left: ref, right: { c: ref.c, p: ref.p + 1 } } };
+      I.textView.follow();
+    };
+    // The view (common's shell, the library's TextView) open on part 1, the reader 13 blocks down: block
+    // 13 at its top, as the shell has it, on the spread's right page (blocks 10 to 19).
+    const shown = [];
+    const view = Object.assign(Object.create(TextView.prototype), {
+      I, tv: false, _open: true, part: 1, _at: { c: 1, b: 13 }, _moved: false, _laid: null, _quiet: 0, _turning: 0,
+      _aim: null, _book: 'lib\nbook', _shared: null, _style() {}, _header() {},
+      _show(place) { shown.push(place); view._at = place; }, // as _showNow puts it at the place
+    });
+    I.textView = view;
+    // A link clicked in the view (renderPart's onLink): the 3D book brought to the reader's place (shown
+    // there already), then the link followed.
+    const click = async () => {
+      await view._sync();
+      await view.followLink({ at: [17, 649] });
+      assert.deepEqual(shown.at(-1), { c: 17, b: 649 }, 'the view at the link\'s block');
+    };
+    await click();
+    assert.deepEqual(I._trail.at(-1).view, { c: 1, b: 13 }, 'the trail keeps the view\'s place');
+    await I.goBack();
+    assert.deepEqual(shown.at(-1), { c: 1, b: 13 }, 'Back: the block it left, not its page\'s first (block 0)');
+    assert.deepEqual(jumps.at(-1), { ref: { c: 1, p: 0 }, side: 'left' }, 'the 3D book on the spread it showed');
+    // The browser's Back (back-history.js): the popstate back to the trail's depth 0.
+    await click();
+    assert.equal(await I.backTo(0), true);
+    assert.deepEqual(shown.at(-1), { c: 1, b: 13 }, 'the browser\'s Back: the block it left');
+    // At another font size the 3D book goes to the view's place too, not to where its page began.
+    await click();
+    I.settings.fontScale = 1.25;
+    await I.goBack();
+    assert.deepEqual(shown.at(-1), { c: 1, b: 13 });
+    assert.deepEqual(jumps.at(-1), { ref: { c: 1, p: 1 }, side: null }, 'the page of block 13');
+    I.settings.fontScale = 1;
+    // The view closed before Back: the 3D book alone goes to its page, as from a link of its own.
+    I._cur = { spread: { left: { c: 1, p: 0 }, right: { c: 1, p: 1 } } };
+    await click();
+    view._open = false;
+    const n = shown.length;
+    await I.goBack();
+    assert.deepEqual(jumps.at(-1), { ref: { c: 1, p: 0 }, side: 'left' });
+    assert.equal(shown.length, n, 'nothing shown in the closed view');
+    await I.followLink({ at: [17, 649] });
+    assert.equal(I._trail.at(-1).view, undefined, 'a link of the 3D page: no view place');
+    await I.goBack();
+    assert.deepEqual(jumps.at(-1), { ref: { c: 1, p: 0 }, side: 'left' });
+  });
 });
 
 describe('the text view: its themes', () => {
