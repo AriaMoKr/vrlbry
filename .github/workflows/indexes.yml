@@ -1,0 +1,74 @@
+# Builds the missing prebuilt indexes of tools/indexes.txt from Kiwix's mirror, by hand (Actions →
+# Indexes → Run workflow, or gh workflow run indexes.yml --ref main): up to 5 hours, the quickest
+# first (tools/build-indexes.mjs buildOrder), a Wikipedia stopped at the deadline resuming next
+# time from its checkpoint.
+#
+# Apart from the site's deploys (pages.yml) on purpose: a push is published at once, however long
+# the builds take. What is built goes into this repository's Actions cache, which every deploy
+# ships from (with the release "indexes"); when this run made new ones, it starts a deploy of
+# main to ship them. To keep them past the cache's 7 days unused, upload them to the release
+# (gh release upload indexes .indexes/*.json --clobber, from a PC that has them).
+name: Indexes
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write # to start a deploy (pages.yml) when there are new indexes
+
+# One run at a time; another waits.
+concurrency:
+  group: indexes
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 345
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      # What this repo has: the cache of earlier runs (with any build's checkpoint) and the release.
+      - uses: actions/cache/restore@v6
+        with:
+          path: .indexes
+          key: indexes-${{ github.run_id }}
+          restore-keys: indexes-
+      - name: Prebuilt indexes published as release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p .indexes
+          gh release download indexes --repo "$GITHUB_REPOSITORY" --dir .indexes --pattern '*.v*.json' --skip-existing \
+            || echo "No release \"indexes\" (or nothing new in it)."
+          { ls .indexes | grep -E '\.v[0-9]+\.json$' || true; } | sort > "$RUNNER_TEMP/before"
+      # A build that fails (or Kiwix's catalogue out of reach) still saves what the others built.
+      - name: Build the missing prebuilt indexes from Kiwix's mirror (the quickest first)
+        continue-on-error: true
+        run: node tools/build-indexes.mjs --out .indexes --web --hours 5
+      - name: Drop the indexes of editions no longer current
+        continue-on-error: true
+        run: node tools/build-indexes.mjs --out .indexes --prune
+      - if: ${{ !cancelled() }}
+        uses: actions/cache/save@v6
+        with:
+          path: .indexes
+          key: indexes-${{ github.run_id }}
+      - name: Deploy the site again when there are new indexes
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          { ls .indexes | grep -E '\.v[0-9]+\.json$' || true; } | sort > "$RUNNER_TEMP/after"
+          new=$(comm -13 "$RUNNER_TEMP/before" "$RUNNER_TEMP/after")
+          if [ -n "$new" ]; then
+            printf 'New indexes:\n%s\n' "$new"
+            gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref main
+          else
+            echo "No new indexes: nothing to deploy."
+          fi

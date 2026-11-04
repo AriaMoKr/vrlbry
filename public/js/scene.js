@@ -1,3 +1,4 @@
+// @ts-check
 // Scenes: what a page shows, as data: the place, room and sort, the viewpoint, the book out and the
 // page shown (and on which side of the spread), the reading settings, and the dialogs (the page's
 // own menus and the 3D panels). "Save scene" / "Restore scene" (help dialog, kiosk) keep one in the
@@ -8,7 +9,7 @@ import { load, save } from './util/storage.js';
 
 const KEY = 'scene';
 /** The settings a scene carries: those that change what a book looks like. */
-const READING = ['fontScale', 'theme', 'readScale', 'readDistance'];
+const READING = ['fontScale', 'theme', 'readScale', 'readDistance', 'pageView'];
 
 /** Runs fn; a part that fails (or a page that failed before the app existed) leaves a note instead. */
 export const part = (fn) => {
@@ -41,6 +42,7 @@ export function sceneOf(app, { overlay = app?.overlay } = {}) {
         library: I.book.libId, id: I.book.id, title: I.book.title,
         at: ref ? I.reader.labelOf(ref) : null, anchor: ref ? I.reader.anchorOf(ref) : null,
         side: ref ? (ref === I._cur?.spread?.left ? 'left' : 'right') : null,
+        pages: ref ? (I._single ? 1 : 2) : null, // one page at a time or two, as shown (not only as set)
       };
     }),
     settings: part(() => Object.fromEntries(READING.filter((k) => s[k] != null).map((k) => [k, s[k]]))),
@@ -95,7 +97,8 @@ export async function restoreScene(app, scene) {
     ? (I.booksByLib[b.library] || []).find((x) => String(x.id) === String(b.id)) : null;
   if (book && I.world.shelves.books().includes(book)) {
     await I.pick(book);
-    if (view.state === 'read') await I.read(b.anchor ? { at: b.anchor, side: b.side } : { fromStart: true });
+    const pages = b.pages === 1 || b.pages === 2 ? { pages: b.pages } : {}; // one page at a time or two, as it was shown
+    if (view.state === 'read') await I.read(b.anchor ? { at: b.anchor, side: b.side, ...pages } : { fromStart: true, ...pages });
   }
   overlay?.restoreUi(scene?.ui?.page);
   await I.restoreUi(scene?.ui);

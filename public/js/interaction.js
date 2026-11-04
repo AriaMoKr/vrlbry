@@ -5,8 +5,11 @@ import * as THREE from 'three';
 import { Book3D } from './world/book3d.js';
 import { MAX_BOOKCASES } from './world/world.js';
 import { BookReader, THEMES } from './reader/reader.js';
+import {
+  currentRef, currentSide, fitOnePage, isPage, nextSpread, pageViewSetting, prevSpread, sameSpread, singlePage, spreadAt,
+} from './reader/spreads.js';
 import { bookIndex, matchBooks, findArticles } from './search.js';
-import { Panel, Label, UI } from './ui/panel.js';
+import { Panel, Label, UI } from '../vendor/common/panel.js';
 import { audio } from './audio.js';
 import { perf } from './perf.js';
 import { load, save } from './util/storage.js';
@@ -15,6 +18,12 @@ import { isLocal } from './local/local.js';
 import { findText, resolveLink } from './api.js';
 import { makeRoom } from './world/room-ahead.js';
 import { RESET_PARTS, defaultResetParts } from './reset.js';
+import { wayOut as defaultWayOut } from './hallway.js';
+import { saveNav } from './nav.js';
+import { comfortButtons, nextMotion } from './comfort.js';
+import { ACCESS_DEFAULTS, normalizeAccess, reduceMotion, saveAccess } from '../vendor/common/access.js';
+import { sessionText } from './together-space.js';
+import { backStep } from './back-step.js';
 import { KINDS as KIWIX_KINDS, indexLabel, sizeText } from './local/kiwix.js';
 import { letterOf, SORT_MODES, inTitleOrder, thumbIndex } from './util/books.js';
 import { PAGE_PX, READ } from './config.js';
@@ -33,6 +42,7 @@ const OPENING_LINE = 'Preparing its pages'; // the inspect panel's line while a 
 const CANCELLED = Symbol('cancelled'); // read(): Put back pressed while the book was opening
 const OPENING_BAR_MS = 200; // the opening progress bar's repaints, at most one per this long
 const LINK_MARKS = 4; // lines of a link that the hover band covers
+const TV_REACH = 2.2; // m: a TV remote's up and down scroll a stand's list the dot is on from this near, else walk
 
 const _plane = new THREE.Plane();
 const _from = new THREE.Vector3();
@@ -43,8 +53,10 @@ const _normal = new THREE.Vector3();
 // Reused by _hitTest every frame (no new arrays per pointer per frame).
 const _meshes = [];
 const _hits = [];
+const _head = new THREE.Vector3();
+const _uv = { x: 0, y: 0 };
 
-/** Where a ray meets a panel's plane, as panel uv (beyond 0..1 off the panel), or null. */
+/** Where a ray meets a panel's plane, as panel uv (beyond 0..1 off the panel), or null: the same object each time. */
 function panelUv(panel, ray) {
   const m = panel.mesh;
   m.updateMatrixWorld();
@@ -52,13 +64,23 @@ function panelUv(panel, ray) {
   _plane.setFromNormalAndCoplanarPoint(_normal, m.getWorldPosition(_onPlane));
   if (!ray.intersectPlane(_plane, _onPlane)) return null;
   m.worldToLocal(_onPlane);
-  return { x: _onPlane.x / panel.width + 0.5, y: _onPlane.y / panel.height + 0.5 };
+  _uv.x = _onPlane.x / panel.width + 0.5;
+  _uv.y = _onPlane.y / panel.height + 0.5;
+  return _uv;
 }
+
+/** The reader's toolbar: its width (m), and how far below the page's foot its own foot is (m). */
+const TOOLBAR_W = 0.72;
+const TOOLBAR_DROP = 0.15;
+/** The contents panel's size (m). */
+const TOC_W = 0.42;
+const TOC_H = 0.56;
 
 const easeInOut = (t) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
 
 export const DEFAULT_SETTINGS = {
   sort: 'title', fontScale: 1, theme: 'paper', smoothMove: true, sound: true, readScale: 1, readDistance: READ.distance,
+  pageView: 'auto', // one page or two at a time (reader/spreads.js singlePage): 'auto', 'single' or 'spread'
   updateNotices: true, // tell when the site has been updated (main.js; "Don't show again" turns it off)
 };
 
@@ -75,9 +97,22 @@ export class Interaction {
    * @param {object[]} o.libraries
    * @param {Record<string, object[]>} o.booksByLib
    * @param {object} o.settings persisted settings (mutated + saved here)
+   * @param {ReturnType<defaultWayOut>} [o.wayOut] where the catalogue stand's "← Hallway" leads (hallway.js)
+   * @param {{ move: string, turn: string }} [o.nav] how to move and turn in VR (nav.js: common's loadNav)
+   * @param {{ motion: string, vignette: boolean, seated: boolean }} [o.access] the accessibility
+   *   settings (common's access.js loadAccess)
    */
-  constructor({ renderer, scene, camera, rig, world, controls, overlay, libraries, booksByLib, settings }) {
-    Object.assign(this, { renderer, scene, camera, rig, world, controls, overlay, libraries, booksByLib, settings });
+  constructor({ renderer, scene, camera, rig, world, controls, overlay, libraries, booksByLib, settings, wayOut = defaultWayOut(), nav, access }) {
+    Object.assign(this, { renderer, scene, camera, rig, world, controls, overlay, libraries, booksByLib, settings, wayOut });
+    this.nav = { move: settings.smoothMove === false ? 'teleport' : 'smooth', turn: 'snap', ...nav };
+    controls.setNav(this.nav);
+    settings.smoothMove = this.nav.move === 'smooth'; // saved with the next change
+    // The accessibility settings, every site's (common's access.js, `hallway.access`): with less
+    // motion the view's eased moves cut (_ease) and its fades blink (_fadeTo); the vignette and
+    // the seated eye height are the controls'.
+    this.access = normalizeAccess(access ?? ACCESS_DEFAULTS);
+    this.reduced = false;
+    this._applyAccess();
     this.state = 'browse';
     this.book = null; // book descriptor in inspect/read
     this.book3d = null;
@@ -97,6 +132,16 @@ export class Interaction {
     this.onExitVR = null;
     /** Set by main.js: reloads the page (a headset's browser controls are out of reach in VR). */
     this.onReload = null;
+    /** Set by main.js: leaves by the way out (this.wayOut: the Hallway, or the place that linked here). */
+    this.onHallway = null;
+    /** Set by main.js: (place, room) after every rebuild of the shelves; the address names them (place-url.js). */
+    this.onShelved = null;
+    /** Set by main.js: the shared session (together.js), shown on the kiosk while in one. */
+    this.together = null;
+    /** Set by main.js: the text view of the open book on a screen (ui/text-view.js, SPEC §5.8). */
+    this.textView = null;
+    this._leaving = false; // going out by the way out (leave)
+    this._leaveTimer = 0;
     this._version = ''; // "Updated …": when the website last changed (setVersion)
     this._outdated = false; // the site changed since this page loaded (setOutdated)
     this._savedScene = null; // "Saved …" of the browser's saved scene (setSavedScene), or null
@@ -105,8 +150,21 @@ export class Interaction {
     this._exitHold = null; // { name, t } while B/Y is held to leave VR
     // Where links were followed from, latest last (back()): { libId, id, at, page, fontScale, side }.
     this._trail = [];
+    this._trailBase = 0; // places dropped from the trail's start (it keeps 100): links deep at its first
+    /** Set by main.js: the browser's Back along the trail (common's back-history.js). */
+    this.backHistory = null;
     this._following = false; // a link being looked up (resolveLink)
     this._linkMarks = null; // the bands over the link under a pointer (_markLink)
+    this._bookEntry = false; // the book's history entries are ones the app's Back comes to (step)
+    // A TV's remote (SPEC §5.9; main.js, ui/remote.js): OK is useMiddle, Back is step, and ↑ ↓
+    // scroll the list the dot is on (scrollUnderDot). tv set by main.js; inCard by ui/remote.js (the
+    // page's card has the focus, so the dot goes).
+    this.tv = false;
+    this.inCard = false;
+    this._dotPanel = null; // the panel, and its list that scrolls, under the dot (when near enough)
+    this._dotList = null;
+    /** Set by ui/remote.js: fn(on) as the dot comes onto such a list, or leaves it (the hint). */
+    this.onDotList = null;
 
     this.tooltip = new Label({ width: 0.56, height: 0.13 });
     this.tooltip.visible = false;
@@ -176,19 +234,29 @@ export class Interaction {
     this._genresScroll = p.get('room-genres') ? { place: this._genresListFor, scroll: p.get('room-genres').scroll } : null;
     p.clear();
     p.add({ type: 'text', x: pad, y: 26, w: W - 2 * pad, h: 54, text: 'Catalogue', size: 46, weight: '600', serif: true, color: UI.accent });
+    // The header's buttons, right to left. With all of them (a server's library, in VR) Rescan is
+    // shortened, or the way out's would reach the title; that one takes the room left (another
+    // place's name is longer), at most 260.
     let right = W - pad;
     if (!this.staticSite) {
-      right -= 230;
-      p.add({ id: 'rescan', type: 'button', x: right, y: 24, w: 230, h: 56, label: '⟳ Rescan folder', size: 24, onClick: () => this.onRescan?.() });
+      const tight = this.controls.presenting;
+      right -= tight ? 150 : 230;
+      p.add({
+        id: 'rescan', type: 'button', x: right, y: 24, w: tight ? 150 : 230, h: 56, label: tight ? '⟳ Rescan' : '⟳ Rescan folder', size: 24,
+        onClick: () => this.onRescan?.(),
+      });
     }
     if (this.controls.presenting) {
       right -= 12 + 170;
       p.add({ id: 'exit-vr', type: 'button', x: right, y: 24, w: 170, h: 56, label: 'Exit VR', size: 24, onClick: () => this.onExitVR?.() });
     }
+    right -= 12 + 190;
     p.add({
-      id: 'reload', type: 'button', x: right - 12 - 190, y: 24, w: 190, h: 56, label: '↻ Reload page', size: 24,
+      id: 'reload', type: 'button', x: right, y: 24, w: 190, h: 56, label: '↻ Reload page', size: 24,
       active: this._outdated, onClick: () => this.onReload?.(),
     });
+    const hw = Math.min(260, right - 12 - 270);
+    p.add({ id: 'hallway', type: 'button', x: right - 12 - hw, y: 24, w: hw, h: 56, label: this.wayOut.label, size: 24, onClick: () => this.leave() });
     const place = this._place();
     // Rooms exist when there is more than one library, or a library too big to shelve whole.
     const hasRooms = this.libraries.length > 1 || (place && isFaceted(place, this.booksByLib[place.id]));
@@ -413,15 +481,21 @@ export class Interaction {
 
     // Actions + recent.
     y += 3 * 66 + 18;
-    p.add({ type: 'button', x: pad, y, w: 300, h: 60, label: '✦ Surprise me', size: 28, onClick: () => this.surprise() });
+    p.add({ type: 'button', x: pad, y, w: 260, h: 60, label: '✦ Surprise me', size: 28, onClick: () => this.surprise() });
     p.add({
-      id: 'sound', type: 'button', x: pad + 320, y, w: 220, h: 60, label: this.settings.sound ? 'Sound on' : 'Sound off', size: 26,
+      id: 'sound', type: 'button', x: pad + 272, y, w: 190, h: 60, label: this.settings.sound ? 'Sound on' : 'Sound off', size: 26,
       active: this.settings.sound, onClick: () => this.toggleSound(),
     });
-    p.add({
-      id: 'smooth', type: 'button', x: pad + 560, y, w: W - 2 * pad - 560, h: 60, label: this.settings.smoothMove ? 'Stick walking' : 'Teleport only', size: 26,
-      active: this.settings.smoothMove, onClick: () => this.toggleSmooth(),
-    });
+    // How to move and turn in VR: the Hallway's choice, shared with it (nav.js).
+    p.add({ id: 'smooth', type: 'button', x: pad + 474, y, w: 220, h: 60, size: 24, ...this._moveButton(), onClick: () => this.toggleSmooth() });
+    p.add({ id: 'turn', type: 'button', x: pad + 706, y, w: W - 2 * pad - 706, h: 60, size: 24, ...this._turnButton(), onClick: () => this.toggleTurn() });
+    // Comfort: less motion, the vignette, seated (common's access.js, shared with the Hallway).
+    y += 72;
+    const comfort = comfortButtons(this.access, this.reduced);
+    const cw = (W - 2 * pad - 24) / 3;
+    p.add({ id: 'motion', type: 'button', x: pad, y, w: cw, h: 56, size: 24, ...comfort.motion, onClick: () => this.toggleMotion() });
+    p.add({ id: 'vignette', type: 'button', x: pad + cw + 12, y, w: cw, h: 56, size: 24, ...comfort.vignette, onClick: () => this.toggleVignette() });
+    p.add({ id: 'seated', type: 'button', x: pad + 2 * (cw + 12), y, w: cw, h: 56, size: 24, ...comfort.seated, onClick: () => this.toggleSeated() });
     // Save / restore the scene (scene.js; the same as in the help dialog, for the headset), and
     // Reset… (reset.js): this tab becomes the choice of what to clear.
     y += 80;
@@ -441,6 +515,12 @@ export class Interaction {
       id: 'scene-note', type: 'text', x: pad + 652, y: y + 4, w: W - 2 * pad - 652, h: 50, text: this._savedScene ?? 'No saved scene',
       size: 20, color: UI.muted, maxLines: 2,
     });
+    // The shared session (together.js), while in one: who else is in it, and a way out of it.
+    if (this.together?.room) {
+      y += 76;
+      p.add({ id: 'session-text', type: 'text', x: pad, y: y + 2, w: W - 2 * pad - 250, h: 54, text: this._sessionText(), size: 22, color: UI.text, maxLines: 2 });
+      p.add({ id: 'session-leave', type: 'button', x: W - pad - 236, y, w: 236, h: 56, label: 'Leave session', size: 24, onClick: () => this.onLeaveSession?.() });
+    }
     const recent = this._recentBooks().slice(0, 3);
     y += 76;
     p.add({ type: 'text', x: pad, y, w: W - 2 * pad, h: 34, text: recent.length ? 'Recently read' : 'Pick any book from the shelves to start reading.', size: 26, color: UI.muted });
@@ -910,7 +990,7 @@ export class Interaction {
   }
 
   _buildToolbar() {
-    const p = new Panel({ width: 0.66, height: 0.13, pxPerMeter: 1300 });
+    const p = new Panel({ width: TOOLBAR_W, height: 0.13, pxPerMeter: 1300 });
     p.visible = false;
     p.mesh.name = 'toolbar';
     this.toolbar = p;
@@ -923,25 +1003,26 @@ export class Interaction {
     const by = 68;
     const bh = 84;
     const defs = [
-      ['prev', '◀', 100, () => this.turn(-1)],
-      ['next', '▶', 100, () => this.turn(1)],
-      ['toc', 'Contents', 160, () => this.toggleToc()],
-      ['smaller', 'A−', 86, () => this.changeFont(-1)],
-      ['larger', 'A+', 86, () => this.changeFont(1)],
-      ['theme', 'Theme', 120, () => this.cycleTheme()],
-      ['close', '✕', 86, () => this.closeBook()],
+      ['prev', '◀', 88, () => this.turn(-1)],
+      ['next', '▶', 88, () => this.turn(1)],
+      ['toc', 'Contents', 146, () => this.toggleToc()],
+      ['smaller', 'A−', 84, () => this.changeFont(-1)],
+      ['larger', 'A+', 84, () => this.changeFont(1)],
+      ['pages', '1 page', 136, () => this.togglePages()], // the other view (_showPagesButton)
+      ['theme', 'Theme', 108, () => this.cycleTheme()],
+      ['close', '✕', 84, () => this.closeBook()],
     ];
     const total = defs.reduce((s, d) => s + d[2], 0);
     const gap = (W - 2 * pad - total) / (defs.length - 1);
     let x = pad;
     for (const [id, label, w, fn] of defs) {
-      p.add({ id, type: 'button', x, y: by, w, h: bh, label, size: id === 'toc' || id === 'theme' ? 28 : 34, onClick: fn });
+      p.add({ id, type: 'button', x, y: by, w, h: bh, label, size: ['toc', 'pages', 'theme'].includes(id) ? 28 : 34, onClick: fn });
       x += w + gap;
     }
   }
 
   _buildToc() {
-    const p = new Panel({ width: 0.42, height: 0.56, pxPerMeter: 1300 });
+    const p = new Panel({ width: TOC_W, height: TOC_H, pxPerMeter: 1300 });
     p.visible = false;
     p.mesh.name = 'toc';
     this.tocPanel = p;
@@ -1040,6 +1121,11 @@ export class Interaction {
     _hits.length = 0;
     const ph = rc.intersectObjects(meshes, false, _hits)[0];
     if (ph) best = { kind: 'panel', panel: ph.object.userData.panel, uv: ph.uv, distance: ph.distance };
+    // The door back (world/door.js): its opening leads out, its frame stops the laser as a wall does.
+    const door = this.state === 'browse' ? this.world.door?.raycast(rc.ray) : null;
+    if (door && door.distance < rc.far && (!best || door.distance < best.distance)) {
+      best = { kind: door.opening ? 'door' : 'solid', distance: door.distance };
+    }
     if (this.book3d && (this.state === 'read' || this.state === 'inspect')) {
       if (this.state === 'read') {
         const pg = this.book3d.hitTestPages(rc);
@@ -1065,7 +1151,7 @@ export class Interaction {
     this._swallowSelect = null;
     if (this.state === 'busy' || pointer.teleporting || this._panelDrag) return;
     const hit = this._hitTest(pointer);
-    if (hit?.kind !== 'panel' || !hit.panel.pressAt(hit.uv)) return;
+    if (hit?.kind !== 'panel' || !hit.panel.pressAt(hit.uv.x, hit.uv.y)) return;
     this._panelDrag = { pointer, panel: hit.panel, look: this.controls.lookEnabled };
     this.controls.lookEnabled = false;
   }
@@ -1096,15 +1182,18 @@ export class Interaction {
     if (this._search.focus && !(hit?.kind === 'panel' && hit.panel === this.kiosk)) this._focusSearch(false);
     if (!hit) return;
     if (hit.kind === 'panel') {
-      if (hit.panel.click(hit.uv)) audio.click();
+      if (hit.panel.click(hit.uv.x, hit.uv.y)) audio.click();
     } else if (hit.kind === 'book' && this.state === 'browse') {
       this.pick(hit.book);
+    } else if (hit.kind === 'door' && this.state === 'browse') {
+      this.leave();
     } else if (hit.kind === 'held' && this.state === 'inspect') {
       if (this.book.readable) this.read();
     } else if (hit.kind === 'page' && this.state === 'read') {
       const found = this._linkUnder(hit);
       if (found) this.followLink(found.link);
-      else this.turn(hit.side === 'left' ? -1 : 1);
+      // One page at a time, its left part turns back too: the left page is often off the screen.
+      else this.turn(hit.side === 'left' || (this._single && hit.uv && hit.uv.x < 0.3) ? -1 : 1);
     }
   }
 
@@ -1161,12 +1250,17 @@ export class Interaction {
       else if (key === 'Escape') {
         if (this.tocPanel.visible) this.toggleToc(false);
         else this.closeBook();
-      } else if (code === 'KeyT' || code === 'KeyC') this.toggleToc();
+      } else if (code === 'KeyC') this.toggleToc();
+      else if (code === 'KeyT') this.textView?.toggle(); // a screen's text view (not in a headset)
       else if (code === 'KeyF') this.bookToFront();
       else if (code === 'KeyN') this.cycleTheme();
+      else if (code === 'KeyP') this.togglePages();
     } else if (this.state === 'inspect') {
       if (key === 'Enter' || key === ' ') {
         if (this.book.readable) this.read();
+      } else if (code === 'KeyT' && this.textView && this.book.readable) {
+        this.textView.openOnRead(); // read, straight into the text view (a screen's)
+        this.read();
       } else if (key === 'Escape' || key === 'Backspace') this.putBack();
       else if (code === 'KeyF') this.bookToFront();
     } else if (this.state === 'opening' && (key === 'Escape' || key === 'Backspace')) {
@@ -1182,6 +1276,62 @@ export class Interaction {
       else this.closeBook();
     } else if (this.state === 'inspect') this.putBack();
     else if (this.state === 'opening') this._cancelOpening?.();
+  }
+
+  // ===========================================================================================
+  // A TV's remote (SPEC §5.9: common's tv.js Remote, ui/remote.js)
+
+  /**
+   * Back while walking, the Remote's step: one step back (back-step.js), as B and Escape take one;
+   * false for none here, or for one through the book's history entries, which the app's own Back
+   * goes back through (then the browser's: back-history.js), so Back takes one step, not two.
+   */
+  step() {
+    const tv = this.textView;
+    const what = backStep({
+      state: this.state, textView: !!tv?.isOpen, textToc: !!tv?.tocOpen, toc: this.tocPanel.visible,
+      trail: this._trail.length, typing: !!this._search.focus, level: this.backHistory?.level ?? 0, entry: this._bookEntry,
+    });
+    if (what === 'text-toc') tv.closeToc();
+    else if (what === 'text') tv.close();
+    else if (what === 'typing') this._focusSearch(false);
+    else if (what === 'toc') this.toggleToc(false);
+    else if (what === 'link') this.goBack();
+    else if (what === 'away') this.putAway();
+    else return false;
+    return true;
+  }
+
+  /**
+   * OK while walking (the Remote's use): the gamepad's A at the middle of the view (a book on a
+   * shelf, the stand, the door). A book in hand is read, as Enter does; an open one turns a page,
+   * as the middle of a spread is its gutter (its contents, over the page on a TV, take the A).
+   */
+  useMiddle() {
+    audio.init();
+    if (this.state === 'inspect') {
+      if (this.book.readable) this.read();
+    } else if (this.state === 'read' && !this.tocPanel.visible) {
+      this.turn(1);
+    } else {
+      this._select(this.controls.aimPointer);
+    }
+  }
+
+  /**
+   * ↑ ↓ on a TV while walking (controls.scrollKey): the list the dot is on scrolls a row, when it
+   * has more rows than it shows and the stand is near (or it is the contents of the book being
+   * read); false to walk.
+   */
+  scrollUnderDot(dir) {
+    if (!this._dotList || this.state === 'busy') return false;
+    this._dotPanel.scrollBy(this._dotList, dir);
+    return true;
+  }
+
+  /** A key's button in the page's card (overlay.js, a TV's: the letter keys, Enter, Esc). */
+  pressKey(key, code = key) {
+    this._key({ key, code });
   }
 
   // ===========================================================================================
@@ -1207,12 +1357,19 @@ export class Interaction {
     return new Promise((resolve) => this._tweens.push({ t: 0, duration, step, resolve }));
   }
 
+  /** An eased move of the view or a book: a _tween, or a cut with less motion (its end at once). */
+  _ease(duration, step) {
+    if (!this.reduced) return this._tween(duration, step);
+    step(1);
+    return Promise.resolve();
+  }
+
   /** Animates an object's world transform to a target (position, quaternion, scale) with an arc. */
   async _fly(obj, toPos, toQuat, toScale, duration = 0.55, arc = 0.12) {
     const fromPos = obj.position.clone();
     const fromQuat = obj.quaternion.clone();
     const fromScale = obj.scale.x;
-    await this._tween(duration, (t) => {
+    await this._ease(duration, (t) => {
       const e = easeInOut(t);
       obj.position.lerpVectors(fromPos, toPos, e);
       obj.position.y += Math.sin(Math.PI * e) * arc;
@@ -1228,6 +1385,10 @@ export class Interaction {
   async pick(book) {
     if (this.state !== 'browse') return;
     this.state = 'busy';
+    // The browser's Back puts it away (back-history.js). Chromium passes over that entry when the
+    // page has had no key press or click yet (a gamepad alone): then a TV's Back is a step (step).
+    if (!this.backHistory?.level) this._bookEntry = navigator.userActivation?.hasBeenActive ?? true;
+    this.backHistory?.bookOut();
     this._setHover(null);
     this.controls.locomotionEnabled = false;
     const tr = this.world.shelves.getBookTransform(book);
@@ -1263,14 +1424,26 @@ export class Interaction {
     p.visible = true;
     this.state = 'inspect';
     this.overlay?.setBookOut?.(true);
+    // Said when it stays in hand: a caller that opens it at once (an article found, a link, a
+    // recent book) has called read() before this runs.
+    setTimeout(() => { if (this.state === 'inspect' && this.book === book) this.textView?.bookInHand(); }, 0);
   }
 
   /** Returns the book to its shelf (keepTrail: a link leads to another book: back() returns). */
   async putBack({ keepTrail = false } = {}) {
     if (this.state !== 'inspect' && this.state !== 'read') return;
-    if (!keepTrail) this._trail = [];
+    if (!keepTrail) {
+      this._putAways = (this._putAways || 0) + 1; // putAway: this book is away
+      // The book is put away: the browser's Back no longer closes it or goes along its links
+      // (back-history.js).
+      this.backHistory?.cleared();
+      this._bookEntry = false;
+      this._trail = [];
+      this._trailBase = 0;
+    }
     this._showBack();
     this._markLink(null);
+    this.textView?.bookClosing(keepTrail);
     const book = this.book;
     const b3 = this.book3d;
     // Forget the spreads, or the next book finds every page canvas still in use.
@@ -1313,9 +1486,10 @@ export class Interaction {
    * from a link), or at a page (page: { c, p }, a link trail's, laid out at the same font size).
    * `side` ('left' or 'right') puts that page on that side of the spread, as it was when a debug report was made:
    * turning pairs pages one after another, while the page number decides otherwise, and page
-   * numbers are partly estimated, so the pairing depends on how the page was reached.
+   * numbers are partly estimated, so the pairing depends on how the page was reached. `pages`
+   * (1 or 2, a scene's) shows the book one page or two at a time, whatever the setting says.
    */
-  async read({ fromStart = false, at = null, side = null, page = null } = {}) {
+  async read({ fromStart = false, at = null, side = null, page = null, pages = null } = {}) {
     if (this.state !== 'inspect' || !this.book.readable) return;
     const book = this.book;
     const b3 = this.book3d;
@@ -1359,31 +1533,29 @@ export class Interaction {
     this.state = 'busy';
     this.inspectPanel.visible = false;
 
-    // Reading pose (_readingPose): in front of the eyes, a little below, facing them, with room for
-    // the spread and its toolbar made first (_makeRoom: nearer and smaller by k when needed).
-    const pose = this._readingPose();
+    // One page at a time or two (reader/spreads.js singlePage).
+    this._single = pages ? pages === 1 : this._singleWanted();
+    this._showPagesButton();
+    // Reading pose (_readingTarget): in front of the eyes, a little below, facing them, with room for
+    // the spread and its toolbar made first (nearer and smaller by k when needed).
     this._readScale = b3.readingScale * (this.settings.readScale || 1);
-    const k = await this._makeRoom(this._readOffsets(pose, this._readScale));
-    const { eye, fwd } = this._viewerFrame();
-    const target = eye.clone().addScaledVector(fwd, pose.dist * k);
-    target.y = eye.y - pose.drop * k;
-    if (pose.flat) this.controls.pitch = 0;
+    const { target, quat, k } = await this._readingTarget();
     this.overlay?.setReading(true);
-    const quat = this._faceQuat(target, eye);
     this.scene.attach(b3.group);
     this.holder.position.copy(target);
     this.holder.quaternion.copy(quat);
     this.holder.scale.setScalar(k);
     this.holder.updateMatrixWorld(true);
-    // The cover swings open around a fixed spine at the spread centre, so the closed book lands
-    // on the right half of where the spread will be.
+    // The cover swings open around a fixed spine (_bookX: at the spread's centre, or half a page
+    // left of the page read), so the closed book lands where the right-hand page will be.
     b3.centerWhenOpen = false;
-    const half = (b3.dims.d / 2) * this._readScale;
-    const flyTarget = target.clone().addScaledVector(new THREE.Vector3(1, 0, 0).applyQuaternion(quat), half * k);
+    const x = this._bookX();
+    const flyTarget = target.clone().addScaledVector(new THREE.Vector3(1, 0, 0).applyQuaternion(quat), x * k);
     await this._fly(b3.group, flyTarget, quat, this._readScale * k, 0.5, 0.05);
     this.holder.attach(b3.group);
-    b3.group.position.set(half, 0, 0);
+    b3.group.position.set(x, 0, 0);
     b3.group.quaternion.identity();
+    b3.setSingle(this._single);
 
     const shown = await this._renderSpread(await this._spreadAt(startRef, side));
     this._cur = shown;
@@ -1394,25 +1566,59 @@ export class Interaction {
     this.toolbar.visible = true;
     this.state = 'read';
     this._afterTurn();
+    this.textView?.bookOpened(); // its title said; the text view opened when kept on
   }
 
   /**
    * How far in front of the eyes (and below them) an open book sits: in a headset the distance
    * chosen with the stick (settings.readDistance); on a flat screen far enough that the whole
-   * spread fits the screen's width (portrait phones) and height, a little higher.
+   * spread fits the screen's width (portrait phones) and height, a little higher; in the
+   * single-page view, the page as large as the screen's width and height allow with its toolbar
+   * under it (fitOnePage).
    * @returns {{ dist: number, drop: number, flat: boolean }}
    */
   _readingPose() {
     const flat = !this.controls.presenting;
-    let dist = this.settings.readDistance || READ.distance;
-    if (flat) {
-      const half = READ.pageWidth * (this.settings.readScale || 1) * 1.06;
-      const vt = Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2));
-      const fitW = half / (vt * this.camera.aspect);
-      const fitH = (half * 1.45 * 0.5 + 0.36) / vt;
-      dist = Math.max(0.64, fitW, fitH);
+    if (!flat) return { dist: this.settings.readDistance || READ.distance, drop: READ.drop, flat };
+    const page = READ.pageWidth * (this.settings.readScale || 1);
+    const vt = Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2));
+    const aspect = this.camera.aspect;
+    if (this._single) {
+      const fit = fitOnePage({
+        pageW: page * 1.06, pageH: page * (PAGE_PX.h / PAGE_PX.w) * 1.04, vt, aspect,
+        toolbarW: TOOLBAR_W, toolbarDrop: TOOLBAR_DROP,
+      });
+      return { dist: fit.dist, drop: fit.drop, flat };
     }
-    return { dist, drop: flat ? 0.04 : READ.drop, flat };
+    const half = page * 1.06;
+    return { dist: Math.max(0.64, half / (vt * aspect), (half * 1.45 * 0.5 + 0.36) / vt), drop: 0.04, flat };
+  }
+
+  /**
+   * Where the open book goes, in front of the viewer, with room made first: { target, quat, k }
+   * (k ≤ 1: nearer and smaller, _makeRoom). It faces the eyes; on a flat screen, whose view is
+   * levelled, it faces the screen square on: tilted towards eyes below it, its top edge came
+   * nearer and larger (the single-page view's page, above the eyes, ran off the top).
+   */
+  async _readingTarget() {
+    const pose = this._readingPose();
+    const k = await this._makeRoom(this._readOffsets(pose, this._readScale));
+    const { eye, fwd } = this._viewerFrame();
+    const target = eye.clone().addScaledVector(fwd, pose.dist * k);
+    target.y = eye.y - pose.drop * k;
+    if (pose.flat) this.controls.pitch = 0;
+    const facing = pose.flat ? new THREE.Vector3(eye.x, target.y, eye.z) : eye;
+    return { target, quat: this._faceQuat(target, facing), k };
+  }
+
+  /**
+   * Where the open book sits in the holder (its x): the spine, about which it opens (at the book's
+   * x = −d/2), at the holder's centre; in the single-page view half a page left of it, so the page
+   * read (on the right) is in front.
+   */
+  _bookX() {
+    const b3 = this.book3d;
+    return ((b3.dims.d - (this._single ? b3.pageSize.w : 0)) / 2) * this._readScale;
   }
 
   /** Points of a pose (holder-local [x, y, z]) placed at `target` facing the eyes, as vectors from them. */
@@ -1449,8 +1655,10 @@ export class Interaction {
     const { w, h } = this.book3d.pageSize;
     const sw = w * scale;
     const sh = (h * scale) / 2;
+    const x0 = this._single ? -sw / 2 : -sw; // the right-hand page alone, or both
+    const x1 = this._single ? sw / 2 : sw;
     return this._poseOffsets(eye, target, [
-      [0, 0, 0], [-sw, -sh, 0], [sw, -sh, 0], [-sw, sh, 0], [sw, sh, 0],
+      [0, 0, 0], [x0, -sh, 0], [x1, -sh, 0], [x0, sh, 0], [x1, sh, 0],
       [-0.33, -sh - 0.15, 0.05], [0.33, -sh - 0.15, 0.05],
     ]);
   }
@@ -1502,7 +1710,7 @@ export class Interaction {
       await this._fadeTo(0, 0.2);
     } else {
       const at = new THREE.Vector3();
-      await this._tween(0.3, (t) => C.teleportTo(at.lerpVectors(from, to, easeInOut(t))));
+      await this._ease(0.3, (t) => C.teleportTo(at.lerpVectors(from, to, easeInOut(t))));
     }
   }
 
@@ -1523,18 +1731,29 @@ export class Interaction {
         k = await this._makeRoom(this._inspectOffsets(this.book3d.dims));
         ({ target, quat } = this._inspectPose(k));
       } else {
-        const pose = this._readingPose();
-        k = await this._makeRoom(this._readOffsets(pose, this._readScale));
-        const { eye, fwd } = this._viewerFrame();
-        target = eye.clone().addScaledVector(fwd, pose.dist * k);
-        target.y = eye.y - pose.drop * k;
-        quat = this._faceQuat(target, eye);
-        if (pose.flat) this.controls.pitch = 0;
+        ({ target, quat, k } = await this._readingTarget());
       }
       await this._fly(this.holder, target, quat, k, 0.4, 0.02);
+      if (state === 'read') this._placeReadingPanels(); // a flat screen's toolbar fits its width there
     } finally {
       this.state = state;
     }
+  }
+
+  /**
+   * A book that is out goes back on its shelf (the browser's Back past the book's entry:
+   * back-history.js; Reset view), once what is under way has finished: a book coming out or
+   * going in, a link being followed. One being opened is cancelled. Only the book out now: once
+   * it is away (a cancelled opening puts it back), a book taken out after is left out.
+   */
+  async putAway() {
+    const away = this._putAways;
+    for (let i = 0; i < 400; i++) {
+      if (this.state === 'opening') this._cancelOpening?.();
+      if (this.state !== 'busy' && this.state !== 'opening' && !this._following) break;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    if (this._putAways === away && (this.state === 'inspect' || this.state === 'read')) await this.putBack();
   }
 
   /**
@@ -1543,9 +1762,7 @@ export class Interaction {
    * distance and size are as they first were.
    */
   async resetView() {
-    if (this.state === 'opening') this._cancelOpening?.();
-    for (let i = 0; i < 200 && (this.state === 'busy' || this.state === 'opening'); i++) await new Promise((r) => setTimeout(r, 25));
-    if (this.state === 'inspect' || this.state === 'read') await this.putBack();
+    await this.putAway();
     if (this.state !== 'browse') return;
     this.settings.readDistance = READ.distance;
     this.settings.readScale = 1;
@@ -1555,15 +1772,44 @@ export class Interaction {
     this.controls.setViewpoint({ x: position.x, z: position.z, yaw, pitch: 0 });
   }
 
+  /**
+   * The toolbar under the page(s) and the contents beside them, on a flat screen kept within its
+   * width: the toolbar scaled down (it is wider than a page), the contents over the page when it
+   * would be off the screen beside the book (a phone upright).
+   */
   _placeReadingPanels() {
     const b3 = this.book3d;
     const s = this._readScale;
     const ph = b3.pageSize.h * s;
     const pw = b3.pageSize.w * s;
-    this.toolbar.mesh.position.set(0, -ph / 2 - 0.085, 0.03);
-    this.toolbar.mesh.rotation.set(-0.35, 0, 0);
-    this.tocPanel.mesh.position.set(-pw - 0.24, 0, 0.08);
-    this.tocPanel.mesh.rotation.set(0, 0.45, 0);
+    const half = this._viewHalfWidth();
+    const ts = Math.min(1, (0.96 * this._viewHalfWidth(0.03)) / (TOOLBAR_W / 2));
+    const bar = this.toolbar.mesh;
+    bar.scale.setScalar(ts);
+    bar.position.set(0, -ph / 2 - 0.085 * ts, 0.03);
+    bar.rotation.set(-0.35, 0, 0);
+    const toc = this.tocPanel.mesh;
+    const beside = (this._single ? -pw / 2 : -pw) - 0.24; // left of the page(s), turned towards the reader
+    // On a TV over the page, where the dot is: the remote's ↑ ↓ scroll it and OK picks (useMiddle).
+    if (!this.tv && beside - TOC_W / 2 >= -0.98 * half) {
+      toc.position.set(beside, 0, 0.08);
+      toc.rotation.set(0, 0.45, 0);
+      toc.scale.setScalar(1);
+    } else {
+      toc.position.set(0, 0, 0.06);
+      toc.rotation.set(0, 0, 0);
+      toc.scale.setScalar(Math.min(1, (0.96 * this._viewHalfWidth(0.06)) / (TOC_W / 2), (0.96 * ph) / TOC_H));
+    }
+  }
+
+  /**
+   * Half the width a flat screen shows at the open book (or `z` in front of it), in the holder's
+   * units; Infinity in a headset.
+   */
+  _viewHalfWidth(z = 0) {
+    if (this.controls.presenting) return Infinity;
+    const d = this.camera.getWorldPosition(_from).distanceTo(this.holder.position) / this.holder.scale.x;
+    return (d - z) * Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2)) * this.camera.aspect;
   }
 
   _adjustDistance(delta) {
@@ -1575,6 +1821,8 @@ export class Interaction {
     if (this.controls.presenting) {
       this.settings.readDistance = d;
       this._saveSettingsSoon();
+    } else {
+      this._placeReadingPanels(); // the toolbar and contents within the screen's width at the new distance
     }
   }
 
@@ -1584,6 +1832,7 @@ export class Interaction {
     const rel = Math.max(READ.minScale, Math.min(READ.maxScale, (this._readScale / base) * (1 + delta)));
     this._readScale = base * rel;
     this.book3d.group.scale.setScalar(this._readScale);
+    this.book3d.group.position.x = this._bookX(); // the spine (or the page read) stays in front
     this.settings.readScale = rel;
     this._placeReadingPanels();
     this._saveSettingsSoon();
@@ -1594,21 +1843,12 @@ export class Interaction {
     this._saveTimer = setTimeout(() => save('settings', this.settings), 400);
   }
 
-  // Spreads: { left: PageRef | 'ex' (ex-libris endpaper) , right: PageRef | null }.
+  // Spreads (reader/spreads.js): { left, right }, each a PageRef, 'ex' (the ex-libris endpaper),
+  // 'blank' (the single-page view's left side, not shown) or null. this._single: one page at a time.
 
-  async _spreadFor(ref) {
-    const r = this.reader;
-    const n = r.pageNumber(ref).n;
-    if (n % 2 === 1) return { left: (await r.prev(ref)) || 'ex', right: ref };
-    return { left: ref, right: await r.next(ref) };
-  }
-
-  /** The spread with page `ref` on `side` ('left' / 'right'), or as the page number pairs it (null). */
-  async _spreadAt(ref, side) {
-    const r = this.reader;
-    if (side === 'left') return { left: ref, right: await r.next(ref) };
-    if (side === 'right') return { left: (await r.prev(ref)) || 'ex', right: ref };
-    return this._spreadFor(ref);
+  /** The spread with page `ref` on `side` ('left' / 'right'; two pages only), or as the page number pairs it (null). */
+  _spreadAt(ref, side = null) {
+    return spreadAt(this.reader, ref, { single: this._single, side });
   }
 
   /** The page of a block anchor { c, b, f? }: f, a place's id (a link's #id), wins when found. */
@@ -1618,21 +1858,12 @@ export class Interaction {
     return reader.refForAnchor({ c: at.c, b });
   }
 
-  async _nextSpread(s) {
-    const r = this.reader;
-    const base = s.right || (s.left !== 'ex' ? s.left : null);
-    if (!base) return null;
-    const l = await r.next(base);
-    if (!l) return null;
-    return { left: l, right: await r.next(l) };
+  _nextSpread(s) {
+    return nextSpread(this.reader, s, { single: this._single });
   }
 
-  async _prevSpread(s) {
-    const r = this.reader;
-    if (s.left === 'ex') return null;
-    const rr = await r.prev(s.left);
-    if (!rr) return { left: 'ex', right: s.left };
-    return { left: (await r.prev(rr)) || 'ex', right: rr };
+  _prevSpread(s) {
+    return prevSpread(this.reader, s, { single: this._single });
   }
 
   /** Canvases not used by the shown spread or the prepared neighbours. */
@@ -1648,12 +1879,18 @@ export class Interaction {
     return free.slice(0, n);
   }
 
+  /** Draws a spread on free canvases: { spread, left, right }; one page at a time has no left canvas (none shown). */
   async _renderSpread(spread) {
-    const [lc, rc] = this._freeCanvases(2);
     const r = this.reader;
+    if (this._single) {
+      const [rc] = this._freeCanvases(1);
+      await (isPage(spread.right) ? r.render(spread.right, rc, { side: 'right' }) : r.renderBlank(rc, { side: 'right' }));
+      return { spread, left: null, right: rc };
+    }
+    const [lc, rc] = this._freeCanvases(2);
     await Promise.all([
       spread.left === 'ex' ? this._drawExLibris(lc) : r.render(spread.left, lc, { side: 'left' }),
-      spread.right ? r.render(spread.right, rc, { side: 'right' }) : r.renderBlank(rc, { side: 'right' }),
+      isPage(spread.right) ? r.render(spread.right, rc, { side: 'right' }) : r.renderBlank(rc, { side: 'right' }),
     ]);
     return { spread, left: lc, right: rc };
   }
@@ -1769,9 +2006,9 @@ export class Interaction {
       this._prev = null;
       const s = await this._spreadAt(ref, side);
       const shown = await this._renderSpread(s);
-      const curRef = this._cur.spread.right || this._cur.spread.left;
+      const curRef = currentRef(this._cur.spread);
       const r = this.reader;
-      const dir = curRef === 'ex' || r.progressOf(ref) >= r.progressOf(curRef) ? 1 : -1;
+      const dir = !isPage(curRef) || r.progressOf(ref) >= r.progressOf(curRef) ? 1 : -1;
       this._cur = shown;
       audio.pageTurn();
       await this.book3d.turn(dir, { left: shown.left, right: shown.right });
@@ -1785,28 +2022,36 @@ export class Interaction {
   _linkUnder(hit) {
     const r = this.reader;
     const ref = this._cur?.spread?.[hit.side];
-    if (!r || !ref || ref === 'ex' || !hit.uv || this._turnBusy) return null;
+    if (!r || !isPage(ref) || !hit.uv || this._turnBusy) return null;
     const found = r.linkAt(ref, hit.uv.x * r.width, (1 - hit.uv.y) * r.height);
     return found && { ...found, side: hit.side };
   }
 
-  /** Where the reader is, to come back to (the trail). */
-  _here() {
+  /**
+   * Where the reader is, to come back to (the trail): the page, and the text view's own place when
+   * it is open (`view`, the block at its top and the word on its top line, w: the page may begin
+   * blocks before it, and a block be screens tall).
+   * @param {{ c: number, b: number, w?: number } | null} [view]
+   */
+  _here(view = null) {
     const s = this._cur.spread;
-    const side = s.left !== 'ex' ? 'left' : 'right';
+    const side = currentSide(s);
     const page = s[side];
     return {
       libId: this.book.libId, id: this.book.id, at: this.reader.anchorOf(page), side,
       page: { c: page.c, p: page.p }, fontScale: this.reader.fontScale,
+      ...(view ? { view: { c: view.c, b: view.b, ...(view.w ? { w: view.w } : {}) } } : {}),
     };
   }
 
   /**
    * Follows a link of the open book (SPEC §3.5): `at` is a place in it, `to` one in another of
    * the library's books, `href` is asked of the library first (resolveLink). Where the reader was
-   * goes on the trail, for back().
+   * goes on the trail, for back(): with `view`, the text view's place, which Back brings it to.
+   * @param {object} link
+   * @param {{ view?: { c: number, b: number, w?: number } | null }} [options]
    */
-  async followLink(link) {
+  async followLink(link, { view = null } = {}) {
     if (this.state !== 'read' || this._turnBusy || this._following) return;
     this._following = true; // one link at a time: a second tap waits for nothing
     try {
@@ -1832,19 +2077,29 @@ export class Interaction {
         dest = { libId: book.libId, id: to.book, at: { c: to.c, b: to.b ?? 0, ...(to.f ? { f: to.f } : {}) } };
       }
       audio.click();
-      const from = this._here();
+      const from = this._here(view);
       this._trail.push(from);
-      if (this._trail.length > 100) this._trail.shift();
-      if (!(await this._goTo(dest)) && this._trail.at(-1) === from) this._trail.pop();
+      if (this._trail.length > 100) {
+        this._trail.shift();
+        this._trailBase++;
+      }
+      const shown = await this._goTo(dest);
+      if (!shown && this._trail.at(-1) === from) this._trail.pop();
+      // The browser's Back comes back here too (back-history.js).
+      else if (shown) this.backHistory?.pushed(this._trailBase + this._trail.length);
     } finally {
       this._following = false;
       this._showBack();
     }
   }
 
-  /** Back along the links followed (the toolbar's Back, B/Y, Backspace). */
+  /**
+   * Back along the links followed (the toolbar's Back, B/Y, Backspace): through the browser's
+   * history when the link has an entry there (its popstate comes back as backTo), else at once.
+   */
   async goBack() {
     if (this.state !== 'read' || this._turnBusy || this._following || !this._trail.length) return;
+    if (this.backHistory?.back()) return;
     this._following = true;
     try {
       await this._goTo(this._trail.pop());
@@ -1855,12 +2110,49 @@ export class Interaction {
   }
 
   /**
-   * Shows a place { libId, id, at, page?, fontScale?, side? }: in the open book with a turn, in
-   * another of the library's books by putting this one back and taking that one out (a Wikipedia
-   * volume, a Wikisource work). `page` (a trail's) is used while the font size is the same.
+   * Back to where the trail was `depth` links deep (the browser's Back, back-history.js): one link
+   * back, or several at once. Waits for a link or a page turn in progress.
+   * @returns {Promise<boolean>} false when the trail has no such place (the book closed meanwhile)
+   */
+  async backTo(depth) {
+    const i = depth - this._trailBase;
+    if (this.state !== 'read' || i < 0 || i >= this._trail.length) return false;
+    if (this._following || this._turnBusy) {
+      await new Promise((r) => setTimeout(r, 120));
+      return this.backTo(depth);
+    }
+    this._following = true;
+    try {
+      const dest = this._trail[i];
+      this._trail.length = i;
+      await this._goTo(dest);
+      return true;
+    } finally {
+      this._following = false;
+      this._showBack();
+    }
+  }
+
+  /**
+   * Shows a place { libId, id, at, page?, fontScale?, side?, view? }: in the open book with a turn,
+   * in another of the library's books by putting this one back and taking that one out (a Wikipedia
+   * volume, a Wikisource work). `page` (a trail's) is used while the font size is the same. A
+   * trail's `view` (followed from the text view) is the place while the view is open: it shows
+   * that block's line again (w), not the page's first block, and the 3D book goes to the block at
+   * another font size.
    * @returns {Promise<boolean>} whether the place is shown
    */
   async _goTo(dest) {
+    const at = (this.textView?.isOpen && dest.view) || dest.at;
+    this.textView?.aim(at); // the text view shows the place, not a spread's left page
+    try {
+      return await this._goToNow(at === dest.at ? dest : { ...dest, at });
+    } finally {
+      this.textView?.aim(null);
+    }
+  }
+
+  async _goToNow(dest) {
     const book = this.book;
     const page = dest.page && dest.fontScale === this.settings.fontScale ? dest.page : null;
     if (dest.libId === book.libId && dest.id === book.id) {
@@ -1890,6 +2182,7 @@ export class Interaction {
     const W = this.toolbar.w;
     const pad = 18;
     this.toolbar.set('back', { hidden: !on });
+    this.overlay?.setBookButtons?.({ back: on });
     this.toolbar.set('slider', on ? { x: pad + 146, w: W - 2 * pad - 230 - 136 } : { x: pad + 10, w: W - 2 * pad - 230 });
   }
 
@@ -1931,7 +2224,12 @@ export class Interaction {
 
   async jumpToToc(entry) {
     this.toggleToc(false);
-    await this._jump(await this.reader.refForToc(entry));
+    this.textView?.aim({ c: entry.c, b: entry.b });
+    try {
+      await this._jump(await this.reader.refForToc(entry));
+    } finally {
+      this.textView?.aim(null); // not kept for a later turn when the jump was refused
+    }
   }
 
   async jumpToProgress(v) {
@@ -1939,9 +2237,7 @@ export class Interaction {
   }
 
   _currentRef() {
-    const s = this._cur?.spread;
-    if (!s) return null;
-    return s.left !== 'ex' ? s.left : s.right;
+    return currentRef(this._cur?.spread);
   }
 
   /** After the shown spread changed: toolbar, saved position, recent list, neighbours. */
@@ -1949,7 +2245,7 @@ export class Interaction {
     const r = this.reader;
     const ref = this._currentRef();
     if (!r || !ref) return;
-    const label = r.labelOf(this._cur.spread.right || ref);
+    const label = r.labelOf(isPage(this._cur.spread.right) ? this._cur.spread.right : ref);
     this.toolbar.set('label', { text: label });
     this.toolbar.set('slider', { value: r.progressOf(ref) });
     this.toolbar.set('prev', { disabled: this._cur.spread.left === 'ex' });
@@ -1959,6 +2255,7 @@ export class Interaction {
     recent.unshift({ libId: book.libId, id: book.id, t: Date.now() });
     save('recent', recent.slice(0, 20));
     this._prepareNeighbours().catch((e) => console.warn('prepare', e));
+    this.textView?.follow(); // the text view keeps in step
   }
 
   async changeFont(step) {
@@ -1975,23 +2272,124 @@ export class Interaction {
     await this._jumpInPlace(await this.reader.refForAnchor(anchor));
   }
 
+  /** A theme by name (the text view's choice): paper, sepia or night. */
+  async setTheme(name) {
+    if (this.state !== 'read' || this._turnBusy || !THEME_ORDER.includes(name) || name === this.settings.theme) return;
+    this.settings.theme = name;
+    save('settings', this.settings);
+    this.reader.setTheme(name);
+    await this._redraw();
+  }
+
+  /** Whether the spread shown holds some of block b of part c (anchor { c, b }). */
+  _showsBlock({ c, b }) {
+    const s = this._cur?.spread;
+    return !!s && [s.left, s.right].some((p) => {
+      const on = isPage(p) && p.c === c ? this.reader.blocksOn(p) : null;
+      return !!on && on.first <= b && b <= on.last;
+    });
+  }
+
+  /**
+   * Opens the book at a block anchor { c, b } (the text view's place, whose line w is the view's
+   * own, a part's start), unless the spread shown holds that block already; inPlace: without a
+   * turn (the text view covers the book). Whether it moved.
+   */
+  async jumpToAnchor(anchor, { inPlace = false } = {}) {
+    if (this.state !== 'read' || this._turnBusy || this._showsBlock(anchor)) return false;
+    const ref = await this.reader.refForAnchor(anchor);
+    await (inPlace ? this._jumpInPlace(ref) : this._jump(ref));
+    return true;
+  }
+
   async cycleTheme() {
     if (this.state !== 'read' || this._turnBusy) return;
     const t = THEME_ORDER[(THEME_ORDER.indexOf(this.settings.theme) + 1) % THEME_ORDER.length];
     this.settings.theme = t;
     save('settings', this.settings);
     this.reader.setTheme(t);
-    await this._jumpInPlace(this._currentRef());
+    await this._redraw();
   }
 
-  /** Re-renders the current position without a turn animation (font / theme changes). */
-  async _jumpInPlace(ref) {
+  /** Whether the single-page view is wanted now: the setting, 'auto' deciding by the screen. */
+  _singleWanted(setting = this.settings.pageView) {
+    return singlePage(setting, { presenting: this.controls.presenting, aspect: this.camera.aspect });
+  }
+
+  /** The toolbar's button names the other view. */
+  _showPagesButton() {
+    this.toolbar.set('pages', { label: this._single ? '2 pages' : '1 page' });
+    this.overlay?.setBookButtons?.({ pages: this._single ? '2 pages' : '1 page' });
+  }
+
+  /**
+   * One page at a time or two (the toolbar's button, P): the other view, at the page being read.
+   * Kept as the setting, or as 'auto' when it is what 'auto' gives on this screen.
+   */
+  async togglePages() {
+    if (this.state !== 'read' || this._turnBusy) return;
+    const single = !this._single;
+    this.settings.pageView = pageViewSetting(single, this._singleWanted('auto'));
+    save('settings', this.settings);
+    await this._showSingle(single);
+  }
+
+  /** Shows the open book one page (single) or two at a time, at the page being read. */
+  async _showSingle(single) {
+    if (this.state !== 'read' || this._turnBusy || single === this._single) return;
+    this.state = 'busy';
+    this._markLink(null);
+    try {
+      const ref = this._currentRef();
+      this._single = single;
+      this._showPagesButton();
+      audio.click();
+      this.book3d.setSingle(single);
+      await this._jumpInPlace(ref);
+      await this._reframe();
+    } finally {
+      this.state = 'read';
+    }
+  }
+
+  /**
+   * After the view changed: the book slides so the page read is in front (_bookX), and on a flat
+   * screen comes to where it fits again (a headset keeps where it was put).
+   */
+  async _reframe() {
+    const g = this.book3d.group;
+    const from = g.position.x;
+    const to = this._bookX();
+    const moves = [this._ease(0.35, (t) => { g.position.x = from + (to - from) * easeInOut(t); })];
+    if (!this.controls.presenting) {
+      const { target, quat, k } = await this._readingTarget();
+      moves.push(this._fly(this.holder, target, quat, k, 0.35, 0));
+    }
+    await Promise.all(moves);
+    this._placeReadingPanels();
+  }
+
+  /** The screen changed shape (main.js): an open book follows 'auto' (one page upright, two across). */
+  onResize() {
+    clearTimeout(this._resizeTimer);
+    this._resizeTimer = setTimeout(() => {
+      if (this.state === 'read' && !this.controls.presenting && this._singleWanted() !== this._single) {
+        this._showSingle(!this._single).catch((e) => console.warn('pages', e));
+      }
+    }, 300);
+  }
+
+  /**
+   * Re-renders the current position without a turn animation (font / theme changes): the spread
+   * of `ref`, or `spread` as it is (_redraw).
+   */
+  async _jumpInPlace(ref, spread = null) {
     this._turnBusy = true;
     try {
       this._prepToken = (this._prepToken || 0) + 1;
       this._next = null;
       this._prev = null;
-      const shown = await this._renderSpread(await this._spreadFor(ref));
+      const shown = await this._renderSpread(spread ?? await this._spreadAt(ref));
       this._cur = shown;
       this.book3d.setPages(shown.left, shown.right);
       this._afterTurn();
@@ -2000,10 +2398,21 @@ export class Interaction {
     }
   }
 
+  /**
+   * Draws the spread shown again, its pages as they are (a theme changed: nothing moves). Found
+   * again from the page read they could pair otherwise, since spreadAt pairs pages by their number
+   * and the numbers before the part read are estimates until its layout is in: a theme and then
+   * another stood the book a page back each time, behind the text view too.
+   */
+  _redraw() {
+    return this._jumpInPlace(null, this._cur.spread);
+  }
+
   toggleToc(show = !this.tocPanel.visible) {
     if (show) this._fillToc();
     this.tocPanel.visible = show && this.state === 'read';
     this.toolbar.set('toc', { active: this.tocPanel.visible });
+    this.overlay?.setBookButtons?.({ toc: this.tocPanel.visible });
   }
 
   /** Closes the book and puts it back on the shelf. */
@@ -2072,6 +2481,7 @@ export class Interaction {
       if (this.world.isWalkable(viewer.x, viewer.z)) this.controls.followFrame(kiosk, to);
       else this.controls.teleportTo(this.world.spawn.position, this.world.spawn.yaw);
       this._fillKiosk();
+      this.onShelved?.(this.settings.place, collections.length === 1 ? collections[0].room : null);
       await this._tween(0.08, () => {}); // a few frames in the dark: the heavy first render
       await this._fadeTo(0, 0.3);
       perf.event('rebuild', {
@@ -2212,11 +2622,103 @@ export class Interaction {
     this.kiosk.set('sound', { label: this.settings.sound ? 'Sound on' : 'Sound off', active: this.settings.sound });
   }
 
+  /** The shared session changed (together.js): the kiosk's line about it. */
+  sessionChanged() {
+    if (this._kioskTab !== 'shelves' || this._resetForm) return;
+    const shown = !!this.kiosk.get('session-text');
+    if (shown !== !!this.together?.room) this._fillKiosk();
+    else if (shown) this.kiosk.set('session-text', { text: this._sessionText() });
+  }
+
+  _sessionText() {
+    const t = this.together;
+    return sessionText({ room: t.room, active: t.active, company: t.active ? t.company() : {} });
+  }
+
+  /** Motion as the system prefers, less, or full (common's access.js `motion`). */
+  toggleMotion() {
+    this.setAccess({ ...this.access, motion: nextMotion(this.access.motion) });
+  }
+
+  /** The comfort vignette while moving or turning smoothly in VR, or none. */
+  toggleVignette() {
+    this.setAccess({ ...this.access, vignette: !this.access.vignette });
+  }
+
+  /** Seated: the eye 0.45 m higher in VR (common's eyeLift), or standing. */
+  toggleSeated() {
+    this.setAccess({ ...this.access, seated: !this.access.seated });
+  }
+
+  /**
+   * The accessibility settings: kept where every site reads them (common's saveAccess,
+   * `hallway.access`) unless they came from there, and applied (_applyAccess).
+   * @param {{ motion?: string, vignette?: boolean, seated?: boolean }} access
+   * @param {{ store?: boolean }} [o] store: false when they came from storage
+   */
+  setAccess(access, { store = true } = {}) {
+    this.access = normalizeAccess(access);
+    if (store) saveAccess(this.access); // false without storage: this visit only
+    this._applyAccess();
+  }
+
+  /**
+   * Applies the settings, and the system's preference when motion follows it (main.js calls this
+   * again when that changes): less motion here and in the world (the door's shimmer held), the
+   * vignette and the eye height in the controls, and both menus.
+   */
+  _applyAccess() {
+    this.reduced = reduceMotion(this.access);
+    this.world.reducedMotion = this.reduced;
+    if (this.together) this.together.reduceMotion = this.reduced; // a visitor's wave without the bob
+    this.controls.setAccess?.(this.access);
+    this.overlay?.setAccess?.(this.access);
+    if (this.kiosk) {
+      const b = comfortButtons(this.access, this.reduced);
+      this.kiosk.set('motion', b.motion);
+      this.kiosk.set('vignette', b.vignette);
+      this.kiosk.set('seated', b.seated);
+    }
+  }
+
+  /** Walking with the stick, or teleporting only (nav.js: the Hallway's `move`). */
   toggleSmooth() {
-    this.settings.smoothMove = !this.settings.smoothMove;
-    this.controls.smoothMove = this.settings.smoothMove;
-    save('settings', this.settings);
-    this.kiosk.set('smooth', { label: this.settings.smoothMove ? 'Stick walking' : 'Teleport only', active: this.settings.smoothMove });
+    this.setNav({ ...this.nav, move: this.nav.move === 'smooth' ? 'teleport' : 'smooth' });
+  }
+
+  /** Turning in steps, or smoothly while the stick is held (nav.js: the Hallway's `turn`). */
+  toggleTurn() {
+    this.setNav({ ...this.nav, turn: this.nav.turn === 'snap' ? 'smooth' : 'snap' });
+  }
+
+  /**
+   * How to move and turn in VR: to the controls, the kiosk, the Hallway's key (nav.js), and
+   * `settings.smoothMove` (older pages and debug reports read it).
+   * @param {{ move: string, turn: string }} nav
+   * @param {{ store?: boolean }} [o] store: false when it came from storage
+   */
+  setNav(nav, { store = true } = {}) {
+    this.nav = { move: nav.move === 'teleport' ? 'teleport' : 'smooth', turn: nav.turn === 'smooth' ? 'smooth' : 'snap' };
+    this.controls.setNav(this.nav);
+    if (store) {
+      saveNav(this.nav); // false without storage: this visit only
+    }
+    if (this.settings.smoothMove !== (this.nav.move === 'smooth')) {
+      this.settings.smoothMove = this.nav.move === 'smooth';
+      save('settings', this.settings);
+    }
+    this.kiosk.set('smooth', this._moveButton());
+    this.kiosk.set('turn', this._turnButton());
+  }
+
+  _moveButton() {
+    const smooth = this.nav.move === 'smooth';
+    return { label: smooth ? 'Stick walking' : 'Teleport only', active: smooth };
+  }
+
+  _turnButton() {
+    const snap = this.nav.turn === 'snap';
+    return { label: snap ? 'Snap turning' : 'Smooth turning', active: !snap };
   }
 
   _recentBooks() {
@@ -2284,9 +2786,46 @@ export class Interaction {
     const m = this._fade;
     const from = m.material.opacity;
     m.visible = true;
-    await this._tween(duration, (t) => { m.material.opacity = from + (target - from) * t; });
+    // With less motion a blink: dark (or clear) at once.
+    if (!this.reduced) await this._tween(duration, (t) => { m.material.opacity = from + (target - from) * t; });
     m.material.opacity = target;
     m.visible = target > 0;
+  }
+
+  // ===========================================================================================
+  // The way out: the door back (world/door.js) and the stand's button
+
+  /**
+   * Goes out by the way out (this.wayOut: the Hallway, or the place that linked here): the view
+   * fades, then onHallway (main.js) goes there. In VR, Quest Browser keeps the visitor in VR there
+   * when it is on this origin (SPEC §5.7).
+   */
+  async leave() {
+    if (this._leaving || !this.onHallway || this.state !== 'browse') return;
+    this._leaving = true;
+    this.state = 'busy';
+    this.onLeaving?.(); // main.js: out of the shared session now, so the others see it at once
+    await this._fadeTo(1, this.controls.presenting ? 0.3 : 0.4);
+    this.onHallway();
+    // Still here a while later (the navigation was stopped, or failed): back in the room.
+    clearTimeout(this._leaveTimer);
+    this._leaveTimer = setTimeout(() => this.cameBack(), 12000);
+  }
+
+  /**
+   * Back from the way out without having left (a navigation that did not happen, or the browser's
+   * Back restoring this page from its cache: main.js, pageshow): in front of the door, facing the
+   * room, out of the dark.
+   */
+  cameBack() {
+    if (!this._leaving) return;
+    clearTimeout(this._leaveTimer);
+    this._leaving = false;
+    this.onCameBack?.(); // main.js: back in the shared session
+    const spot = this.world.door?.inFront(1.1);
+    if (spot) this.controls.teleportTo(spot.position, spot.yaw);
+    this.state = 'browse';
+    this._fadeTo(0, 0.6);
   }
 
   // ===========================================================================================
@@ -2399,6 +2938,9 @@ export class Interaction {
     // most of the dropped frames on a Quest.
     let hoverBook = null;
     let hoverLink = null;
+    let hoverDoor = false;
+    let dotPanel = null;
+    let dotList = null;
     for (const pointer of this.controls.pointers) {
       const hit = this.state === 'busy' || pointer.teleporting ? null : this._hitTest(pointer);
       pointer.setHitDistance(hit ? hit.distance : null);
@@ -2406,9 +2948,18 @@ export class Interaction {
       if (prev && prev !== hit?.panel) prev.pointerLeave();
       let interactive = false;
       if (hit?.kind === 'panel') {
-        interactive = hit.panel.pointerMove(hit.uv);
+        interactive = hit.panel.pointerMove(hit.uv.x, hit.uv.y);
+        // A TV's dot on a list that scrolls: the remote's ↑ ↓ are its (scrollUnderDot).
+        const el = this.tv && pointer.id === 'gamepad' ? hit.panel.hover : null;
+        if (el && hit.panel.scrolls(el) && (this.state !== 'browse' || hit.distance <= TV_REACH)) {
+          dotPanel = hit.panel;
+          dotList = el;
+        }
       } else if (hit?.kind === 'book') {
         hoverBook = hit.book;
+        interactive = true;
+      } else if (hit?.kind === 'door') {
+        hoverDoor = true;
         interactive = true;
       } else if (hit?.kind === 'page' || hit?.kind === 'held') {
         interactive = true;
@@ -2418,6 +2969,19 @@ export class Interaction {
       this._hover.set(pointer.id, hit?.kind === 'panel' ? hit.panel : null);
     }
     this._markLink(hoverLink);
+    if (dotList !== this._dotList) {
+      this._dotPanel = dotPanel;
+      this._dotList = dotList;
+      this.onDotList?.(!!dotList);
+    }
+    // A TV's dot: while walking the room or holding a book, and on the contents of one being read.
+    if (this.tv) this.controls.aimShown = !this.inCard && !this.textView?.isOpen && (this.state !== 'read' || this.tocPanel.visible);
+    const door = this.world.door;
+    if (door) {
+      door.hover = hoverDoor;
+      // Walked (or leant) through the doorway: out.
+      if (this.state === 'browse' && !this._leaving && door.crossed(this.camera.getWorldPosition(_head).x, _head.z)) this.leave();
+    }
     this.controls.textEntry = !!this._search.focus && this.state === 'browse' && this._kioskTab === 'search'
       && this.kiosk.visible && !this.controls.presenting;
     // A scroll bar being dragged follows its pointer, also off the panel (onto its plane).
@@ -2426,7 +2990,7 @@ export class Interaction {
       if (!panel.visible || !this.controls.pointers.includes(pointer)) this._endPanelDrag();
       else {
         const uv = panelUv(panel, pointer.raycaster.ray);
-        if (uv) panel.dragTo(uv);
+        if (uv) panel.dragTo(uv.x, uv.y);
       }
     }
     if (this.state === 'browse') {
@@ -2442,15 +3006,5 @@ export class Interaction {
     if (this.tooltip.visible) this.tooltip.panel.update();
     if (this._notice?.visible && this._time >= this._noticeUntil) this._notice.visible = false;
   }
-}
-
-function sameRef(a, b) {
-  if (a === b) return true;
-  if (!a || !b || a === 'ex' || b === 'ex') return false;
-  return a.c === b.c && a.p === b.p;
-}
-
-function sameSpread(a, b) {
-  return !!a && !!b && sameRef(a.left, b.left) && sameRef(a.right, b.right);
 }
 

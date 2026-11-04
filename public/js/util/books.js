@@ -1,3 +1,4 @@
+// @ts-check
 // Shared, deterministic helpers about books: sorting, letters, physical dimensions, hashing.
 // Used by both the world (shelf layout) and the interaction layer (A–Z jump), so they must agree.
 

@@ -727,13 +727,15 @@ describe('CLI (server/index.js)', () => {
     const busy = blocker.address().port;
     const out = [];
     let app;
+    let port = null;
     try {
       app = await main(['--dir', dir, '--port', String(busy), '--host', '127.0.0.1'], {
         out: (m) => out.push(m), err: (m) => out.push(m), handleSignals: false,
       });
       // The next free one: busy + 1, unless another test took that meanwhile (the suite runs
       // its files at once, each on free ports).
-      assert.ok(app.port > busy && app.port <= busy + 10, `moved on from ${busy} to ${app.port}`);
+      port = app.port;
+      assert.ok(port > busy && port <= busy + 10, `moved on from ${busy} to ${port}`);
       assert.deepEqual(app.urls, [`http://127.0.0.1:${app.port}`]);
       const text = out.join('\n');
       assert.match(text, new RegExp(`Port ${busy} is in use`));
@@ -746,7 +748,8 @@ describe('CLI (server/index.js)', () => {
       await app?.close();
       blocker.close();
     }
-    await assert.rejects(fetch(`http://127.0.0.1:${busy + 1}/api/libraries`));
+    // Shut down: the port it took answers no more (not busy + 1, which another test may hold).
+    await assert.rejects(fetch(`http://127.0.0.1:${port}/api/libraries`));
   });
 
   it('prints only the URL with --quiet and returns null for --help', async () => {

@@ -13,8 +13,8 @@
 // The ZIMs are those of tools/indexes.txt, in their current editions as Kiwix's catalogue lists
 // them. An index already in --out (named by the edition's UUID) is kept; a missing one is built
 // from a copy in --zims (the same file name) or, with --web, read from Kiwix's mirror (slow and
-// heavy on the mirror: tens of GB for the big ones, hence opt-in). --hours stops starting builds
-// after that long. --prune deletes indexes of editions no longer current. --publish copies the
+// heavy on the mirror: tens of GB for the big ones, hence opt-in), the quickest first
+// (buildOrder), whatever their order in the list. --hours stops starting builds after that long. --prune deletes indexes of editions no longer current. --publish copies the
 // indexes into a site's indexes/ folder. --out and --publish get a list.json of what is there.
 // --ship copies the indexes in --out into a built site, as many as fit in --budget-mb for the
 // whole site (GitHub Pages: 1 GB per site), the smallest first (shipIndexes). An index of an older
@@ -129,6 +129,27 @@ export async function currentEditions(bases, { fetch: fetchImpl = globalThis.fet
 }
 
 /**
+ * The order the missing indexes are built in: the quickest first, so a run's hours build as many
+ * as they can and a slow one cannot hold back the rest. A Wikipedia build reads every article's
+ * HTML, so it takes about as long as its article count (the pictures are not read); one with no
+ * count goes after those with one, by file size. A Wikisource build also follows each work's parts
+ * across the file and has no checkpoint (from Kiwix's mirror its 3.9 GB nopic did not finish in
+ * 5 hours, in two runs), so the Wikisources come last.
+ * @template {{ entry: { kind: string, articles?: number|null, size?: number|null } }} T
+ * @param {T[]} todo
+ * @returns {T[]}
+ */
+export function buildOrder(todo) {
+  const key = ({ entry }) => [entry.kind === 'wikisource' ? 1 : 0, entry.articles ? 0 : 1, entry.articles || 0, entry.size ?? Infinity];
+  return [...todo].sort((a, b) => {
+    const ka = key(a);
+    const kb = key(b);
+    for (let i = 0; i < ka.length; i++) if (ka[i] !== kb[i]) return ka[i] - kb[i];
+    return 0;
+  });
+}
+
+/**
  * Builds one index (as the server does on first open) from a file or a URL, into `out`.
  * @returns {Promise<{ seconds: number, bytes: number|null }>} bytes: read from the web, for a URL
  */
@@ -177,6 +198,7 @@ export async function buildListed({ bases, out, zims = null, web = false, hours 
   const editions = await currentEditions(bases, { fetch: fetchImpl });
   const current = new Set();
   const summary = { kept: [], upgraded: [], built: [], missing: [], failed: [], unlisted: [] };
+  const todo = [];
   for (const { base, entry } of editions) {
     if (!entry) {
       log(`${base}: not in Kiwix's catalogue`);
@@ -209,12 +231,17 @@ export async function buildListed({ bases, out, zims = null, web = false, hours 
       summary.missing.push(file);
       continue;
     }
+    todo.push({ file, name, entry, source, local });
+  }
+  const order = buildOrder(todo);
+  if (order.length > 1) log(`to build, the quickest first: ${order.map((t) => t.file).join(', ')}`);
+  for (const { file, name, entry, source, local } of order) {
     if (performance.now() > until) {
       log(`${file}: out of time (--hours)`);
       summary.missing.push(file);
       continue;
     }
-    log(`${file}: building its index from ${source === local ? 'the copy here' : "Kiwix's mirror"} (${((entry.size ?? 0) / 1e9).toFixed(1)} GB)…`);
+    log(`${file}: building its index from ${source === local ? 'the copy here' : "Kiwix's mirror"} (${((entry.size ?? 0) / 1e9).toFixed(1)} GB${entry.articles ? `, ${entry.articles.toLocaleString('en')} articles` : ''})…`);
     try {
       const r = await buildOne(source, name, out, { log, until });
       const size = fs.statSync(path.join(out, name)).size;

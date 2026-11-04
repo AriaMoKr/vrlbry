@@ -65,7 +65,10 @@ A Wikipedia or Wikisource read from the web needs a prebuilt index unless it is 
 one reads most of the file. The site publishes those of `tools/indexes.txt` under `indexes/`:
 `node tools/build-indexes.mjs --zims <folder>` builds them from local copies of the ZIMs into
 `.indexes/` (or `--web`, from Kiwix's mirror), and the Pages workflow ships those it has, as many
-as fit (see `.github/workflows/pages.yml`).
+as fit (see `.github/workflows/pages.yml`). The missing ones are built from the mirror by the
+*Indexes* workflow (`.github/workflows/indexes.yml`: Actions → Indexes → Run workflow, or
+`gh workflow run indexes.yml --ref main`), up to 5 hours, the quickest first; it runs apart from
+the deploys, so a push is published at once, and starts a deploy when it has new indexes.
 
 Kiwix's own mirror is in France, so from far away every read costs a long round trip. An
 optional edge proxy, `tools/zim-proxy/` (a Cloudflare Worker), reads the mirror nearest each
@@ -86,7 +89,7 @@ The deploy prints its address, `https://vrlbry-zim-proxy.<your subdomain>.worker
 repository variable `ZIM_PROXY` to it (Settings → Secrets and variables → Actions → Variables),
 and the next Pages build names it in the page. To try it before that, add
 `?zimproxy=<its address>` to the site's address. `node tools/zim-proxy/serve.mjs` runs it on
-this machine instead, for `http://localhost:8080/?zimproxy=http://localhost:8090/`.
+this machine instead, for `http://localhost:8080/?zimproxy=http://localhost:8094/`.
 
 How much it is used: `node tools/zim-proxy/stats.mjs` prints its requests per day (`--hours`:
 per hour, `--days <n>`: how far back, `--json`) from Cloudflare's GraphQL Analytics API. It needs
@@ -147,6 +150,23 @@ node tools/quest-perf.mjs dump
 ```
 
 `dump` saves what was recorded while you used the library yourself (opened with `?perf`), and
-`status` just checks the connection. `node tools/quest-perf.mjs --help` lists all options;
-`--cdp http://127.0.0.1:9222` runs the same against a desktop browser started with
-`--remote-debugging-port=9222` (with `?xr=emulate&perf` for an emulated headset).
+`status` just checks the connection.
+
+```bash
+node tools/quest-perf.mjs handover
+```
+
+`handover` checks that a visitor stays in VR when walking from one page to another (a door of the
+Hallway, the library's way out): it enters VR, takes the way out (back to the page itself, or
+`--to <url>`) and reports whether Quest Browser granted the next page a session and when it took
+it, three times (`--runs`). `--delay <ms>` holds the granted request back, to see how long a
+grant lasts (about 5 s). The first time, the headset asks to allow VR for the page's address.
+
+`node tools/quest-perf.mjs --help` lists all options. `--desktop` runs the same on this PC
+instead of the headset: it opens `http://localhost:<port>/?perf` in a Chrome window of its own,
+runs the scenarios there in 2D and closes the window at the end (`CHROME_PATH` chooses the
+browser). It keeps drawing while other windows cover it, but not while it is minimized or the
+screen is locked: the scenarios then wait. The window comes from common's `tools/chrome.mjs`, on a new profile prepared so that
+Windows sees no failed logon; don't start Chrome by hand with `--remote-debugging-port` on a new
+profile instead, since each such start counts as a failed logon (ten in ten minutes lock the
+account here).

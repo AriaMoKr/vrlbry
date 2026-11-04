@@ -117,8 +117,10 @@ export function xzStore(data) {
  * @param {string|null} [opts.mainPage] path of the main page entry
  * @param {string|null} [opts.layoutPage]
  * @param {'libzim'|'zimlib'} [opts.layout='libzim']
- * @param {boolean} [opts.titleIndex=true] write a (v0) title pointer list (libzim refuses files
- *   without any title index)
+ * @param {boolean|'listing'} [opts.titleIndex=true] write a (v0) title pointer list (libzim
+ *   refuses files without any title index); 'listing': as the blob of X/listing/titleOrdered/v0,
+ *   the header's titlePtrPos pointing into its cluster, as libzim 7 writes ZIM 6.1 files (the
+ *   entry is added unless given; a given one keeps its cluster, which must be uncompressed)
  * @param {boolean} [opts.checksum=true]
  * @param {Buffer} [opts.uuid]
  * @param {Array<{ compression: number, extended?: boolean, data: Buffer }>} [opts.rawClusters]
@@ -143,7 +145,11 @@ export function writeZim(filePath, opts) {
   }
 
   // --- sort entries byte-wise by (namespace, URL) ---
-  const entries = opts.entries.map((e) => ({ ...e, path: `${e.ns}/${e.url}`, _key: sortKey(e.ns, e.url) }));
+  const LISTING = 'X/listing/titleOrdered/v0';
+  const input = titleIndex === 'listing' && !opts.entries.some((e) => `${e.ns}/${e.url}` === LISTING)
+    ? [...opts.entries, { ns: 'X', url: 'listing/titleOrdered/v0', mime: 'application/octet-stream+zimlisting', compression: 'none' }]
+    : opts.entries;
+  const entries = input.map((e) => ({ ...e, path: `${e.ns}/${e.url}`, _key: sortKey(e.ns, e.url) }));
   entries.sort((a, b) => Buffer.compare(a._key, b._key));
   const indexByPath = new Map();
   entries.forEach((e, i) => {
@@ -156,6 +162,13 @@ export function writeZim(filePath, opts) {
     if (i === undefined) throw new Error(`zimwriter: unknown path ${path}`);
     return i;
   };
+  const titleOrder = entries.map((e) => e.index).sort((a, b) => {
+    const ea = entries[a];
+    const eb = entries[b];
+    return Buffer.compare(sortKey(ea.ns, ea.title || ea.url), sortKey(eb.ns, eb.title || eb.url));
+  });
+  const listing = titleIndex === 'listing' ? entries[indexOf(LISTING)] : null;
+  if (listing) listing.content = Buffer.concat(titleOrder.map((i) => u32(i)));
 
   // --- MIME list ---
   const mimeTypes = [...new Set(entries.filter((e) => e.mime && e.redirectTo === undefined &&
@@ -233,11 +246,6 @@ export function writeZim(filePath, opts) {
   });
 
   const mimeList = Buffer.concat([...mimeTypes.map((m) => Buffer.from(`${m}\0`, 'utf8')), Buffer.from([0])]);
-  const titleOrder = entries.map((e) => e.index).sort((a, b) => {
-    const ea = entries[a];
-    const eb = entries[b];
-    return Buffer.compare(sortKey(ea.ns, ea.title || ea.url), sortKey(eb.ns, eb.title || eb.url));
-  });
 
   // --- layout ---
   const parts = [];
@@ -259,7 +267,7 @@ export function writeZim(filePath, opts) {
     clusterBufs.forEach((b, i) => { clusterPos[i] = place(b); });
     direntBufs.forEach((b, i) => { direntPos[i] = place(b); });
     urlPtrPos = place(ptrList(direntPos));
-    if (titleIndex) titlePtrPos = place(Buffer.concat(titleOrder.map((i) => u32(i))));
+    if (titleIndex && !listing) titlePtrPos = place(Buffer.concat(titleOrder.map((i) => u32(i))));
     clusterPtrPos = place(ptrList(clusterPos));
   } else if (layout === 'zimlib') {
     // Pointer lists first: their contents are only known after placing what follows, so
@@ -267,7 +275,7 @@ export function writeZim(filePath, opts) {
     const urlPtrs = Buffer.alloc(entries.length * 8);
     const clusterPtrs = Buffer.alloc(clusterBufs.length * 8);
     urlPtrPos = place(urlPtrs);
-    if (titleIndex) titlePtrPos = place(Buffer.concat(titleOrder.map((i) => u32(i))));
+    if (titleIndex && !listing) titlePtrPos = place(Buffer.concat(titleOrder.map((i) => u32(i))));
     clusterPtrPos = place(clusterPtrs);
     direntBufs.forEach((b, i) => { direntPos[i] = place(b); });
     clusterBufs.forEach((b, i) => { clusterPos[i] = place(b); });
@@ -275,6 +283,13 @@ export function writeZim(filePath, opts) {
     clusterPos.forEach((p, i) => clusterPtrs.writeBigUInt64LE(BigInt(p), i * 8));
   } else {
     throw new Error(`zimwriter: unknown layout ${layout}`);
+  }
+  if (listing) { // the list's first byte: its cluster's start + the info byte + its blob's offset
+    const g = [...groups.values()][listing._cluster];
+    if (g.comp !== 'none') throw new Error(`zimwriter: ${LISTING} needs an uncompressed cluster`);
+    let off = (g.ext ? 8 : 4) * (g.blobs.length + 1);
+    for (let i = 0; i < listing._blob; i++) off += g.blobs[i].length;
+    titlePtrPos = clusterPos[listing._cluster] + 1 + off;
   }
   const checksumPos = checksum ? pos : 0;
 

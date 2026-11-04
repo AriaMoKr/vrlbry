@@ -1,11 +1,13 @@
 # Prebuilt indexes (tools/build-indexes.mjs, milestone 3 step 6): the ZIMs whose index this site
 # publishes under indexes/, one file name without its date per line, built for the edition that
 # Kiwix's catalogue lists now. These are the English Wikipedias and Wikisources over 256 MB, which
-# the browser does not index itself (a build reads most of the file). Built in this order, and a
-# run starts no build after --hours: every selection's maxi first (the flavour to read from the
-# web, pictures and all; Kiwix's library leaves out a selection's flavours that need an index once
-# one of its flavours opens: local/kiwix.js `listed`), then the other flavours, for those who open
-# a copy they downloaded. Sizes from Kiwix's catalogue, October 2026.
+# the browser does not index itself (a build reads most of the file). Listed by what they are for:
+# every selection's maxi first (the flavour to read from the web, pictures and all; Kiwix's library
+# leaves out a selection's flavours that need an index once one of its flavours opens:
+# local/kiwix.js `listed`), then the other flavours, for those who open a copy they downloaded.
+# The missing ones are built the quickest first, whatever the order here (build-indexes.mjs
+# buildOrder: Wikipedias by article count, Wikisources last), and a run starts no build after
+# --hours. Sizes from Kiwix's catalogue, October 2026.
 
 # 1. Every selection's maxi: the broad selections
 wikipedia_en_top1m_maxi                    # 49.4 GB
@@ -44,7 +46,6 @@ wikipedia_en-simple_all_mini               # 0.5 GB
 wikipedia_en_top_nopic                     # 2.8 GB
 wikipedia_en_top_mini                      # 0.3 GB
 wikipedia_en_medicine_nopic                # 1.1 GB
-wikisource_en_all_nopic                    # 3.9 GB
 wikipedia_en_astronomy_nopic               # 0.4 GB
 wikipedia_en_baseball_nopic                # 0.5 GB
 wikipedia_en_basketball_nopic              # 0.3 GB
@@ -63,3 +64,8 @@ wikipedia_en_tennis_nopic                  # 0.4 GB
 # The whole English Wikipedia's other flavours: 67 GB more to read from the mirror, left out for now.
 # wikipedia_en_all_nopic                   # 52.7 GB
 # wikipedia_en_all_mini                    # 14.4 GB
+
+# A Wikisource build has no checkpoint, so one stopped at --hours starts again from nothing, and
+# from Kiwix's mirror this one did not finish in a run's 5 hours (2026-10-18, twice). Built last
+# (buildOrder); better from a downloaded copy (--zims), then uploaded (done 2026-10-18).
+wikisource_en_all_nopic                    # 3.9 GB

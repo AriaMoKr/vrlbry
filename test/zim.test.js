@@ -584,6 +584,64 @@ describe('ZimArchive: cluster variants', () => {
       await zim.close();
     }
   });
+
+  // libzim 7 (ZIM 6.1) stores the title pointer list as the blob of X/listing/titleOrdered/v0,
+  // the header's titlePtrPos pointing into that uncompressed cluster: a section start inside a
+  // cluster (gutenberg_en_all_2023-08: right after its 9-byte head). The cluster does not end there.
+  const listingEntries = ({ v1 = 'v1', v0 = 'v0', picture = false } = {}) => [
+    ...Array.from({ length: 5 }, (_, i) => ({ ns: 'C', url: `page/${i}.html`, title: `Page ${i}`, mime: 'text/html', content: `<p>${i}</p>`.repeat(50) })),
+    ...picture ? [{ ns: 'C', url: 'img/0.png', mime: 'image/png', content: bytes(2000, 60), compression: 'none', cluster: v0 }] : [],
+    { ns: 'M', url: 'Title', mime: 'text/plain', content: 'Listing' },
+    { ns: 'X', url: 'fulltext/xapian', mime: 'application/octet-stream+xapian', content: bytes(3000, 61), compression: 'none' },
+    { ns: 'X', url: 'listing/titleOrdered/v0', mime: 'application/octet-stream+zimlisting', compression: 'none', cluster: v0 },
+    ...v1 ? [{ ns: 'X', url: 'listing/titleOrdered/v1', mime: 'application/octet-stream+zimlisting', content: bytes(400, 62), compression: 'none', cluster: v1 }] : [],
+  ];
+  for (const [name, entries, opts, head] of [
+    ['alone in its cluster', listingEntries(), {}, 9],
+    ['alone in an extended cluster', listingEntries(), { extended: true }, 17],
+    ['alone in the last cluster', listingEntries({ v1: null }), {}, 9],
+    ['between a picture and v1 in the first cluster', listingEntries({ v1: 'v0', picture: true }), {}, null],
+  ]) {
+    it(`reads a ZIM 6.1 title pointer list stored as a blob (X/listing/titleOrdered/v0), ${name}`, async () => {
+      const info = writeZim(tmpFile(`listing-${name.replace(/\W+/g, '_')}.zim`), { entries, scheme: 'new', titleIndex: 'listing', ...opts });
+      const file = fs.readFileSync(info.filePath);
+      const want = (e) => Buffer.from(info.entries[e.index].content);
+      const list = want(info.entries[info.indexOf('X/listing/titleOrdered/v0')]);
+      const ids = Array.from({ length: list.length / 4 }, (_, i) => list.readUInt32LE(4 * i));
+      assert.deepEqual(ids.sort((a, b) => a - b), info.entries.map((e) => e.index), 'a title order of every entry');
+      const shared = info.entries.filter((e) => info.clusterOf(e.path) === info.clusterOf('X/listing/titleOrdered/v0')).length > 1;
+      // As the server opens it, and as the local library does (clusters read whole).
+      for (const openOpts of [{}, { wholeClusterBytes: 4 << 20, wholeCompressedBytes: 4 << 20 }]) {
+        const zim = await ZimArchive.open(info.filePath, openOpts);
+        try {
+          const { titlePtrPos } = zim.header;
+          assert.deepEqual(file.subarray(titlePtrPos, titlePtrPos + list.length), list, 'titlePtrPos points at the list');
+          const v0 = await zim.findPath('X/listing/titleOrdered/v0');
+          const start = zim._clusterOffsets[v0.cluster];
+          assert.ok(titlePtrPos > start, 'inside the cluster');
+          if (head) assert.equal(titlePtrPos - start, head, 'right after the head');
+          // Every entry's size and bytes, the X ones first (getBlobSize threw "cluster N has a
+          // corrupt offset table" for v0), then all twice, so a cluster's second blob is wanted.
+          for await (const e of zim.entries(await zim.lowerBound('X', ''), await zim.lowerBound('Y', ''))) {
+            assert.equal(await zim.getBlobSize(e), want(e).length, e.url);
+          }
+          for (const round of [0, 1]) {
+            for (const { index } of info.entries) {
+              const e = await zim.getEntryByIndex(index);
+              assert.deepEqual(Buffer.from((await zim.getContent(e)).data), want(e), `${e.ns}/${e.url}, round ${round}`);
+              assert.equal(await zim.getBlobSize(e), want(e).length);
+              assert.deepEqual(Buffer.from((await zim.getContentHead(e, 100)).data), want(e).subarray(0, 100));
+            }
+          }
+          // Its end comes from its offset table, so the local library reads it whole once a second
+          // blob of it is wanted, no more and no less of it.
+          assert.equal(zim._clusters.has(v0.cluster), shared && Boolean(openOpts.wholeClusterBytes), 'read whole');
+        } finally {
+          await zim.close();
+        }
+      }
+    });
+  }
 });
 
 describe('ZimArchive: old namespace scheme', () => {

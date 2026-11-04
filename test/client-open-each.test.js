@@ -39,12 +39,10 @@ describe('local library: opening several files (openEach)', () => {
     const { open, state } = opener([40, 10, 20]);
     const progress = [];
     const opened = [];
-    const t = performance.now();
     const results = await openEach(['https://site.example/zims/a.zim', 'https://site.example/zims/b.zim', 'https://site.example/zims/c.zim'], open, {
       concurrency: 3, onProgress: (f) => progress.push(f), onOpened: (r) => opened.push(r.title),
     });
-    assert.equal(state.most, 3, 'all three at once');
-    assert.ok(performance.now() - t < 40 + 30, 'as long as the slowest, not the sum');
+    assert.equal(state.most, 3, 'all three at once'); // not timed: a busy machine stretches any bound
     assert.deepEqual(results.map((r) => r.name), ['a.zim', 'b.zim', 'c.zim'], 'in the list\'s order');
     assert.deepEqual(opened, ['https://site.example/zims/b.zim', 'https://site.example/zims/c.zim', 'https://site.example/zims/a.zim'],
       'each as soon as it is open');

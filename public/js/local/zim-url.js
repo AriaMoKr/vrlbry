@@ -1,3 +1,4 @@
+// @ts-check
 // A ZIM's web address, as someone types or pastes it, made into one this page can read (milestone
 // 3, SPEC §2.6): the local library opens it with range requests (core/zim/http-source.js). Used by
 // the page (the address field, a dropped link, __vrlbry.openUrl) and the worker (names).

@@ -2,7 +2,9 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { stick, readPad, firstPad, BUTTONS, DEADZONE } from '../public/js/xr/gamepad.js';
+import './helpers/vendor.js'; // gamepad.js imports ../../vendor/common/gamepad.js
+
+const { stick, readPad, firstPad, BUTTONS, DEADZONE } = await import('../public/js/xr/gamepad.js');
 
 /** A Gamepad-like snapshot with the given axes and pressed button names (and trigger values). */
 function pad({ axes = [0, 0, 0, 0], pressed = [], lt = 0, rt = 0, mapping = 'standard', connected = true } = {}) {

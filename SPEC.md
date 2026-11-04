@@ -14,9 +14,11 @@ If you must deviate, keep the deviation minimal and report it.
 ## 1. Ground rules
 
 - **Runtime:** Node.js ≥ 22.15 (uses built-in `zlib.zstdDecompress`). ES modules everywhere
-  (`"type": "module"`). No build step, no bundler, no TypeScript.
+  (`"type": "module"`). No build step, no bundler. Types are JSDoc, which tsc checks a file at a time
+  (`tsconfig.json`: a file with `// @ts-check`; `npm test` runs it), never compiled.
 - **Dependencies (already installed):** `three@0.186` (client), `htmlparser2@12` (server HTML
-  parsing), `selfsigned@5` (server `--https`), dev: `iwer@2.5` (WebXR emulation for testing).
+  parsing), `selfsigned@5` (server `--https`), dev: `iwer@2.5` (WebXR emulation for testing),
+  `typescript@5.9` and `@types/three` (the type check).
   Do not add other runtime dependencies. Node built-ins only otherwise.
 - **Client** is plain ES modules served from `public/`. Three.js is loaded through an import map:
   `"three": "/vendor/three/build/three.module.js"`, `"three/addons/": "/vendor/three/examples/jsm/"`.
@@ -46,7 +48,11 @@ Header (little-endian, 80 bytes): `magic u32 = 0x044D495A`, `major u16`, `minor 
   - otherwise: `clusterNumber u32`, `blobNumber u32`;
   then `url\0`, `title\0` (empty title ⇒ title = url), then `parameterLen` bytes.
 - Cluster pointer list: `clusterCount × u64`. A cluster runs from its offset to the next higher
-  known offset (next cluster, or one of the section positions / file end). Cluster byte 0:
+  known offset (next cluster, or one of the section positions / file end). A section position
+  can lie inside a cluster: libzim 7 (ZIM 6.1) stores the title pointer list as the blob of
+  `X/listing/titleOrdered/v0`, uncompressed, and points `titlePtrPos` at it; so an uncompressed
+  cluster that runs up to a section position takes its end from its last offset, bounded by the
+  next cluster or the file end. Cluster byte 0:
   low nibble = compression (0 or 1 none, 2 zlib, 3 bzip2 (unsupported → error), 4 xz/LZMA2,
   5 zstd); bit `0x10` = extended (u64 blob offsets instead of u32). After that byte: offset table
   (first offset / offsetSize = number of offsets = blobCount + 1), then blob data; blob *n* =
@@ -264,8 +270,10 @@ whole. It works on GitHub Pages (no server) and beside a server's own libraries.
   its own repo's cache and release) ships on every run what it has: the indexes kept in
   the Actions cache by earlier runs and the assets of the release "indexes" (built on a PC from
   local copies, then `gh release upload indexes .indexes/*.json --clobber`), less old editions;
-  with "prebuilt indexes" ticked it first builds the missing ones from the mirror (up to 5 h,
-  then the cache is saved). Measured: from local copies, Wikipedia 100 in 2 s, Simple English
+  the missing ones are built from the mirror by a workflow of their own (main: `indexes.yml`, by
+  hand, up to 5 h, the quickest first: `buildOrder`, Wikipedias by article count, Wikisources
+  last), apart from the deploys so that a push is published at once; it saves the cache and,
+  when it has new ones, starts a deploy. Measured: from local copies, Wikipedia 100 in 2 s, Simple English
   (3.1 GB) 28 s and a 2.9 MB index, Wikisource (8.6 GB) 119 s and 3.4 MB, the top 1M 396 s and
   10.7 MB (5.6 MB compressed), the full English Wikipedia (maxi, 7.2 M articles) 32 min and
   77 MB (39 MB compressed); over the web from here, Cricket (379 MB) read 0.20 GB in 232 s. On a
@@ -388,7 +396,7 @@ whole. It works on GitHub Pages (no server) and beside a server's own libraries.
   through it (§3.1 `via`) while it works and from `url` for good once it fails, with one
   warning. The library stays the file's: its catalogue `url`, the remembered addresses and the
   block cache's edition all name Kiwix's mirror, so switching the proxy on or off loses
-  nothing. `tools/zim-proxy/serve.mjs` runs it on this machine (port 8090) for trying. Deployed
+  nothing. `tools/zim-proxy/serve.mjs` runs it on this machine (port 8094) for trying. Deployed
   at `https://vrlbry-zim-proxy.vrlbry.workers.dev`. Measured from California through it (TODO,
   milestone 3 step 7): the top 1M opens in 0.9 s instead of 3.5-4.4 s and finds Albert Einstein
   in 4.4 s instead of 7.5 s.
@@ -1112,7 +1120,12 @@ max-age=86400`; honor `If-None-Match` (304) and single `Range: bytes=` requests 
 HTML entries are served as-is (debug aid; the client never navigates to them).
 
 **Static:** `/` → `public/index.html`; other paths → files under `public/`;
-`/vendor/three/*` → `node_modules/three/*`; `/vendor/iwer/*` → `node_modules/iwer/build/*`.
+`/vendor/three/*` → `node_modules/three/*`; `/vendor/iwer/*` → `node_modules/iwer/build/*`; the
+other packages of `server/vendor.js` (the local library's worker libraries; `common` → its `src`,
+the Hallway's door contract; and the shared session's: `layersharedsession` → its `public/js`,
+`trystero-nostr`, `trystero-core`,
+`noble-secp256k1`), their bare imports made relative (`trystero`, `@trystero-p2p/core`,
+`@noble/secp256k1`), since the page names them by relative URL, not through the import map.
 Correct MIME types (`.js` → `text/javascript`, `.mjs`, `.css`, `.html`, `.json`, `.png`, `.jpg`,
 `.svg`, `.woff2`, `.wasm`, `.glb`, `.hdr`, `.ico`…). Reject path traversal (`..`) with 400/404.
 `Cache-Control: no-cache` for `public/` files (so edits show up), long cache for `/vendor/`.
@@ -1141,7 +1154,7 @@ public/
     world/book3d.js      a single free-standing book: closed/open, cover, pages, page turn anim.
     world/world.js       World facade: builds room + shelves from libraries, layout, collisions.
     xr/controls.js       input: XR controllers/hands, desktop mouse+keyboard, touch; locomotion.
-    ui/panel.js          canvas-texture UI panels with buttons/text, hover & click via UV.
+    ui/text-view.js      the text view (§5.8): the library's book in AriaMoKr/common's TextView.
     ui/overlay.js        DOM overlay: library info, search, help (non-VR); setReading(bool) fades it while a book is open.
     interaction.js       app state machine: browse → inspect → opening → read; wires everything.
     rooms.js             which books are shelved: the current place (one library, or one room of a huge one).
@@ -1243,9 +1256,37 @@ export class World {
   kiosk: { position: THREE.Vector3, yaw: number }   // where the catalog panel stands (facing yaw)
   constrain(from: Vector3, to: Vector3, radius = PLAYER.radius): Vector3   // walkable + collisions (XZ)
   isWalkable(x, z): boolean
-  update(dt, camera)                         // per frame: lazy spine textures/LOD, ambient anims
+  setDoor({ title, subtitle, sign, color, view }) // before the first build: the door back (hallway.js doorOf)
+  door: Door | null                          // made on the first build after setDoor
+  update(dt, camera)                         // per frame: lazy spine textures/LOD, ambient anims, the door's glow
   dispose()
 }
+```
+
+**The door** (`world/door.js`; its portal is AriaMoKr/common's `portal.js`): a doorway like the Hallway's own
+(https://ariamokr.github.io/hallway/), leading where the way out leads (§5.6). It stands against the
+wall behind the spawn point, the way one came in: in the rotunda at the far side of the circle
+(`{ x: 0, z: R − 0.1, yaw: π }`; the wall curves forward to its sides, so it stands a little off
+it), in the hall in the middle of the wall behind the kiosk; the rotunda's windows keep 2.3 m
+clear of it (`windowAnglesBesideDoor`). A wooden frame 1.1 × 2.25 m and 0.16 m deep (one draw call,
+the room's wood), its opening a portal (the Hallway's shader: one picture as the far wall of a
+room behind, its edges stretched back as floor, walls and ceiling, with parallax per eye; a veil
+and a rim glow in the door's colour, brighter when pointed at, a little when stood within
+1.7 m), a plaque on the wall to its right and a sign over it in the Hallway's green enamel and
+gold. Through it: the Hallway's own view out of this library's door there, which the Hallway
+renders and publishes (its README, "The view from your door": `views/views.json` beside its
+page, the entry named by the way back's `?from=`, else this door's id: common's `hallwayViews`, a 2:1 picture and how to hang it: `depth`,
+`pictureHeight`, `eye`, `horizon`, `aspect`, checked by `viewParams`; `Door.loadView`, common's `setView`),
+loaded after the room is built; until then, offline, or without one, a painted view down the
+Hallway (its lamps, its marble floor, this library's door glowing gold, dusk in the end window).
+A door to another place (`?back=` not on the Hallway) shows that place's glow and name. 4 draw calls in
+all. Pure helpers for Node: `doorPlace(room)`, `doorLocal` / `doorWorld` (its frame: origin at
+the sill's middle at the portal, +z into the room, +x to the right of someone facing it),
+`doorCrossed` (a head 0.06 m past its front, between the jambs), `doorCorridor` (`constrain`
+lets a walk go straight into it, the centre kept 0.2 m from the jambs and short of the portal),
+`rayDoor` (its front: the opening, or the frame, which stops the laser).
+
+```js
 
 export class Bookshelves {
   group: THREE.Group
@@ -1295,7 +1336,13 @@ export class Book3D {
   hall's entrance that leaves ~10 of the 100 bookcases facing the viewer (52 instead of 182 draw
   calls per eye); a check by ray sampling from 92 places never found a hidden one in view. Warm lighting
   (hemisphere + a few point lights; no shadows), wooden floor, walls, tall windows or arches,
-  ceiling. Procedural canvas textures only (no external image files required).
+  ceiling. Procedural canvas textures only (no external image files required). The windows' glass
+  (one merged mesh) and the rotunda's oculus show the late afternoon outside the Hallway's doors:
+  AriaMoKr/common's `sky.js` (`skyTexture`, painted once and shared, 45-68 ms on a Quest 3 behind
+  the first room's loading; `skyMaterial`, the panorama by the direction from the eye, at
+  infinity), turned per room by its `uYaw`: in a rotunda the low sun stands a little to one side
+  of the window most to the left of the spawn point (`rotundaSkyYaw`), a hall is laid out as the
+  garden is (0). The candles light the rooms as before.
 - **Spines:** canvas-rendered into atlases (e.g. 2048² per bookcase): base colour per book
   (palette of cloth/leather colours by hash), gilt bands, title (vertical, auto-fit, wrapping to
   2 lines for wide spines), author short name near the bottom. Must be legible at ~1.5 m in VR.
@@ -1376,11 +1423,18 @@ export class Controls extends EventTarget {
   bookcase; this applies in every state, while books are pickable only when browsing), or the
   room (`world.raycastSolid` → `room.raycast`: the wall, the dome or ceiling, the floor, and the
   furniture as upright cylinders from its walking circles with heights).
-  Locomotion when enabled: **right stick forward → teleport arc** (release to teleport onto
-  `world.teleportTargets`, validated by `world.isWalkable`); while aiming, that controller's ray
-  and cursor are hidden and `pointer.teleporting` keeps it from hovering or selecting; right stick
-  left/right → snap turn (`PLAYER.snapTurn`), left stick → smooth move (optional setting, default
-  on) constrained by `world.constrain`. When locomotion is disabled, sticks only emit events.
+  Locomotion when enabled, as the visitor chose (`setNav`; nav.js, common's: the Hallway's `hallway.nav`
+  = `{ move: 'smooth' | 'teleport', turn: 'snap' | 'smooth' }`): **right stick forward → teleport
+  arc** (release to teleport onto `world.teleportTargets`, validated by `world.isWalkable`; the
+  left stick aims one too when `move` is `'teleport'`, one arc at a time); while aiming, that
+  controller's ray and cursor are hidden and `pointer.teleporting` keeps it from hovering or
+  selecting; right stick left/right → snap turn (`PLAYER.snapTurn`), or with `turn: 'smooth'`
+  turning while held sideways (1.6 rad/s at full tilt, the Hallway's); left stick → smooth move
+  (`move: 'smooth'`, the default) constrained by `world.constrain`. When locomotion is disabled,
+  sticks only emit events. Comfort (common's `access.js`, `controls.setAccess`): a `Vignette` on
+  the camera closes in while the stick walks or turns smoothly in VR (`_speed`, `_turnRate` per
+  frame; teleports and snap turns need none), unless it is turned off; seated, the rig stands
+  `eyeLift` (0.45 m) higher in VR only, set every frame from `presenting`.
 - **Desktop:** drag (any mouse button) to look, turning the way the mouse goes (drag right: look
   right; up: look up); a press that does not move more than a few pixels
   is a click = select at the mouse position. No pointer lock: it fights the DOM overlay and is
@@ -1392,7 +1446,9 @@ export class Controls extends EventTarget {
   `selectend` (and the active pointer while it touches), like the mouse's left button and XR
   select. Pointers also have `setHovering(bool)`; extra events
   `teleport` and `turn` report locomotion.
-  **Gamepad** (`xr/gamepad.js`, W3C standard mapping, desktop and phone only; not polled in XR):
+  **Gamepad** (`xr/gamepad.js`, W3C standard mapping, desktop and phone only; not polled in XR; its
+  dead zone, stick scaling, held buttons and pad choice are AriaMoKr/common's `gamepad.js`, as in
+  the Hallway and outside, its `readPad` with each button's presses and releases vrlbry's own):
   the first connected pad becomes active when used and inactive when the mouse moves, and emits
   `gamepad { active }`, which the overlay uses for its hint and help. While it is active, a
   pointer `gamepad` through the screen centre (crosshair `.pad-crosshair`) replaces the mouse
@@ -1401,30 +1457,37 @@ export class Controls extends EventTarget {
   unchanged:
   - A: `select` plus `button a`; B and Back: `button b`;
   - LB / RB and D-pad ← / →: `key` ArrowLeft / ArrowRight; D-pad ↑ / ↓: `key` `+` / `-`;
-  - X: `key t` (contents); Y: `key n` (theme); right stick press: `key f` (the book in front, as
+  - X: `key c` (contents); Y: `key n` (theme); right stick press: `key f` (the book in front, as
     a headset's thumbstick press);
   - the triggers: a repeating `wheel` (100 · (RT − LT) every 0.12 s).
 - XR controller gamepads follow xr-standard: buttons 0 trigger, 1 squeeze, 3 thumbstick press,
   4 A/X, 5 B/Y; axes 2/3 thumbstick.
 
-### 5.5 Panels (`ui/panel.js`)
+### 5.5 Panels (AriaMoKr/common's `panel.js`)
+
+The 3D panels are common's (`../vendor/common/panel.js`, v0.8.3; its README, "panel.js", has
+the whole interface), shared with the Hallway's other sites. What interaction.js uses:
 
 ```js
-export class Panel {
-  constructor({ width, height /* metres */, pxPerMeter = 1200, background = 'rgba(25,20,16,0.92)', radius = 24 })
+import { Panel, Label, UI } from '../vendor/common/panel.js';
+class Panel {
+  constructor({ width, height /* metres */, pxPerMeter = 1200, ring = 0 /* vrlbry's lists: no outline */ })
   mesh: THREE.Mesh          // PlaneGeometry; mesh.userData.panel = this
-  canvas, ctx
-  clear(); add(element); remove(id); get(id)
-  // element = { id, type: 'button'|'text'|'image'|'list'|'slider', x, y, w, h (px), label, value,
-  //             onClick(uvPx, element), disabled, active, font, color, align }
-  redraw()                  // repaint (only when dirty — call markDirty())
-  pointerMove(uv) / pointerLeave(); click(uv): boolean   // uv from raycast intersection (0..1)
-  pressAt(uv): boolean; dragTo(uv); release(); dragging   // a list's scroll bar: press the thumb
+  canvas, ctx, w, h         // the canvas's pixels, which the elements' boxes are in
+  clear(); add(element); remove(id); get(id); set(id, fields)   // set: drawn again only on a change
+  // element = { id, type: 'button'|'text'|'image'|'list'|'slider'|'rect'|'custom', x, y, w, h (px),
+  //             label, text, value, items, scroll, onClick, disabled, active, hidden, size, … }
+  update(); markDirty()     // drawn again on the next update() (each frame) after a change, never else
+  pointerMove(u, v) / pointerLeave(); click(u, v): boolean   // u, v from the ray's hit (0..1, from
+  //   the bottom left; panelUv in interaction.js, the same object each time: nothing allocated per
+  //   ray); leaving clears what was lit, a slider's mark (hoverValue) too
+  pressAt(u, v): boolean; dragTo(u, v); release(); dragging   // a list's scroll bar: press the thumb
   //   (or the track beside it: a page towards the press) and drag; interaction.js calls them on
   //   selectstart / every frame (the ray on the panel's plane, so off the panel too) / selectend,
   //   holds looking around meanwhile, and swallows the release's click
   visible
 }
+class Label { constructor({ width, height }); setText(title, sub); visible; panel; mesh }   // tooltip, notice
 ```
 
 ### 5.6 Interaction (`interaction.js`) — the state machine
@@ -1464,7 +1527,27 @@ States: `browse` → `inspect` → `opening` → `read` (and back), plus `busy` 
   (also B/Esc), which cancels and puts the book back. Only that panel takes input. On failure →
   **inspect**, with the error on the panel (and a toast).
 - **read:** book moves to the reading pose (§`config.READ`), opens, shows the saved or first spread.
-  Toolbar panel under the book: ◀ ▶, progress bar (click to jump), Contents, A− A+, theme, Close.
+  Toolbar panel under the book: ◀ ▶, progress bar (click to jump), Contents, A− A+, "1 page" /
+  "2 pages", theme, Close.
+  **One page or two** (`reader/spreads.js`): a spread is `{ left, right }`, each a PageRef, `'ex'`
+  (the ex-libris before the first page), `'blank'` or null. Two pages pair by page number (odd on
+  the right) and turn two at a time. A theme draws the spread shown again as it is (`_redraw`), not
+  paired again: before the part read the numbers are estimates until its layout is in, and pairing
+  again stood the book a page back. The single-page view shows only the right-hand page: the
+  book's left half (the cover and its pages) is hidden once the cover has swung past edge-on
+  (`Book3D.single`, `setSingle`), no left canvas is drawn (the spread's left, `'ex'` before the
+  first page or `'blank'`, is not shown), the page lies flat (a spread's halves rise toward the
+  reader; a lone page looked slanted), and the book slides half a page left so the page is in
+  front (`_bookX`). A turn lifts the page toward the left and it goes as it passes edge-on (the
+  leaf's back is not drawn), uncovering the next; turning back, the previous page comes in from
+  there. The left part of the page (30 %) turns back, as the left page does. `settings.pageView`: `'auto'` (default: one page on a flat screen
+  taller than wide, `singlePage`), `'single'` or `'spread'`; the toolbar's button (or P) switches
+  at the page being read and keeps the choice, as `'auto'` when that is what auto gives there. An
+  open book follows a resize (a phone turned) while the setting is `'auto'`. On a flat screen the
+  single-page view's page is as large as the screen's width and height allow with the toolbar
+  under it (`fitOnePage`), and the book faces the screen square on; the toolbar is scaled down to the screen's
+  width where it would not fit, and the contents go over the page where they would be off the
+  screen beside the book.
   Contents opens a scrollable TOC panel at the entry being read (highlighted). A list of more
   than 30 entries in title order (`inTitleOrder`: a Wikipedia volume's articles) gets a thumb
   index beside it: 9 evenly spaced stops, each labelled with the shortest start of its title
@@ -1473,7 +1556,8 @@ States: `browse` → `inspect` → `opening` → `read` (and back), plus `busy` 
   up/down = move book nearer/farther, left stick up/down = scale (READ.minScale..maxScale), grip
   drag = reposition (bonus). Next spread is pre-rendered for instant turns. Saves position on every
   turn. Close/Esc → closes, flies back, → **browse**; B/Y/Backspace → back along the links followed,
-  then closes. Locomotion disabled while inspecting/reading.
+  then closes. C: the contents; T (on a screen): the text view (§5.8). Locomotion disabled while
+  inspecting/reading.
   **Links** (§3.5): the trigger (a click, a tap) on a link follows it instead of turning the page;
   the link under a pointer gets a translucent band per line (meshes in front of the page, which
   is not drawn again). `at` jumps within the book (a turn); `href` is asked of the library first
@@ -1482,16 +1566,36 @@ States: `browse` → `inspect` → `opening` → `read` (and back), plus `busy` 
   back and that one taken out and opened there (a Wikipedia volume, a Wikisource work), at the
   block with the link's `f` when that chunk has one. A link that leads nowhere says so in a
   notice. Where the reader was goes on a trail (up to 100: the book, the spread's page and side,
-  the font size), kept while links swap books and dropped when the book is closed; the toolbar's
+  the font size, and for a link followed in the text view its place, `view`: §5.8), kept while
+  links swap books and dropped when the book is closed; the toolbar's
   "↩ Back" (beside the progress bar while there is a trail), B/Y and Backspace go back along it,
-  to the same spread while the font size is the same.
+  to the same spread while the font size is the same. So does the browser's Back (its button, a
+  phone's back gesture, a mouse's back button, Quest Browser's: AriaMoKr/common's
+  `back-history.js` since v0.5.0, vrlbry's own copy before, with `prefix: 'vrlbry'` so the
+  entries keep the names that copy gave them), and past the links it puts the book away:
+  - A book leaving its shelf (`pick`) adds a history entry at the same address (`pushState`, its
+    state `{ vrlbryBook: 1, vrlbryTrail: 0, vrlbryLoad: performance.timeOrigin }` beside what was
+    there), and each link followed adds one (`vrlbryTrail`: links deep). A book a link swaps in
+    keeps the entries there are.
+  - Their popstate goes back to that depth (`interaction.backTo`, after a link or turn in
+    progress; several at once when the browser goes back several). Past the book's own entry it
+    puts the book away (`interaction.putAway`: after what is under way; an opening is cancelled).
+  - The toolbar's Back goes through the links' entries (`history.back()`).
+  - A book put away otherwise (Put back, Esc, B, Reset view) takes its entries out
+    (`history.go(-n)`), so Back then leaves as before. A book taken out before that is done gets
+    its entry once it is.
+  - Forward neither follows the links again nor takes the book out. Entries an earlier load of the
+    page left (a reload) are passed over, and the one it was loaded on becomes the page's own.
+  - Chrome's Back button skips entries a page added before any user gesture; a book comes out
+    after a click, a tap, a key or a trigger.
 - **Leaving VR**: an "Exit VR" button in the kiosk header (only while presenting), or holding
   B/Y for 1 s while browsing (a short press still means "back" when a book is out): a head-locked
   ring below the line of sight fills up (shown after 0.15 s, so taps do not flash it); releasing
   early cancels. Both end the XRSession (`interaction.onExitVR`).
 - **Kiosk panel** (at `world.kiosk`, always available in browse; 1.0 × 1.0 m): "⟳ Rescan folder"
-  button (`POST /api/rescan`), "↻ Reload page" (`interaction.onReload` → `location.reload()`; in
-  VR the browser's own controls are out of reach, and a reload ends the session); at its foot,
+  button (`POST /api/rescan`; "⟳ Rescan" beside Exit VR, for room), "↻ Reload page"
+  (`interaction.onReload` → `location.reload()`; in VR the browser's own controls are out of
+  reach, and a reload ends the session), and the way out, "← Hallway" (below); at its foot,
   small and right-aligned, "Updated <date, time>" from `GET /api/version`, fetched once at load,
   so it tells which version the page is running. Tabs: *Shelves & settings*, *Rooms* (when there
   is more than one library or the current one is browsed by rooms), *Search* and *Kiwix* (§2.6,
@@ -1500,7 +1604,22 @@ States: `browse` → `inspect` → `opening` → `read` (and back), plus `busy` 
   - *Shelves & settings*: library summary, sort toggle Title/Author/Popularity (rebuilds shelves),
     A–Z letter grid over the shelved books (teleports to the first book with that letter via
     `shelves.locate` and highlights it for 4 s), "Surprise me" (random book), "Recently read"
-    list (opens directly into read), settings toggles (sound, smooth move).
+    list (opens directly into read), settings toggles (sound; "Stick walking" / "Teleport only"
+    and "Snap turning" / "Smooth turning": the Hallway's movement choice, nav.js (AriaMoKr/common's
+    `loadNav` / `saveNav`, with vrlbry's `navDefaults(settings)`), kept in its
+    `hallway.nav` so it is one choice across the sites on this origin; read at start, on Back
+    from the Hallway and when another tab changes it; before the Hallway has stored one,
+    `settings.smoothMove` decides `move`, and it follows the choice), and under them the comfort
+    settings, every site's too (AriaMoKr/common's `access.js`, `hallway.access` = `{ motion:
+    'system' | 'reduce' | 'full', vignette, seated }`; `comfort.js` names them): "Motion: as the
+    system" / "Less motion" / "Full motion" (lit while motion is reduced), "Vignette when moving" /
+    "No vignette", "Standing" / "Seated". The help dialog offers the same (its Comfort group).
+    With less motion (`reduceMotion`: the system's `prefers-reduced-motion` for 'system',
+    followed as it changes, `watchMotion`) the view's and the book's eased moves cut
+    (`interaction._ease`: taking a book out, putting it back, the step back, the reading slide),
+    the fades blink (`_fadeTo`) and the door's shimmer is held (`world.reducedMotion`); the cover
+    and the page turns still move. Read at start, on Back and when another tab changes them;
+    "Reset stored data" leaves them (the Hallway's key).
   - *Rooms*: one button per library (with its book count, its indexing progress or "waiting to index"), and for a
     library browsed by rooms the current room ("Now: Poetry, titles starting with A · 39 works")
     with a "✕ Clear filters" button, genre buttons and a title-letter grid. Genre and letter are
@@ -1549,6 +1668,15 @@ States: `browse` → `inspect` → `opening` → `read` (and back), plus `busy` 
   where it was scrolled while the place stays the same; a large library's filters follow it (the
   list is 4 rows then), else it takes the panel. A grid of buttons ran off the kiosk with 28
   libraries, hiding the demo set, all libraries and the filters.
+  - The address names the place and room shown (`place-url.js`): `?place=<library id>` (or
+    `demo`, `local`, `*`) and a large library's room, `&genre=`, `&letter=`, `&page=` (from 2;
+    none for the whole library), set with `history.replaceState` (no history entry per room) after
+    every rebuild (`interaction.onShelved(place, room)`) and at the start, and on the entry the
+    browser's Back or Forward lands on (a book's or a link's entry made before the room changed);
+    the page's other parameters stay. Opened with them, the page starts there (`placeFromSearch`): a library by
+    its id, else by its name without the edition's date (the newest edition here), a group or a
+    browser's library (`~…`) as it is (the latter, the site's own files included, put back once
+    they open); one not here is ignored.
   - No room has more than `MAX_BOOKCASES` = 200 bookcases (`world.js`); in practice only this
     hall reaches the limit.
   - Libraries share the limit fairly (`shareBookcases`, max-min fair): each gets an equal share,
@@ -1605,15 +1733,15 @@ States: `browse` → `inspect` → `opening` → `read` (and back), plus `busy` 
   origin share this storage, so their data goes too.
 - Scenes (`scene.js`): `view` (state, place, room, sort, bookcases, and the viewpoint from
   `controls.viewpoint()`: x, z, eye height, yaw, pitch), `book` (library, id, title, page label,
-  block anchor `{ c, b }` and the side of the spread it is on), `settings` (fontScale, theme,
-  readScale, readDistance) and `ui`: `page` (the overlay's `reportUi()`: library card, search box
+  block anchor `{ c, b }`, the side of the spread it is on, and `pages`: 1 or 2 at a time as shown),
+  `settings` (fontScale, theme, readScale, readDistance, pageView) and `ui`: `page` (the overlay's `reportUi()`: library card, search box
   and whether its results are open, update banner, loading/error screen, toasts; as they were
   when the help was opened, since opening it closes the search results) and the 3D panels
   (`interaction.uiState()`: the kiosk's tab, search and list scrolling; inspect panel, toolbar,
   contents and its scrolling; the book under the pointer). `restoreScene` puts the book back,
   applies place/room/sort/reading settings (saved), rebuilds, sets the viewpoint, takes the book
-  out and opens it at the anchor on the same side (`read({ at, side })`: page pairing depends on
-  how a page was reached), then restores the dialogs. One scene is kept in localStorage (`scene`,
+  out and opens it at the anchor on the same side, one page or two as it was (`read({ at, side,
+  pages })`: page pairing depends on how a page was reached), then restores the dialogs. One scene is kept in localStorage (`scene`,
   with `at` and a `label`): Save / Restore scene in the help dialog and on the kiosk's Shelves &
   settings tab. The help dialog also restores pasted text: a saved scene or a whole debug report
   (`parseScene`). `__vrlbry.reproduce(report)` is `restoreScene` for the console.
@@ -1624,15 +1752,65 @@ States: `browse` → `inspect` → `opening` → `read` (and back), plus `busy` 
   The banner has no timeout; × hides it for the page, "Don't show again" sets
   `settings.updateNotices = false` (no banner, no VR notice; the kiosk's note stays), and the help
   dialog's "Tell me when this site has been updated" checkbox turns it back on.
+- **The way out** (`hallway.js`, always shown: the card's header and the kiosk's): "← Hallway" leads
+  to the Hallway (https://ariamokr.github.io/hallway/, a WebXR corridor whose doors lead to other
+  places) with `?from=` this library's door id (`config.DOOR_ID`, `vrlbry`: common's
+  `hallwayUrl`), so the visitor arrives at this library's door. The rules are the Hallway's door
+  contract in AriaMoKr/common (`door.js` `wayBack(search, DOOR_ID)`, its README "Linking back"; the
+  way is `{ url, label, title, name, host, hallway }`). A place that has this library behind one of
+  its doors names itself in the link that brings visitors here, and the way out leads there
+  instead: `?back=<its address>&backname=<its name>` (URL-encoded; http(s) only, else the Hallway;
+  the button shows the name, else the host, at most 24 characters; the tooltip the name and host,
+  or the address). The Hallway's own doors send no name: `?from=hallway` with a `back` on the
+  Hallway's own page (its origin and path, any query: this site shares its origin) is the
+  Hallway, "← Hallway", its link kept as given (its `from`, which names the door view, and a
+  shared session's `room`). The `<noscript>` link in index.html names the same door (a test checks). A plain navigation, so leaving in VR can keep the visitor in VR there when it is
+  on this page's origin (§5.7). The door back in the room (§5.3) leads there too: walking (or
+  leaning) through it, clicking or tapping its opening, or pointing at it and pulling the trigger.
+  The door and the kiosk's button go by `interaction.leave()`: the view fades to black (0.3 s in
+  VR, 0.4 s else), then `onHallway` (main.js) goes; still there 12 s later, or brought back from
+  the browser's cache by Back (`pageshow` with `persisted`), `cameBack()` puts the viewer 1.1 m in
+  front of the door, facing the room, and fades back in.
+- **Together** (`together.js`, `together-space.js`): the Hallway's shared session (its README,
+  "Going in" and "Together"; AriaMoKr/layersharedsession v0.3.0, peer to peer over WebRTC with
+  Trystero through public Nostr relays, the same app id), run by the layer's controller
+  (`../vendor/layersharedsession/together.js`, `createTogether`; vrlbry's `Together` wraps it
+  with what is the library's own). A valid `?room=` in the address (`roomFromUrl`: the
+  Hallway's door, or an invitation) joins it as page `DOOR_ID`; the session's modules (~270 kB
+  with Trystero) load only then (the controller's `import('./session.js')`). Each visitor shares
+  where in the library they are (`spaceOf(place, room)`: place, genre, letter and page, which
+  decide the room's layout) as the shared value `<DOOR_ID>.space.<memberId>`: written on the
+  controller's `session` event, again on the session's `self` event (a member id replaced) and
+  by `setSpace` from `showPlace` (main.js); a `shared` change to such a key redraws. The
+  controller's `isHere(peer, avatar)` is whether the peer stands in the same room (its space key
+  kept on the avatar, made again when the member id changes, so a frame allocates nothing): it
+  decides who is drawn by the layer's avatars (a head with a visor, a hand per tracked
+  controller, a ring on the floor, their name) and whom `company()` counts as `here`; the rest of
+  this page is `nearby`, "elsewhere in the library". Joins, arrivals, departures and waves are
+  toasts (and `notice` in VR), worded by `noticeText`; with less motion a wave doesn't bob the
+  avatar (`reduceMotion`). The card's line under its header and the kiosk's (*Shelves &
+  settings*, above "Recently read") say who else is in it ("With you: 1 here, 1 elsewhere in the
+  library, 2 in another place") with a Leave, which leaves and takes `room` out of the address. The way out carries `room` on, and once the visitor has left the session no room
+  at all, though the Hallway's link had one (common's `leaveUrl`, the card's link and `onHallway`);
+  going out by `leave()` leaves the session first (`onLeaving`, so the others see it at once),
+  `cameBack()` and Back to a cached page join again (`onCameBack`, `pageshow`), and `pagehide`
+  leaves. Starting a session here, names and waves are the Hallway's (not here yet).
 - DOM overlay (non-VR): see `ui/overlay.js` — title with the same "Updated …" stamp, library
-  cards (with indexing progress or "waiting to index"), a ⟳ rescan button, under the cards
+  cards (with indexing progress or "waiting to index"), a ⟳ rescan button, the way out, under the cards
   "Browse Kiwix's library…" first, on a line of its own (what a new visitor most likely wants),
   then "Open ZIM files…" on the next, and the web-address field, and a drop target over the page (local library, §2.6), search box (filters by title / author across *all* books of all libraries;
   picking a result = switch room if needed, teleport to it and select it; for Wikipedia
   libraries it also asks the server for articles by title, 150 ms after typing stops, listed
   after up to 6 books; picking an article takes its volume off the shelf and opens it at that
   article, `interaction.openArticle` / `read({ at })`), Enter VR button
-  (only when `immersive-vr` is supported), control help, loading progress, error toasts.
+  (only when `immersive-vr` is supported), control help, loading progress, error toasts. The
+  search box is a combobox (`aria-controls` its listbox, `aria-expanded` while results show,
+  `aria-activedescendant` the highlighted option, which has `aria-selected`; `_showList`), and a
+  polite status says how many results there are ("12 results", "No results") once typing pauses.
+  The card stays within the screen and scrolls inside it; on a short screen (a phone held
+  sideways, height ≤ 500 px) it stops above the buttons at the foot, its library list does not
+  scroll on its own, and the hint goes; between 641 and 780 px wide the search box takes the space
+  beside the card.
 
 ### 5.7 Bootstrap (`main.js`)
 
@@ -1648,6 +1826,22 @@ States: `browse` → `inspect` → `opening` → `read` (and back), plus `busy` 
   `PLAYER.eyeHeight` applied as camera y when not presenting (XR provides real head height).
 - Session: `navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor',
   'bounded-floor', 'hand-tracking', 'layers'] })` from the Enter VR button; `renderer.xr.setSession`.
+  Also without a click when the browser grants one (`sessiongranted` on `navigator.xr`: Quest
+  Browser, after a navigation from another page's immersive session, such as the Hallway's door):
+  an inline script in `index.html` notes a grant made while the library loads
+  (`window.vrlbryXrGranted`), and `main.js` takes it, or a later one, once the frame loop runs, as
+  the Enter VR button would (never while a session is running: `enterVR` would end it). Measured
+  on a Quest 3 (Quest Browser 152, 2026-10-18; `node tools/quest-perf.mjs handover`): a grant comes only after a
+  navigation within one origin (`localhost:8082` to itself: granted; to `127.0.0.1:8082`, or to
+  the Hallway online: none), ~0.1 s after the page starts, and it lasts about 5 s: a request at
+  4.7 s started a session, at 5.2 s it was refused ("requires user activation"). This page asks
+  after its catalogue and room, at 1.6 s from a local server with many libraries; the online
+  version is up in 0.4–1.8 s. Online, 3 of 3 stayed in VR each way: out to the Hallway (it takes
+  the session at 0.2–0.35 s) and into this library (at 0.4 s). Through the door (`leave`, its fade
+  included) to the Hallway online, 5 of 6: once, on a cold load (its page loaded in 0.9 s), the
+  Hallway got the grant at 0.22 s and never asked for a session (on the Hallway's side; not seen
+  again). Whatever is added before the frame loop starts must keep it well
+  within those 5 s, or a visitor walking in lands on the 2D page.
 - Dev flag: `?xr=emulate` (or `?emulate=quest3`) dynamically imports `/vendor/iwer/iwer.module.js`
   and installs `new XRDevice(metaQuest3).installRuntime({ forceInstall: true })` **before**
   anything queries `navigator.xr` (Chromium has a native `navigator.xr` even without a headset);
@@ -1693,6 +1887,14 @@ States: `browse` → `inspect` → `opening` → `read` (and back), plus `busy` 
   - `tools/quest-perf.mjs` (Node, adb) forwards the Quest Browser's DevTools socket, runs or reads
     the recorder over CDP, adds the VrApi per-second log, `dumpsys meminfo` / `battery` snapshots
     (one at the end of each scenario) and device info, and writes `perf/quest-<time>.json`.
+    `--desktop` measures on the PC instead, without adb: a Chrome window of its own on
+    `http://localhost:<port>/?perf` (common's `tools/chrome.mjs` `launchChrome({ headless: false,
+    url })`, on a new profile whose Local State says the Windows password is not blank, so no
+    failed logon), its DevTools endpoint where the headset's forwarded one goes, closed at the
+    end; the scenarios run in 2D. `handover` instead enters VR, takes the way out (`interaction.onHallway`, to `--to` or the page
+    itself) and reads what a probe (`Page.addScriptToEvaluateOnNewDocument`, on every document in
+    the tab) noted on the next page: load, `sessiongranted`, `requestSession` (held back
+    `--delay` ms), the session's start, refusal or end (§5.7).
   - The dump's `atlasStalls` (printed too) gives, per scenario, the spine atlas jobs and how many
     had a dropped frame in the 3 frames before the atlas was applied (the worker handing over its
     bitmap) or in its upload frame or the next, against chance.
@@ -1702,3 +1904,274 @@ States: `browse` → `inspect` → `opening` → `read` (and back), plus `busy` 
     events become pauses (nested events merged), stored as `dump.gc.pauses`, and `dump.gc.summary`
     gives per scenario: pauses (major ones), incremental-marking steps, GC time and its share,
     the longest pause, and how many of the dropped frames had a GC pause inside the gap.
+
+### 5.8 Text view (`ui/text-view.js`)
+
+On a screen, the open book's part can be read as a page of text over the 3D view, for screen
+readers, the keyboard, zoom and phones. The module is shared with the sites made from this one
+(music): it gets what it uses from `main.js` (the interaction, `getChunk`, `imageSource`, the
+overlay's `announce`).
+
+The view itself, its toolbar, keys, place and CSS, is AriaMoKr/common's `TextView`
+(`../vendor/common/text-view.js`, v0.8.3; its README, "text-view.js"), which outside's and
+music's views extend too. `ui/text-view.js` keeps the pure part (`renderBlocks`, `topBlock`,
+`runsText` and the rest), and its `TextView` extends common's with the library's book, all through
+the interaction: a part is a chunk (`renderPart`: `getChunk`, then `renderBlocks`), a place is a
+block anchor `{ c, b }` (with `f` for an element a link leads to: `placeAimed` shows the 3D page's
+place for it), the contents are `reader.meta.toc`, and the toolbar's actions are the 3D book's
+(`turnPage` is its turn; common's `turn(side)` brings the book to the reader's place first). What
+the view says as a book comes out, opens and closes (`bookInHand`, `openOnRead`, `bookOpened`,
+`bookClosing`) stays the library's.
+
+- **Opening and closing.** While a book is open on a screen (not in a headset):
+  - Ways in: T, the overlay's "Text view" button (shown only while reading), or the help
+    dialog's "Open books as text" (`settings.textView`), which opens each book in it at once.
+    T with a book in hand (`inspect`) reads it and opens the view (`openOnRead`).
+  - A book taken out and left in hand (picked from the search, or clicked) is said politely
+    (`bookInHand`, `overlay.announce`, a `role="status"` region): "<title>, in your hands. Enter
+    reads it, T as text, Esc puts it back." One opened at once (an article found, a link, a
+    recent book) is not: `pick` says it only if the state is still `inspect` a moment later.
+  - Opening a book says its title politely: "<title> is open.", plus " Text view: T." while the
+    view is not on. A Wikipedia volume says the article's title.
+  - The view takes focus at its heading (an `h1` with `tabindex="-1"`).
+  - T or Esc closes it (Esc closes the contents first). Focus goes back to the "Text view" button,
+    or to the search box when the book was put back.
+  - Entering VR closes it, and T does nothing while presenting.
+- **The page.** An `<article class="tv-view" aria-labelledby="tv-title" data-own-keys>` covers the
+  view (fixed, with its own scroll).
+  - The controls leave keys pressed in it alone (`isTyping` honours `[data-own-keys]`), so the
+    arrows, Space and PageUp / PageDown scroll it.
+  - ← / → outside a field turn the 3D book's page from the view's place, and the view follows.
+- **`renderBlocks(doc, container, blocks, { c, skip, onLink, image })`** builds a part's blocks
+  (§3.5) as DOM nodes. Text goes in as text nodes, never as HTML.
+  - `h`: h2–h6 under the view's h1, the part's highest level as h2, and never a level left out:
+    each at most one below the heading before (a book's h3 then h5 is h3 then h4).
+  - `p`: paragraphs, with their alignment, verse and indent.
+  - `li`: nested `ul.tv-list` by depth, the marker as text.
+  - `tr`: a `<table>` per group `g`; header rows go in `<thead>` with `th scope="col"`.
+  - `pre`, and `hr`.
+  - `img`: `<figure><img alt>`; `em` formulas are sized with the text, and `inv` pictures are
+    inverted at night. Image runs become inline `<img>`s.
+  - Style bits: em, strong, code, sup, sub, small caps, u, small, larger.
+  - Each block's element has `data-b` and the id `tv-<c>-<b>`.
+  - A link (consecutive runs with one destination, image runs included) is an `<a>`: `href` is
+    `#tv-c-b` for `at`, else `#`. Its click is the 3D reader's `followLink`.
+  - `skip`: a block left out, a Wikipedia article's own title heading, which the view's h1 says.
+  - Pictures load through `api.imageSource` and are released with their part.
+- **Titles.** The h1 is the book's title. In a Wikipedia volume it is the article's (its contents
+  entry), with "Volume: <volume's title>" under it and "Article n of N" above (elsewhere
+  "Part n of N").
+- **The toolbar** is a sticky header. In order:
+  - ← Previous part, Close, and Contents;
+  - A− / A+ (`changeFont`), named "A− smaller text" and "A+ larger text" (the names start with
+    what the buttons show);
+  - the theme: paper, sepia or night (`setTheme`), in the reader's `THEMES` colours (a test keeps
+    them the same), each with its `color-scheme` (night's `dark`);
+  - the page label, and a slider (`aria-valuetext` "Page x of y", `jumpToProgress`);
+  - ↩ Back (while there is a trail), Put back, and Next part →. Back's last step, which hides it,
+    leaves the focus on the view's home (the title; on a TV the view), not on the page.
+
+  In a Wikipedia volume the parts are called articles. The part buttons are repeated at the
+  part's end.
+  - Contents is a panel under the toolbar, over the text, so the reader's place stays. It is
+    filled when first opened, with focus on the entry at or before the part shown. Choosing one
+    is `jumpToToc` (`useContents`), its block put just below the toolbar.
+  - At ≤ 640 px wide the toolbar drops words, to fit two rows at 320 px: arrows for the parts,
+    "Close", no "Theme" and no page label. The accessible names stay whole.
+  - On a short screen (≤ 420 px tall: a phone held sideways, 400 % zoom) the toolbar slides away
+    while the reader scrolls down. It comes back on a scroll up, or when focus reaches it; the
+    text the browser scrolled towards it is put back. The view's own smooth scrolls (to the place
+    after a size, a turn or Back) leave it in sight (common v0.8.3; before, a click on A+ slid it
+    away).
+- **One place.** The view and the 3D book share the reader's place, a block anchor `{ c, b }`.
+  The view's own is finer, the line within the block: `{ c, b, w }`, w the first word on the line
+  at its top (`wordStarts`: the block's words as shown, a list inside an item left out; omitted
+  when 0, the block's top). A block can be screens tall (Jespersen's chapter III, block 27: 2,538
+  px at 375 × 812), and wherever the view puts the reader back (a size, Back, a turned phone,
+  opened again) it is at their line, not at the block's top. The 3D book's place stays the block:
+  `jumpTo` takes it to the block's page.
+  - Opening: the view opens at `anchorOf` the page shown, or at its own last place while the 3D
+    book still shows it; a frame on, once drawn, it is put there again unless the reader has
+    scrolled.
+  - A turn, jump, link, Back or contents entry in the 3D book: the view shows that part and
+    scrolls to the block (`follow`, called from `_afterTurn`). A place aimed at (`aim`: a link's
+    or an entry's block, a part's start) wins over the spread's left page, which may end the
+    part before. The 3D book's pages shown again with the view's place still on them (1 page or
+    2, a phone turned) leave the view at it (common v0.8.2); a turn of the view's own (← →) goes
+    to the new pages' first block.
+  - A link followed in the view keeps the view's place on the trail as well (`view`, with its w:
+    the place the shell brought the 3D book to just before, which `jumpTo` in place hands the
+    library's `TextView`; the page may begin blocks before it). Back with the view open (↩ Back
+    clicked or by Enter, the browser's Back: `_goTo`) aims the view at that line, not at the
+    page's first block, and at another font size takes the 3D book to that block's page. With the
+    view closed, Back goes to the page, as from a link of the 3D book's own.
+  - The reader's own scrolling: once it rests (250 ms), the place at the view's top becomes the
+    place (`placeAt`, measured below the sticky toolbar): the block there (`topBlock`), and when it
+    began above the top, the first word whose line is in sight (`firstWordBelow`, each word's
+    first letter measured with a `Range`). A table row is its top: its cells' words are not in
+    order down the page. So it does at once before anything that starts from the place: a size,
+    Back, a link, a turn, closing. The view puts a place back with the top of its word's line
+    just below the toolbar, else its block's top (`placeTop`).
+    - The 3D book goes there in place, without a turn (`jumpToAnchor(anchor, { inPlace: true })`),
+      unless the spread shown holds that block already (`_showsBlock`, `reader.blocksOn`).
+    - So the page label, the saved position and the trail follow the text view.
+    - The view's own scrolls are not the reader's: near a part's end, the block aimed at cannot
+      reach the top.
+  - Closing leaves the 3D book at that place.
+  - A change of width (a phone turned, a window resized, the browser's zoom) reflows the text or
+    wraps the toolbar under the scroll: the view goes back to the reader's place, taken as they
+    scrolled, before the text moved, and the 3D book stays where it is. A change of height alone
+    moves nothing.
+  - Smooth scrolling only with full motion (`interaction.reduced`).
+- **Layout.**
+  - A 70ch column on a desktop, the full width on a phone. The text size is
+    `1.125rem × fontScale`.
+  - Links are underlined, and focus outlines take the link colour.
+  - The browser's zoom reflows it, with no sideways scroll at 320 px (checked at 320 × 568 and
+    320 × 200).
+  - What Tab or a jump scrolls to stops below the toolbar (`scroll-margin-top: var(--tv-bar-h)`,
+    set from the toolbar's height before each jump, as its observer saw it hidden while the view
+    was closed, and the toolbar shown for the jump; a scroll-padding
+    would count the toolbar's own buttons as hidden).
+- **Tests.** `test/client-text-view.test.js` covers blocks to DOM (with `test/helpers/fake-dom.js`),
+  links, heading levels, the top block, the round trip from a page to the view and back to the
+  same block, the focus after ↩ Back's last step, Back to the block a link was followed from
+  (interaction.js's trail itself, with common's shell, a stand-in reader and 3D turn: Back, the
+  browser's Back, another font size, the view closed), the reader's line in a tall block (a
+  block's words, the first in sight; over a layout of it, A+ and A−, and a link then ↩ Back and
+  the browser's Back, each bringing the same word's line back to the top), and the themes'
+  colours and color-schemes in common's `TEXT_VIEW_CSS` (style.css sets none of them).
+
+### 5.9 TV remote (`ui/remote.js`, `back-step.js`)
+
+In the Hallway's Android TV app (AriaMoKr/HallwayApp: a full-screen WebView whose user agent ends
+with ` HallwayTV/<version>`), the library is walked and read with the TV's remote: the arrows, OK,
+Back and Menu. AriaMoKr/common's `tv.js` (v0.6.1; its README, "The TV app") does the remote's
+part every site shares; this section is the library's. `?tv=emulate` shows the TV's page in any
+browser (common's `tvMode`), where `hallwayTV.menu()` and `hallwayTV.back()` stand in for Menu
+and Back. The remote's parts live in the files music shares (interaction.js, ui/overlay.js,
+ui/text-view.js, ui/remote.js); main.js only wires them.
+
+- **TV mode** (`main.js`): `html.tv` (what HallwayApp's `tv-check.mjs` looks for), the overlay's
+  `setTV`, and no VR (no Enter VR, no granted session). The 3D view's pixel ratio is 2 at most,
+  as on any screen and as the Hallway's (`?dpr=` sets another cap).
+- **Walking.** The 3D view holds the focus. The arrows walk and turn (controls.js reads every key
+  through common's `keyOf`, since the remote's OK and keys sent with `adb shell input keyevent`
+  have no `code`). OK is the gamepad's A at the middle of the view (`interaction.useMiddle`):
+  the aim dot is shown without a pad (`controls.aimMiddle`; hidden while the card has the focus,
+  in the text view, and while reading unless the contents are open: `controls.aimShown`). A book
+  in hand is read; an open one turns a page (the middle of a spread is its gutter), unless its
+  contents are open, whose entry at the dot it opens.
+- **Lists on the stand.** ↑ ↓ scroll the list the dot is on (`interaction.scrollUnderDot`, through
+  `controls.scrollKey`), when it has more rows than it shows (`panel.scrolls`) and is within
+  `TV_REACH` (2.2 m) while walking, or is the contents of the book being read (on a TV they lie
+  over the page, where the dot is). A fresh press decides between the list and walking; its
+  repeats follow it. The hint says which (`overlay.setRemote({ list })`).
+- **The card** (Menu: common's `Remote`, made the library's by `LibraryRemote`).
+  - Its root is the open dialog (`overlay.dialog()`: Kiwix's library, the help), else the text
+    view's (`textView.layer()`: its contents, or the whole view) while it is open, else
+    `#overlay`. What holds the focus while walking is the text view while it is open, else the
+    canvas.
+  - Menu goes to where the card was left, else to common's `first()` (`overlay.remoteStart`):
+    the book's buttons while one is out (also when the card was left elsewhere), else the
+    Controls help, never a text box (common's own first stop would be "← Hallway"); in the text
+    view, to its toolbar (`textView.cardStart`).
+  - Back in the card closes the open dialog (the focus back on its button: `overlay.closeDialog`)
+    or the text view's contents, else walks again (an open search list closes first: on a TV
+    Esc there does not leave the box; a result with the focus goes back to the box).
+  - Walking again (`onMode(false)`) closes the dialogs, the search's results and the text view's
+    contents. The mode also follows the focus moved by the page (the text view opening, a result
+    chosen).
+  - **Text boxes and the TV's keyboard.** A text box the remote steps onto keeps the keyboard
+    down (`inputmode="none"`) until OK on it (common v0.6.1), and so does one the page moves the
+    focus onto from another control: Kiwix's filter as its dialog opens, the search's box back
+    from its results (`LibraryRemote._hold`, from a `focusin` with a `relatedTarget`). A click on
+    such a box (TalkBack's OK, which keeps the remote's) brings the keyboard up.
+  - **The search on a TV.** On the box OK is the keyboard's, and the TV's keyboard takes OK while
+    it is up, so the results take the real focus: ↓ from the box goes to the first
+    (`tabindex="-1"` options, `overlay._resultKey`), ↑ ↓ from one to the next (staying at the
+    last), ↑ from the first back to the box, OK opens the one with the focus, Back closes them
+    onto the box. `LibraryRemote` leaves a combobox's focused option its ↑ ↓ OK and Escape (and
+    turns TalkBack's channel keys into its arrows). ↑ from the box, or ↓ with no result to go
+    to, closes the list and goes on as from any control. The highlight follows the focus, so no
+    result looks chosen while the box has it. A focused result keeps the focus when the article
+    results arrive and the list is made again; closing the list drops the article search still
+    to come (on a desktop too, where it reopened the list after Escape).
+  - The focus falling to nowhere (a control that hid itself: ↩ Back after the last link, Put
+    back) is walking again (common's), except in an open dialog, where it goes to the dialog's
+    first control (`LibraryRemote.walk`); the help's reset Cancel gives it back to "Reset stored
+    data…".
+  - **The book's buttons** stand in for the letter keys (`.ov-book`, shown in TV mode): in hand
+    Read, Read as text (T), In front of me (F), Put back; open Contents (C, `aria-pressed`),
+    A− / A+ (named as the text view's), Theme (N), 1 page / 2 pages (P), In front of me, ↩ Back
+    (while there is a trail), Put back, and Text view. Each presses its key (`overlay.onBookKey`
+    → `interaction.pressKey`); the open book's follow its toolbar (`setBookButtons`). Contents
+    chosen there returns to walking, the dot on them.
+  - Enter or Space on a button or link presses it and is not the view's key too (controls.js
+    `pressesControl`).
+  - Nothing opens a file of this device (the Open button, Reopen, the download link); a web
+    address and Kiwix's library stay.
+  - A shared session's invite shows as text to type on a phone or a computer
+    (`overlay.setSession(text, invite)`, `together.inviteLink`).
+- **Back is one step back** (`interaction.step`, chosen by `backStep` in `back-step.js`, pure):
+  the text view's contents closed; back along the links (`goBack`); the text view closed; the
+  3D book's contents closed; the book put away; while typing in the kiosk's search, out of it.
+  A step that has a history entry (BackHistory: the book's, and a link's) is left to the app
+  (`step()` returns false), which goes back a page, so the browser's popstate takes that one
+  step and Back never takes two. A book taken out before any key press or click (a gamepad
+  alone) has no entry Chromium will come back to (its history intervention), so its steps are
+  the page's (`_bookEntry`, from `navigator.userActivation.hasBeenActive`). Outside the library
+  (`step()` false at the start), the app's Back goes back to the Hallway's door.
+- **The text view on a TV** holds the focus itself (`_home()` is the view, not its title): ↑ ↓
+  scroll it by 40 % of its height, ← → turn the 3D book's pages. OK goes to the first link on
+  the screen (`textView.linkHere`), from which ↑ ↓ go from link to link and OK follows one.
+  In the card, ↓ from the toolbar's last control goes to the first stop on the screen (a link,
+  or the part's end), not the part's first, which the view would jump back to, and the focus
+  stays when none is on the screen; ↑ from the text to a stop above the screen goes to the
+  toolbar instead (`LibraryRemote._textStep`, `textView.inBar` / `onScreen`). Closing it gives
+  the focus back to the 3D view.
+- **The ten-foot view** (style.css, `html.tv`): 18 px text, a focus ring of 4 px `#ffd98a` with a
+  dark halo (on the text view's paper too), margins inside a TV's overscan (`--tv-edge-x`,
+  `--tv-edge-y`), a larger aim dot, the card's library list in the card's one scroll. The hint
+  above the foot says what the remote does now (`TV_HINTS`: walking, a list, a book in hand,
+  reading, the contents, the card). While a book is out the card and the search are hidden
+  (`visibility`, so the remote passes them by); while reading, the book's buttons show only
+  while the card has the focus. On a TV the 3D contents lie over the page. The help's comfort
+  row keeps only Motion (the vignette and seated are VR's). The walking hint's second line is
+  the hallway's (and outside's) for TalkBack, which keeps the arrows: "With TalkBack: channel up
+  and down walk, rewind and fast-forward turn" (`white-space: pre-line`); the help has a row for
+  it, and one for the search.
+- **Tests.** `test/client-back-step.test.js` covers the order of Back's steps. Checked in a
+  browser with `?tv=emulate` and real key presses (2026-10-25):
+  - Every control of the card reached and used, and of the help (its reset fieldset, select and
+    checkboxes; Save scene, then Restore) and Kiwix's library; Back closes a dialog onto its
+    button.
+  - The search combobox (↑ ↓ kept by its open list), a result chosen; the kiosk's lists
+    scrolled with ↓ under the dot, OK on its tabs and on a genre.
+  - A book read: OK reads, ← → turn, the contents scrolled with ↓ and an entry opened, the open
+    book's buttons; as text: ↓ scrolls, OK to a link, followed, its ↩ Back; put back from the
+    hand's buttons, the open book's and the text view's toolbar.
+  - Back step by step, the book's step the app's (in a browser, `history.back()` by hand when
+    `hallwayTV.back()` returns false, as the app does).
+  - axe with nothing found walking, with the search list, a book in hand, reading, in the text
+    view (Moby-Dick too, whose headings left a level out before), and with the help or Kiwix's
+    library open.
+
+  And again (2026-10-26, common v0.6.1):
+  - Menu lands on the Controls help, with a book out on its first button; the search's box and
+    the ZIM address box are held (`inputmode="none"`) when ↑ steps onto them and get their own
+    back on leaving; OK on the box brings the keyboard (its inputmode back); Kiwix's filter is
+    held as its dialog opens; a click on a held box gives the keyboard.
+  - ↓ from the search's box goes through the results with the real focus, ↑ from the first back
+    to the box (held again), Back closes them onto the box, OK opens the focused one; the list
+    made again keeps the focus; passing over the box leaves no list open; TalkBack's channel
+    keys (dispatched as the WebView sends them) go through the results.
+  - In a text view scrolled down, ↓ past the toolbar lands on the first link on the screen, the
+    view still; ↑ from it back to the toolbar, still; ↓ from link to link as before; with no
+    link on the screen the focus stays on the toolbar.
+  - The walking hint's TalkBack line, the help's rows; the desktop's search as before (its
+    highlight, Escape, the list staying closed); axe with nothing found walking, on the Controls
+    help, in the search's box and on a result, a book in hand, the text view on a link, and with
+    the help or Kiwix's library open.
+
+  The TV itself is another session's (TODO).

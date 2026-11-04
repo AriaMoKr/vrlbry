@@ -74,6 +74,13 @@ describe('scenes', () => {
     assert.equal(r.book, 'Bouelles – Brass band');
   });
 
+  it('opens the book one page or two at a time, as it was shown, and brings the setting', async () => {
+    const { app, calls } = fakeApp({ state: 'read' });
+    await restoreScene(app, { ...SCENE, book: { ...SCENE.book, side: 'right', pages: 1 }, settings: { pageView: 'single' } });
+    assert.ok(calls.includes('read {"at":{"c":2,"b":0},"side":"right","pages":1}'), calls.join(', '));
+    assert.equal(app.settings.pageView, 'single');
+  });
+
   it('leaves out a book that is not on the shelves, and refuses what is not a scene', async () => {
     const { app, calls } = fakeApp({ shelved: false });
     await restoreScene(app, SCENE);

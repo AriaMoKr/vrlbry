@@ -6,11 +6,33 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { canvasTexture } from './canvas-texture.js';
 import {
-  makePlankCanvas, makePlasterCanvas, makeWoodCanvas, makeSkyCanvas, makeShadowCanvas,
+  makePlankCanvas, makePlasterCanvas, makeWoodCanvas, makeShadowCanvas,
   makeRugCanvas, rng,
 } from './textures.js';
+// The sky in the windows and the skylight: the late afternoon outside the Hallway's doors
+// (AriaMoKr/common sky.js, outside's garden's), at infinity, turned per room (rotundaSkyYaw; 0 in a hall).
+import { skyMaterial, skyTexture, SUN_DIR } from '../../vendor/common/sky.js';
 
 export const WALL_H = 4.4;
+
+/** Where the sun stands in the garden's frame: its bearing from -z toward +x (common's README, "A room's yaw"). */
+const SUN_AZ = Math.atan2(SUN_DIR[0], -SUN_DIR[2]);
+
+/**
+ * The sky's yaw for a rotunda (common's skyMaterial): the low sun a little to one side of the
+ * window most to the left of someone at the spawn point (bearing nearest -90°: the windows stand
+ * either side of the bookcases ahead and the door behind), so its glow shows there rather than
+ * glaring straight through. 0 without windows. Pure.
+ * @param {number[]} windowAngles radians, 0 = -Z, increasing toward +X (createRotunda)
+ */
+export function rotundaSkyYaw(windowAngles) {
+  let best = null;
+  for (const a of windowAngles) {
+    const bearing = Math.atan2(Math.sin(a), Math.cos(a)); // into (-π, π]
+    if (best === null || Math.abs(bearing + Math.PI / 2) < Math.abs(best + Math.PI / 2)) best = bearing;
+  }
+  return best === null ? 0 : SUN_AZ - (best + 0.12);
+}
 
 /** Dark-to-clear gradient for the floor rim along the wall. */
 function makeRimCanvas() {
@@ -38,12 +60,15 @@ function tileUVs(geo, su, sv) {
  * re-uploads nothing to the GPU. Tiling is done in the geometry UVs, never by cloning textures.
  */
 let M = null;
+export { materials as roomMaterials };
 function materials() {
   if (M) return M;
   const plank = canvasTexture(makePlankCanvas({ w: 1024, h: 1024, boards: 8 }), { repeat: [1, 1], anisotropy: 8 });
   const plaster = canvasTexture(makePlasterCanvas({ w: 512, h: 512 }), { repeat: [1, 1] });
   const wood = canvasTexture(makeWoodCanvas({ w: 1024, h: 256, base: '#4a2a16', dark: '#28150a', light: '#6b4227', seed: 31 }), { repeat: [1, 1] });
-  const sky = canvasTexture(makeSkyCanvas({ w: 256, h: 512 }));
+  // Painted once and shared by every room, in the first room's build behind the loading screen:
+  // ~35 ms on a desktop, 45-68 ms on a Quest 3 (2026-10-22), within the VR hand-over's ~5 s.
+  const sky = skyTexture();
   M = {
     plankTex: plank,
     plasterTex: plaster,
@@ -54,7 +79,7 @@ function materials() {
     wood: new THREE.MeshLambertMaterial({ map: wood }),
     woodBack: new THREE.MeshLambertMaterial({ map: wood, side: THREE.BackSide }),
     darkWood: new THREE.MeshLambertMaterial({ map: wood, color: 0x8a7766 }),
-    sky: new THREE.MeshBasicMaterial({ map: sky, toneMapped: false }),
+    sky: skyMaterial(sky), // its yaw set per room (createRotunda, createHall)
     brass: new THREE.MeshLambertMaterial({ color: 0xb08d47, emissive: 0x2a1c08 }),
     leather: new THREE.MeshLambertMaterial({ color: 0x6e2a1f }),
     glow: new THREE.MeshBasicMaterial({ color: 0xffe0a8, toneMapped: false }),
@@ -88,10 +113,7 @@ function windowParts(width, height) {
   shape.lineTo(r, height - r);
   shape.absarc(0, height - r, r, 0, Math.PI, false);
   shape.lineTo(-r, 0);
-  const glassGeo = new THREE.ShapeGeometry(shape, 24);
-  // ShapeGeometry UVs are in shape units: normalise for the sky texture.
-  const uv = glassGeo.attributes.uv;
-  for (let i = 0; i < uv.count; i++) uv.setXY(i, (uv.getX(i) + r) / width, uv.getY(i) / height);
+  const glassGeo = new THREE.ShapeGeometry(shape, 24); // the sky by direction: no UVs needed
   const frameShape = new THREE.Shape();
   const fr = r + 0.09;
   frameShape.moveTo(-fr, -0.08);
@@ -399,6 +421,7 @@ export function createRotunda({ R, windowAngles = [], kiosk, decor = true }) {
 
   const rr = R - 0.03;
   addWindows(group, windowAngles.map((a) => ({ width: 1.1, height: 2.4, x: Math.sin(a) * rr, y: 1.15, z: -Math.cos(a) * rr, yaw: -a })));
+  mats.sky.uniforms.uYaw.value = rotundaSkyYaw(windowAngles); // one sky for its windows and the oculus
 
   commonLights(group);
   const chandelier = makeChandelier(group, 0, WALL_H - 0.5, 0, 0.7);
@@ -484,6 +507,9 @@ export function createHall({ minX, maxX, minZ, maxZ, kiosk }) {
     for (const [x, yaw] of [[minX + 0.03, Math.PI / 2], [maxX - 0.03, -Math.PI / 2]]) windows.push({ width: 1.0, height: 2.2, x, y: 1.2, z, yaw });
   }
   addWindows(group, windows);
+  // Laid out as the garden is (down the hall is -z, as the Hallway's end window looks): the sun's
+  // glow ahead and to the left, in the windows of the left wall.
+  mats.sky.uniforms.uYaw.value = 0;
   commonLights(group);
   const lights = [];
   // At most two chandeliers, each with its own light: exactly two point lights in every room shape
@@ -502,7 +528,7 @@ export function createHall({ minX, maxX, minZ, maxZ, kiosk }) {
   const dust = makeDust(group, cx, maxZ - 3, 3, WALL_H - 1);
   const margin = 0.35;
   return {
-    group, floor, colliders, kind: 'hall',
+    group, floor, colliders, kind: 'hall', bounds: { minX, maxX, minZ, maxZ },
     // Laser stop: the four walls, the ceiling, the floor, the furniture.
     raycast: (ray) => Math.min(rayBoxExit(ray, minX, maxX, minZ, maxZ), rayFloor(ray), rayColliders(ray, colliders)),
     walkable: (x, z) => x > minX + margin && x < maxX - margin && z > minZ + margin && z < maxZ - margin,

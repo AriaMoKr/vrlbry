@@ -1,19 +1,14 @@
 // Standard-layout gamepads (Xbox, PlayStation, most Bluetooth pads) through the Gamepad API, for
 // desktop and phone (an XR session's controllers come through XRInputSource.gamepad instead).
 // Pure: turns a Gamepad snapshot into dead-zoned sticks, triggers and button edges; xr/controls.js
-// maps those onto the same events as mouse, keyboard and VR controllers.
+// maps those onto the same events as mouse, keyboard and VR controllers. The pieces (the dead
+// zone, the stick's scaling, what counts as held, the pad chosen) are AriaMoKr/common's
+// gamepad.js, so a pad feels the same here as in the Hallway and outside; this reader of its own
+// adds every button by name and the presses and releases since the last read.
 
-/** Button names by index in the W3C "standard" mapping. */
-export const BUTTONS = ['a', 'b', 'x', 'y', 'lb', 'rb', 'lt', 'rt', 'back', 'start', 'ls', 'rs', 'up', 'down', 'left', 'right', 'home'];
-export const DEADZONE = 0.18;
+import { BUTTONS, DEADZONE, firstPad, held, stick } from '../../vendor/common/gamepad.js';
 
-/** A stick with a radial dead zone, rescaled so motion starts smoothly at its edge. */
-export function stick(x = 0, y = 0, deadzone = DEADZONE) {
-  const m = Math.hypot(x, y);
-  if (m <= deadzone) return { x: 0, y: 0 };
-  const k = Math.min(1, (m - deadzone) / (1 - deadzone)) / m;
-  return { x: x * k, y: y * k };
-}
+export { BUTTONS, DEADZONE, firstPad, stick };
 
 /**
  * Reads a gamepad.
@@ -25,10 +20,7 @@ export function stick(x = 0, y = 0, deadzone = DEADZONE) {
  */
 export function readPad(gp, prev = {}) {
   const buttons = {};
-  BUTTONS.forEach((name, i) => {
-    const b = gp.buttons[i];
-    buttons[name] = !!b && (b.pressed || b.value > 0.5);
-  });
+  for (let i = 0; i < BUTTONS.length; i++) buttons[BUTTONS[i]] = held(gp, i);
   return {
     move: stick(gp.axes[0], gp.axes[1]),
     look: stick(gp.axes[2], gp.axes[3]),
@@ -38,10 +30,4 @@ export function readPad(gp, prev = {}) {
     down: BUTTONS.filter((n) => buttons[n] && !prev[n]),
     up: BUTTONS.filter((n) => !buttons[n] && prev[n]),
   };
-}
-
-/** The first connected gamepad, preferring one with the standard mapping. */
-export function firstPad(pads) {
-  const list = [...(pads || [])].filter((g) => g && g.connected);
-  return list.find((g) => g.mapping === 'standard') || list[0] || null;
 }

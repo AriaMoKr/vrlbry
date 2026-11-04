@@ -1,3 +1,4 @@
+// @ts-check
 // File names in the static build (GitHub Pages, tools/build-pages.mjs, SPEC §4). Each URL path
 // segment is a file or folder of the same name, which Pages finds by decoding the request's path.
 // Some names cannot be files on every system (Windows: quotes in Wikipedia image names), so the

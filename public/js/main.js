@@ -1,7 +1,8 @@
 // Bootstrap (SPEC §5.7): renderer, camera rig, XR session, loading, frame loop.
 
 import * as THREE from 'three';
-import { getCatalog, getBooks, getVersion, rescan as requestRescan } from './api.js';
+import { getCatalog, getBooks, getVersion, getChunk, imageSource, rescan as requestRescan } from './api.js';
+import { TextView } from './ui/text-view.js';
 import * as localLibrary from './local/local.js';
 import { World } from './world/world.js';
 import { Controls } from './xr/controls.js';
@@ -14,7 +15,18 @@ import { handleStore, pickFiles, reopen, supportsHandles } from './local/handles
 import { fileNameOf, onKiwixMirror, zimUrl } from './local/zim-url.js';
 import { defaultLanguage, kiwixCatalog } from './local/kiwix.js';
 import { idbStore } from './local/idb-store.js';
-import { PLAYER, XR_FRAME_RATE } from './config.js';
+import { PLAYER, SCENE_LABEL, XR_FRAME_RATE } from './config.js';
+import { doorOf, wayOut } from './hallway.js';
+import { loadNav, NAV_KEY, navDefaults } from './nav.js';
+import { ACCESS_KEY, loadAccess, watchMotion } from '../vendor/common/access.js';
+import { Together } from './together.js';
+import { sessionText, spaceOf } from './together-space.js';
+import { roomFromUrl } from '../vendor/layersharedsession/room.js';
+import { leaveUrl } from '../vendor/common/door.js';
+import { placeFromSearch, placeHref } from './place-url.js';
+import { BackHistory } from '../vendor/common/back-history.js';
+import { tvMode } from '../vendor/common/tv.js';
+import { LibraryRemote } from './ui/remote.js';
 import { collectionsFor, LOCAL_PLACE } from './rooms.js';
 import { perf } from './perf.js';
 import { copyText, debugReport, startErrorLog, noteError, saveFile, screenshot, screenshotName } from './debug-info.js';
@@ -23,7 +35,22 @@ import { parseScene, restoreScene, saveScene, savedScene } from './scene.js';
 
 startErrorLog(); // first: the debug report lists the page's last errors
 const params = new URLSearchParams(location.search);
-const overlay = new Overlay({ root: document.getElementById('overlay') });
+/** localStorage itself (the Hallway's keys are not under storage.js's prefix), or null where it cannot be read. */
+const localStore = () => {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+};
+// The way out: to the Hallway, or to the place that linked here naming itself (?back=, hallway.js).
+const way = wayOut(location.search);
+const overlay = new Overlay({ root: document.getElementById('overlay'), wayOut: way });
+// A TV (the Hallway's Android TV app, or ?tv=emulate: common's tv.js, SPEC §5.9): walked with its
+// remote (ui/remote.js), the card for the ten-foot view (style.css, html.tv), no VR.
+const tv = tvMode();
+document.documentElement.classList.toggle('tv', tv);
+overlay.setTV(tv);
 // Registered before anything can fail: the error screen offers the report too.
 overlay.onDebugInfo(async () => {
   const text = JSON.stringify(debugReport(window.__vrlbry, { overlay }), null, 2);
@@ -72,7 +99,7 @@ async function start() {
     overlay.setError('This browser cannot show 3D graphics (WebGL is unavailable).');
     throw err;
   }
-  renderer.setPixelRatio(Math.min(devicePixelRatio, Number(params.get('dpr')) || 2));
+  renderer.setPixelRatio(Math.min(devicePixelRatio, Number(params.get('dpr')) || 2)); // 2 at most, a TV's too (as the Hallway's)
   renderer.setSize(innerWidth, innerHeight);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.xr.enabled = true;
@@ -81,6 +108,9 @@ async function start() {
   // the GPU within budget; the reading position is central, where foveation does not blur.
   renderer.xr.setFramebufferScaleFactor(1.0);
   renderer.xr.setFoveation(0.5);
+  // The 3D view, named for a screen reader (the overlay's controls are the page's own elements).
+  renderer.domElement.setAttribute('role', 'img');
+  renderer.domElement.setAttribute('aria-label', SCENE_LABEL);
   document.getElementById('app').appendChild(renderer.domElement);
 
   const scene = new THREE.Scene();
@@ -114,18 +144,25 @@ async function start() {
   await new Promise((r) => setTimeout(r, 0)); // let the overlay paint before the heavy build
   // Online (a static build), a first visit opens the demo set when the site has it.
   if (catalog.static && !load('settings', {}).place) settings.place = 'demo';
+  // A link naming a place and room (place-url.js; the address names the room shown) opens there.
+  const linked = placeFromSearch(location.search, libraries);
+  if (linked) {
+    settings.place = linked.place;
+    if (linked.room) (settings.rooms ||= {})[linked.place] = linked.room;
+  }
   // The place saved last time: one of the libraries read from the web is not open yet (they are
   // reopened below), so the first build falls back, and openLocalFiles puts it back afterwards.
   const savedPlace = settings.place;
   const world = new World({ renderer, scene });
+  world.setDoor(doorOf(way)); // the door back, in the wall behind the spawn point (world/door.js)
   if (catalog.static) world.emptyText = ['No books here yet', 'This online version has no libraries yet'];
-  await world.build(collectionsFor(libraries, booksByLib, settings), { sort: settings.sort });
+  const firstShelved = collectionsFor(libraries, booksByLib, settings);
+  await world.build(firstShelved, { sort: settings.sort });
   const startPlace = settings.place; // what the first build shelved (savedPlace, or its fallback)
 
   const controls = new Controls({ renderer, camera, rig, scene, world, domElement: renderer.domElement });
-  controls.smoothMove = settings.smoothMove;
   controls.teleportTo(world.spawn.position, world.spawn.yaw);
-  const interaction = new Interaction({ renderer, scene, camera, rig, world, controls, overlay, libraries, booksByLib, settings });
+  const interaction = new Interaction({ renderer, scene, camera, rig, world, controls, overlay, libraries, booksByLib, settings, wayOut: way, nav: loadNav(localStore(), navDefaults(settings)), access: loadAccess(localStore()) });
   if (catalog.static) {
     // A build without a server (GitHub Pages, tools/build-pages.mjs): nothing to rescan.
     interaction.setStatic(true);
@@ -150,6 +187,23 @@ async function start() {
       overlay.showToast(`Could not start VR: ${err.message}`, 'error', 6000);
     }
   }
+  // The text view of the open book (ui/text-view.js, SPEC §5.8): on a screen only; entering VR
+  // closes it, so in a headset nothing changes.
+  const textView = new TextView({
+    root: document.getElementById('overlay'), interaction, getChunk, imageSource, tv,
+    announce: (text) => overlay.announce(text),
+    // Back to the button that opened it, or to the search once the book is put back (the button
+    // goes); on a TV to the 3D view, walking again.
+    returnFocus: (away) => (tv ? renderer.domElement : document.querySelector(away ? '.ov-search input' : '.ov-textview')),
+  });
+  interaction.textView = textView;
+  overlay.onTextView(() => textView.toggle());
+  overlay.setTextViewPref(settings.textView, (on) => {
+    settings.textView = on;
+    save('settings', settings);
+    if (on && interaction.state === 'read') textView.open();
+  });
+  renderer.xr.addEventListener('sessionstart', () => textView.close());
   renderer.xr.addEventListener('sessionstart', () => {
     overlay.hide();
     interaction.onPresentingChange();
@@ -171,6 +225,105 @@ async function start() {
   }
   interaction.onExitVR = () => renderer.xr.getSession()?.end();
   interaction.onReload = () => location.reload();
+  // The way out (hallway.js): leaving in VR, Quest Browser can keep the visitor in VR there, on
+  // this page's origin only (the Hallway takes a granted session, as this page does below).
+  // The shared session (together.js): joined when the address names a room (an invitation, or the
+  // Hallway's door), left for now while going out by the door, whose link carries the room on, and
+  // out of any once the visitor has left it (common's leaveUrl; its README, "Going in": keep `room`
+  // on every link back).
+  const together = new Together({ scene, camera, renderer, hands: () => controls.xrInputs });
+  interaction.together = together;
+  together.reduceMotion = interaction.reduced;
+  const wayOutUrl = () => leaveUrl(way, together.room);
+  const sessionNote = (text) => {
+    overlay.showToast(text, 'info', 4000);
+    if (renderer.xr.isPresenting) interaction.notice(text, '', 3);
+  };
+  together.onChange = () => {
+    // On a TV its invite as text, to type on a phone or a computer (nothing to copy it with there).
+    overlay.setSession(sessionText({ room: together.room, active: together.active, company: together.active ? together.company() : {} }), tv ? together.inviteLink : '');
+    overlay.setWayOutHref(wayOutUrl());
+    interaction.sessionChanged();
+  };
+  together.onNotice = sessionNote;
+  const leaveSession = () => {
+    together.stop();
+    sessionNote('You left the shared session');
+  };
+  overlay.onLeaveSession(leaveSession);
+  interaction.onLeaveSession = leaveSession;
+  interaction.onLeaving = () => together.pause();
+  interaction.onCameBack = () => together.resume();
+  // Leaving another way (the card's link, the address bar, closing the tab): out of it too.
+  addEventListener('pagehide', () => together.pause());
+  interaction.onHallway = () => { location.href = wayOutUrl(); };
+  together.onChange(); // the card's link: out of any session until one is joined
+  // Back from there with the browser's Back, this page restored from its cache as it was left (dark,
+  // in the doorway): in front of the door again.
+  // The Hallway's movement choice may have changed there meanwhile, or in another tab (nav.js).
+  addEventListener('pageshow', (e) => {
+    if (!e.persisted) return;
+    interaction.setNav(loadNav(localStore(), navDefaults(settings)), { store: false });
+    interaction.setAccess(loadAccess(localStore()), { store: false });
+    interaction.cameBack();
+    together.resume();
+  });
+  addEventListener('storage', (e) => {
+    if (e.key === NAV_KEY) interaction.setNav(loadNav(localStore(), navDefaults(settings)), { store: false });
+    if (e.key === ACCESS_KEY) interaction.setAccess(loadAccess(localStore()), { store: false });
+  });
+  // The accessibility settings (common's access.js, every site's): the help dialog's choices, and
+  // the system's reduced-motion preference changing while motion follows it.
+  overlay.onAccess((change) => interaction.setAccess({ ...interaction.access, ...change }));
+  watchMotion(() => interaction._applyAccess());
+  // The browser's Back (its button, a phone's back gesture, Quest Browser's) along the links
+  // followed in a book, as the toolbar's ↩ Back, then putting the book away (common's
+  // back-history.js). Its fields keep the names vrlbry's own copy gave them (prefix), so the
+  // entries already in visitors' tabs stay its own.
+  const backHistory = new BackHistory({
+    history, load: performance.timeOrigin,
+    onBack: (depth) => interaction.backTo(depth),
+    onAway: () => interaction.putAway(),
+    prefix: 'vrlbry',
+  });
+  interaction.backHistory = backHistory;
+  // The book's buttons in the card (a TV's, for the letter keys a remote has not got).
+  overlay.onBookKey((key, code) => interaction.pressKey(key, code));
+  // A TV's remote (SPEC §5.9): OK the gamepad's A at the middle of the view, the aim dot shown
+  // without a pad, up and down scrolling the list the dot is on, Back one step back
+  // (interaction.step), and the app asking the page what Back and Menu do (answerApp).
+  if (tv) {
+    const remote = new LibraryRemote({ canvas: renderer.domElement, overlay, textView, interaction });
+    remote.answerApp(tv);
+    interaction.tv = true;
+    controls.aimMiddle = true;
+    controls.scrollKey = (dir) => interaction.scrollUnderDot(dir);
+    controls.onPadBack = () => remote.padBack();
+    renderer.domElement.setAttribute('aria-describedby', 'ov-hint'); // what the remote does now
+  }
+  // The address names the place and room shown (place-url.js), replaced as they change (no history
+  // entry per room), so it can be bookmarked, shared or reloaded. Back and Forward can land on an
+  // entry from before the last change (a book's, a link's, the page's): its address is put right.
+  let shown = null;
+  const nameShown = () => {
+    const href = shown && placeHref(location.href, shown.place, shown.room);
+    if (href && href !== location.href) {
+      try { history.replaceState(history.state, '', href); } catch { /* an address that cannot change (a sandbox) */ }
+    }
+  };
+  const showPlace = (place, room) => {
+    together.setSpace(spaceOf(place, room)); // where in the library, for the shared session
+    shown = { place, room };
+    nameShown();
+  };
+  addEventListener('popstate', (e) => {
+    backHistory.popstate(e.state);
+    nameShown();
+  });
+  interaction.onShelved = showPlace;
+  showPlace(settings.place, firstShelved.length === 1 ? firstShelved[0].room : null);
+  const invited = roomFromUrl(location.href);
+  if (invited) together.start(invited);
   // Scenes (scene.js): one saved in the browser (Save / Restore scene in the help dialog and on the
   // kiosk), or pasted into the help dialog (a saved scene or a debug report).
   const tell = (msg, kind = 'info') => {
@@ -433,7 +586,8 @@ async function start() {
         // Not for the site's own files: the place saved may come from another of the sites that
         // share this origin (the same ZIM opened there has the same id), and a first visit of the
         // main site then showed Golf alone instead of its Demo set.
-        const back = reopening && !site && savedPlace !== startPlace && settings.place === startPlace
+        // The site's own files do count when the address names one of them (place-url.js).
+        const back = reopening && (!site || linked?.place === savedPlace) && savedPlace !== startPlace && settings.place === startPlace
           && (savedPlace === LOCAL_PLACE.id ? added.length > 1 : added.some((r) => r.id === savedPlace));
         if (back) settings.place = savedPlace;
         else if (!reopening) settings.place = added.length > 1 ? LOCAL_PLACE.id : added[0].id;
@@ -683,7 +837,7 @@ async function start() {
   }, 10000);
   // A local library's index finished (a Wikipedia file opened here): its books are there now.
   localLibrary.onChange(refreshCatalog);
-  if (navigator.xr?.isSessionSupported) {
+  if (!tv && navigator.xr?.isSessionSupported) {
     navigator.xr.isSessionSupported('immersive-vr').then((ok) => overlay.setVRSupported(ok)).catch(() => overlay.setVRSupported(false));
   }
 
@@ -692,6 +846,7 @@ async function start() {
     camera.aspect = innerWidth / innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(innerWidth, innerHeight);
+    interaction.onResize(); // an open book: one page upright, two across ('auto')
   };
   addEventListener('resize', resize);
   renderer.xr.addEventListener('sessionend', resize);
@@ -702,6 +857,7 @@ async function start() {
     controls.update(dt);
     interaction.update(dt);
     world.update(dt, camera);
+    together.update(performance.now()); // the others in the session, and where this visitor is
   };
   renderer.setAnimationLoop((time) => {
     const start = perf.enabled ? performance.now() : 0;
@@ -712,9 +868,18 @@ async function start() {
     renderer.render(scene, camera);
     if (perf.enabled) perf.afterFrame(time, start, renderer.info.render);
   });
+  // Walked in from another page's immersive session (a door of the Hallway): Quest Browser grants
+  // this page a session without a click (sessiongranted; index.html notes one that came while the
+  // library was loading), taken as the Enter VR button would, so the visitor stays in VR. A grant
+  // lasts ~5 s from the page's start (SPEC §5.7), so the startup above must stay well within that.
+  const takeGranted = () => { if (!session && !renderer.xr.isPresenting) enterVR(); };
+  if (!tv) {
+    if (window.vrlbryXrGranted) takeGranted();
+    navigator.xr?.addEventListener?.('sessiongranted', takeGranted);
+  }
 
   window.__vrlbry = {
-    renderer, scene, camera, rig, world, controls, interaction, overlay, xrDevice, settings, enterVR,
+    renderer, scene, camera, rig, world, controls, interaction, overlay, xrDevice, settings, enterVR, together,
     /** When the site's files last changed as of this page load (GET /api/version), or null. */
     get version() { return loadedVersion; },
     /** Advances the app by n frames of dt seconds and renders (for automated tests). */

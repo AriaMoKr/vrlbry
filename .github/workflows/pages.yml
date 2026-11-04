@@ -13,9 +13,10 @@
 # cache by earlier runs and the assets of its release "indexes" (built on a PC: node
 # tools/build-indexes.mjs --zims <folder>, then gh release upload indexes .indexes/*.json
 # --clobber), less old editions, as many as fit in the site's budget (950 MB in all: Pages
-# publishes at most 1 GB), the smallest first. With "prebuilt indexes" ticked, the missing ones are
-# first built here from Kiwix's mirror (up to 5 h). None of it is needed: without an index a big
-# Wikipedia from the web is listed as needing one, and every ZIM still opens from a file.
+# publishes at most 1 GB), the smallest first. The missing ones are built from Kiwix's mirror by
+# another workflow, indexes.yml (by hand, up to 5 h), apart from this one so that a push is
+# published at once; it starts this one when it has new ones. None of it is needed: without an
+# index a big Wikipedia from the web is listed as needing one, and every ZIM still opens from a file.
 #
 # The edge proxy (tools/zim-proxy/, optional): with the repository variable ZIM_PROXY set to its
 # address, the page reads Kiwix's files through it, from the mirror nearest each visitor.
@@ -30,11 +31,6 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
-    inputs:
-      prebuilt_indexes:
-        description: Also build the missing prebuilt indexes (tools/indexes.txt) from Kiwix's mirror (up to 5 hours)
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -49,12 +45,12 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 345
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - run: npm ci
       - run: npm test
@@ -79,7 +75,7 @@ jobs:
         env:
           ZIM_PROXY: ${{ vars.ZIM_PROXY }}
         run: npm run build:pages -- --zims .demo/render --zim-files .demo/files ${ZIM_PROXY:+--zim-proxy "$ZIM_PROXY"}
-      # Prebuilt indexes: the cache of earlier runs, the release's assets, and (by hand) new builds.
+      # Prebuilt indexes: the cache (indexes.yml's builds) and the release's assets.
       - uses: actions/cache/restore@v6
         with:
           path: .indexes
@@ -92,19 +88,10 @@ jobs:
           mkdir -p .indexes
           gh release download indexes --repo "$GITHUB_REPOSITORY" --dir .indexes --pattern '*.v*.json' --skip-existing \
             || echo "No release \"indexes\" (or nothing new in it)."
-      # Optional: a build that fails (or Kiwix's catalogue out of reach) does not stop the deploy.
-      - name: Build the missing prebuilt indexes from Kiwix's mirror
-        if: inputs.prebuilt_indexes
-        continue-on-error: true
-        run: node tools/build-indexes.mjs --out .indexes --web --hours 5
+      # Kiwix's catalogue out of reach does not stop the deploy.
       - name: Drop the indexes of editions no longer current
         continue-on-error: true
         run: node tools/build-indexes.mjs --out .indexes --prune
-      - if: inputs.prebuilt_indexes && !cancelled()
-        uses: actions/cache/save@v6
-        with:
-          path: .indexes
-          key: indexes-${{ github.run_id }}
       - name: Ship the prebuilt indexes (as many as fit)
         run: |
           node tools/build-indexes.mjs --out .indexes --ship dist --budget-mb 950

@@ -1,3 +1,4 @@
+// @ts-check
 // Prebuilt indexes for the local library (SPEC §2.6): a site can ship the index of a ZIM under
 // indexes/<name> (the name the core gives it, with the ZIM's UUID: core/wikipedia.js and
 // core/wikisource.js indexName; tools/build-pages.mjs --indexes writes them), so that opening

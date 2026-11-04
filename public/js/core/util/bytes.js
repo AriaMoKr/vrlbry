@@ -1,3 +1,4 @@
+// @ts-check
 // Little-endian integer reads and byte comparisons on plain Uint8Arrays (Buffer's readUInt32LE
 // and friends are Node-only). 64-bit values are Numbers, exact below 2^53.
 

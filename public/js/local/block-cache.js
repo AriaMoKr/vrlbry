@@ -1,3 +1,4 @@
+// @ts-check
 // A persistent cache of what was read from the web (milestone 3, step 4; optional): every read of
 // a remote ZIM kept in IndexedDB, so a library, book or search read once costs no network again,
 // after a reload too. The browser's own HTTP cache already serves reads made one at a time on a

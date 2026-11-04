@@ -1,10 +1,15 @@
 // The third-party modules the browser loads from /vendor/<name>/ (the server maps node_modules;
-// tools/build-pages.mjs copies what the client imports): three and IWER for the page, and for the
-// local library's worker (public/js/local/) htmlparser2, entities, fzstd and fflate.
+// tools/build-pages.mjs copies what the client imports): three and IWER for the page, for the
+// local library's worker (public/js/local/) htmlparser2, entities, fzstd and fflate, for the
+// Hallway's door contract (public/js/hallway.js, nav.js) common, and for a shared session
+// (public/js/together.js) layersharedsession and Trystero (its Nostr strategy, the core it runs on,
+// and noble's secp256k1), the Hallway's.
 //
 // A module worker has no import map, so a vendor module's bare imports must become relative URLs:
-// rewriteVendorImports does that for the ones the worker reaches (htmlparser2's Tokenizer imports
-// "entities/decode"), when the server serves a file and when the build copies it.
+// rewriteVendorImports does that for the ones the worker and the session reach (htmlparser2's
+// Tokenizer imports "entities/decode", layersharedsession "trystero"), when the server serves a
+// file and when the build copies it. The page names them by relative URL too, so the import map
+// stays three's.
 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,11 +25,20 @@ export const DEFAULT_VENDOR_DIRS = Object.freeze({
   entities: modules('entities'),
   fzstd: modules('fzstd'),
   fflate: modules('fflate'),
+  common: modules('common', 'src'),
+  layersharedsession: modules('layersharedsession', 'public', 'js'),
+  'trystero-nostr': modules('@trystero-p2p', 'nostr', 'dist'),
+  'trystero-core': modules('@trystero-p2p', 'core', 'dist'),
+  'noble-secp256k1': modules('@noble', 'secp256k1'),
 });
 
 /** Bare specifiers that vendor modules import, and the file they mean under /vendor/. */
 const BARE = Object.freeze({
   'entities/decode': 'entities/dist/decode.js',
+  // As the Hallway's import map has them (trystero is its Nostr strategy).
+  trystero: 'trystero-nostr/index.mjs',
+  '@trystero-p2p/core': 'trystero-core/index.mjs',
+  '@noble/secp256k1': 'noble-secp256k1/index.js',
 });
 
 /**

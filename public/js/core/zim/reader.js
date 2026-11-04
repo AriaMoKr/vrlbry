@@ -842,6 +842,18 @@ export class ZimArchive {
   }
 
   /**
+   * What an uncompressed cluster's offset table and blobs must lie within: the next cluster's
+   * start, or the file's end. A section start is no bound here: in ZIM 6.1 files libzim stores
+   * the title pointer list as the blob of X/listing/titleOrdered/v0, so the header's titlePtrPos
+   * lies inside that cluster (gutenberg_en_all_2023-08: right after its 9-byte head).
+   */
+  _clusterLimit(start) {
+    const b = this._boundaries;
+    for (let i = upperBound(b, start); i < b.length; i++) if (!this._sectionStarts.has(b[i])) return b[i];
+    return this.fileSize;
+  }
+
+  /**
    * The bytes a cluster occupies in the file (compression byte, offset table and blobs; the
    * compressed bytes of a compressed cluster), from the cluster pointers alone: no read. null
    * when it ends at a section start rather than at the next cluster (libzim writes the
@@ -893,16 +905,25 @@ export class ZimArchive {
       index: clusterIndex, start, end, comp, extended, compressed: comp > COMP_NONE, blobCount: 0,
       // false when the range runs up to a section start instead of the next cluster: then it may
       // include unrelated bytes, e.g. all directory entries (libzim writes them after the clusters).
+      // An uncompressed cluster's end is then taken from its offset table.
       exactEnd: !this._sectionStarts.has(end),
     };
     if (comp === COMP_NONE || comp === COMP_NONE_0) {
       const offSize = extended ? 8 : 4;
+      const corrupt = () => new ZimError(`${this.filePath}: cluster ${clusterIndex} has a corrupt offset table`);
       if (head.length < 1 + offSize) throw new ZimError(`${this.filePath}: cluster ${clusterIndex} is truncated`);
       const first = readOffset(head, 1, extended);
-      if (first % offSize !== 0 || first < offSize || start + 1 + first > end) {
-        throw new ZimError(`${this.filePath}: cluster ${clusterIndex} has a corrupt offset table`);
-      }
+      const limit = info.exactEnd ? end : this._clusterLimit(start);
+      if (first % offSize !== 0 || first < offSize || start + 1 + first > limit) throw corrupt();
       info.blobCount = first / offSize - 1;
+      if (!info.exactEnd) {
+        // The section start may lie past its end or inside it (a ZIM 6.1 title pointer list:
+        // _clusterLimit): its last offset says where it ends (a read the block cache mostly serves).
+        const last = readOffset(await this._read(start + 1 + first - offSize, offSize), 0, extended);
+        if (last < first || start + 1 + last > limit) throw corrupt();
+        info.end = start + 1 + last;
+        info.exactEnd = true;
+      }
     } else if (comp !== COMP_ZLIB && comp !== COMP_BZIP2 && comp !== COMP_XZ && comp !== COMP_ZSTD) {
       throw new ZimError(`${this.filePath}: cluster ${clusterIndex} has unknown compression type ${comp}`);
     }

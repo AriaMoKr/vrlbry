@@ -105,7 +105,7 @@ describe('debug info', () => {
       state: 'read', place: 'demo', room: null, sort: 'title', bookcases: 6,
       viewpoint: { x: 1.25, z: -3.5, eye: 1.6, yaw: 0.785, pitch: -0.1 },
     });
-    assert.deepEqual(r.book, { library: 'wp', id: 'v3', title: 'Banana – Éclair', at: 'page 5', anchor: { c: 2, b: 17 }, side: 'left' });
+    assert.deepEqual(r.book, { library: 'wp', id: 'v3', title: 'Banana – Éclair', at: 'page 5', anchor: { c: 2, b: 17 }, side: 'left', pages: 2 });
     // The dialogs: the page's menus (as when the help was opened) and the 3D panels.
     assert.deepEqual(r.ui, {
       page: { card: 'collapsed', search: { q: 'ban', open: true }, update: false, loading: null, toasts: [] },

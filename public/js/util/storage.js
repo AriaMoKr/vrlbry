@@ -1,3 +1,4 @@
+// @ts-check
 // Namespaced JSON localStorage. Storage can be unavailable (private mode, blocked site data,
 // quota) — every access is guarded and falls back silently.
 

@@ -1,3 +1,4 @@
+// @ts-check
 // Background index builds (Wikipedia, Wikisource) one at a time, the smallest archive first.
 // Builds share the server's main thread (the directory scan) and libuv's threads (decompression),
 // so running them together only slows each one down: re-indexing 8 Wikipedias at once took

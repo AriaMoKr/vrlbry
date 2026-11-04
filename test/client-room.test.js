@@ -1,9 +1,12 @@
 // Laser stops (public/js/world/room.js raycast): rays from inside a room end at its walls, dome
-// or ceiling, floor and furniture. The rooms are built in Node with a stub canvas.
+// or ceiling, floor and furniture; and the sky in its windows. The rooms are built in Node with a
+// stub canvas.
 
 import assert from 'node:assert/strict';
 import { before, describe, it } from 'node:test';
 import * as THREE from 'three';
+import { SUN_DIR } from 'common/sky.js';
+import './helpers/vendor.js'; // room.js imports ../../vendor/common/sky.js
 
 /** A canvas whose 2D context accepts every call (as in client-lod.test.js). */
 function stubCanvas() {
@@ -27,9 +30,11 @@ function stubCanvas() {
 let createRotunda;
 let createHall;
 let WALL_H;
+let rotundaSkyYaw;
+let roomMaterials;
 before(async () => {
   globalThis.document ??= { createElement: (tag) => (tag === 'canvas' ? stubCanvas() : {}) };
-  ({ createRotunda, createHall, WALL_H } = await import('../public/js/world/room.js'));
+  ({ createRotunda, createHall, WALL_H, rotundaSkyYaw, roomMaterials } = await import('../public/js/world/room.js'));
 });
 
 const ray = (o, d) => new THREE.Ray(new THREE.Vector3(...o), new THREE.Vector3(...d).normalize());
@@ -60,5 +65,31 @@ describe('laser stops', () => {
     near(room.raycast(ray([1, 1.6, 0], [0, 1, 0])), WALL_H - 1.6, 'ceiling');
     near(room.raycast(ray([1, 1.6, 0], [0, -1, 0])), 1.6, 'floor');
     near(room.raycast(ray([0, 0.5, 0], [0, 0, 1])), 2 - 0.32, 'the kiosk stand');
+  });
+});
+
+describe('the sky in the windows', () => {
+  // Where the sun stands in a room turned by yaw: its bearing from -z toward +x (common's README).
+  const sunBearing = (yaw) => Math.atan2(SUN_DIR[0], -SUN_DIR[2]) - yaw;
+  const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+
+  it('puts the rotunda\'s low sun beside its window most to the left, one sky for all its glass', () => {
+    // Windows either side of the bookcases ahead (angle 0) and the door behind (π).
+    const angles = [1.3, 2 * Math.PI - 1.3, 2.2, 2 * Math.PI - 2.2];
+    const yaw = rotundaSkyYaw(angles);
+    assert.ok(Math.abs(wrap(sunBearing(yaw)) - (-1.3 + 0.12)) < 1e-9, 'beside the left window nearest -90°');
+    assert.equal(rotundaSkyYaw([]), 0);
+    const room = createRotunda({ R: 6, windowAngles: angles, kiosk: null });
+    const sky = roomMaterials().sky;
+    assert.equal(sky.uniforms.uYaw.value, yaw);
+    const glass = room.group.getObjectByName('windows');
+    const skyUsers = [];
+    room.group.traverse((o) => { if (o.material === sky) skyUsers.push(o); });
+    assert.ok(glass && skyUsers.includes(glass) && skyUsers.length === 2, 'the windows\' glass and the oculus');
+  });
+
+  it('lays the hall out as the garden is', () => {
+    createHall({ minX: -5, maxX: 5, minZ: -20, maxZ: 2, kiosk: null });
+    assert.equal(roomMaterials().sky.uniforms.uYaw.value, 0);
   });
 });

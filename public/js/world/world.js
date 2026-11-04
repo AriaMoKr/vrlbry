@@ -12,8 +12,10 @@ import { Bookshelves, bookcasesNeeded, packBookcases, prefixForBookcases, rangeL
 import { createRotunda, createHall, disposeRoom } from './room.js';
 import { canvasTexture } from './canvas-texture.js';
 import { makeSignCanvas } from './textures.js';
+import { Door, doorCorridor, windowAnglesBesideDoor } from './door.js';
 
 const CASE_GAP = 0.06; // between neighbouring bookcases
+const _corridor = { x: 0, z: 0 };
 const SIGN_DEPTH = 0.025;
 
 /**
@@ -74,6 +76,19 @@ export class World {
     this.sections = [];
     this._colliders = [];
     this._footprints = [];
+    /** The door back (door.js), made on the first build once setDoor has said where it leads. */
+    this.door = null;
+    /** With less motion (interaction.js, common's reduceMotion): the door's shimmer is held. */
+    this.reducedMotion = false;
+    this._doorSpec = null;
+  }
+
+  /**
+   * Where the door back leads and what it says (hallway.js doorOf), before the first build; every
+   * room then has it in the wall behind the spawn point.
+   */
+  setDoor(spec) {
+    this._doorSpec = spec;
   }
 
   /**
@@ -143,8 +158,9 @@ export class World {
     const half = n ? (n * da) / 2 + 0.5 / R : 0;
     const free = 2 * Math.PI - 2 * half;
     const count = Math.max(2, Math.floor((free * R) / 2.3));
-    const windowAngles = [];
-    for (let i = 0; i < count; i++) windowAngles.push(half + ((i + 0.5) / count) * free);
+    // With the door back, not where it and its plaque stand (behind the spawn point).
+    const windowAngles = this._doorSpec ? windowAnglesBesideDoor(half, R) : [];
+    if (!this._doorSpec) for (let i = 0; i < count; i++) windowAngles.push(half + ((i + 0.5) / count) * free);
 
     this.spawn = { position: new THREE.Vector3(0, 0, Math.min(1.6, R * 0.35)), yaw: 0 };
     const kp = new THREE.Vector3(Math.min(1.45, R * 0.36), 0, this.spawn.position.z - 1.4);
@@ -187,6 +203,15 @@ export class World {
     this.group.add(this.room.group);
     this.teleportTargets = [this.room.floor];
     this._colliders = this.room.colliders;
+    if (this._doorSpec) {
+      if (!this.door) {
+        this.door = new Door(this._doorSpec);
+        // The Hallway's own picture of the view from its door, when it can be read.
+        if (this._doorSpec.views) this.door.loadView(this._doorSpec.views, this._doorSpec.viewId);
+        this.group.add(this.door.group);
+      }
+      this.door.setRoom(this.room);
+    }
   }
 
   _makeSigns(cases) {
@@ -264,6 +289,8 @@ export class World {
   constrain(from, to, radius = PLAYER.radius) {
     const p = to.clone();
     if (!this.room) return p;
+    // Straight into the doorway (door.js): between its jambs, past where the wall would stop a walk.
+    if (this.door?.place && doorCorridor(this.door.place, to.x, to.z, _corridor)) return p.set(_corridor.x, to.y, _corridor.z);
     for (let iter = 0; iter < 3; iter++) {
       this.room.boundary(p, radius);
       for (const c of this._colliders) {
@@ -314,6 +341,7 @@ export class World {
   update(dt, camera) {
     this.room?.update(dt);
     this.shelves.update(dt, camera);
+    this.door?.update(dt, camera, this.reducedMotion);
   }
 
   dispose() {

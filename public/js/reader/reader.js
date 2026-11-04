@@ -330,6 +330,13 @@ export class BookReader {
     return { c: r.c, b: page ? page.firstBlock : 0 };
   }
 
+  /** The blocks on a page whose layout is known, { first, last } (some of each), or null. */
+  blocksOn(ref) {
+    if (!ref || typeof ref !== 'object') return null;
+    const page = this._knownPage(this._clampRef(ref));
+    return page ? { first: page.firstBlock, last: page.lastBlock } : null;
+  }
+
   /** Page containing the start of block b of chunk c. */
   async refForAnchor(anchor) {
     await this.load();

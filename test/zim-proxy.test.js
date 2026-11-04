@@ -355,7 +355,7 @@ describe('naming the proxy (zim-url.js, build-pages --zim-proxy)', () => {
     assert.equal(zimProxyOf(page('https://site.example/app/?zimproxy=https://q.example/', 'https://p.example/')), 'https://q.example/', 'the address\'s first');
     assert.equal(zimProxyOf(page('https://site.example/app/?zimproxy=off', 'https://p.example/')), null);
     assert.equal(zimProxyOf(page('https://site.example/app/', 'http://p.example/')), null, 'not over http');
-    assert.equal(zimProxyOf(page('http://localhost:8080/?zimproxy=http://localhost:8090')), 'http://localhost:8090/', 'one on this machine, for trying');
+    assert.equal(zimProxyOf(page('http://localhost:8080/?zimproxy=http://localhost:8094')), 'http://localhost:8094/', 'one on this machine, for trying');
     assert.equal(zimProxyOf(page('https://site.example/app/', 'proxy/')), 'https://site.example/app/proxy/', 'relative to the page');
     assert.equal(zimProxyOf(page('https://site.example/', 'https://[bad')), null);
     assert.equal(zimProxyOf({}), null, 'no page (a worker, Node)');
@@ -378,6 +378,6 @@ describe('naming the proxy (zim-url.js, build-pages --zim-proxy)', () => {
     assert.equal(zimProxyMeta(once, 'https://q.example/a?b=1&c="2"').match(/vrlbry-zim-proxy/g).length, 1, 'replaced, not added');
     assert.match(zimProxyMeta(html, 'https://q.example/a?b=1&c="2"'), /content="https:\/\/q\.example\/a\?b=1&amp;c=%222%22"/);
     assert.throws(() => zimProxyMeta(html, 'http://p.example/'), /https/);
-    assert.doesNotThrow(() => zimProxyMeta(html, 'http://localhost:8090/'));
+    assert.doesNotThrow(() => zimProxyMeta(html, 'http://localhost:8094/'));
   });
 });

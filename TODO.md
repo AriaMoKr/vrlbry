@@ -145,9 +145,30 @@
      physics, sociology, tennis), so on 2026-10-17 32 of the 67 open (15 by the site's index, 17
      built in the browser) and those 11 maxis (8.2 GB) need building again. Topics are
      republished every three months or so, so keeping up means a run per batch of new editions
-     (the release holds what outlives the 7-day Actions cache).
+     (the release holds what outlives the 7-day Actions cache). *Second run (2026-10-18, its
+     full 5 hours):* the 11 October maxis built again, and 7 nopics and minis with them (step
+     3), so the site ships 35 indexes and 50 of the 67 open (33 by the site's index, 17 built in
+     the browser), every selection by at least one flavour. The 19 new indexes (9.3 MB) go
+     into the release.
   3. The nopic and mini flavours later, if at all: they help those who downloaded such a copy
      and open it from their device (the site's index saves them a build in the browser).
+     *Started (2026-10-18):* the second run above built Medicine nopic, the top and top 1M minis
+     and nopics, and Simple English's mini and nopic. Left in `tools/indexes.txt`: 14 topic
+     nopics and Wikisource's nopic (15 files, 14.8 GB), about one more run. The full English
+     mini and nopic (14 and 53 GB) are not listed. *Third run (2026-10-18, its full 5 hours):*
+     built nothing. Wikisource's nopic came first among those left and did not finish from
+     Kiwix's mirror in 5 hours (the first run had ended on it too), and a Wikisource build has no
+     checkpoint, so each run starts it again from nothing and the 14 topic nopics after it never
+     come. It is now last in `tools/indexes.txt`; to build from a downloaded copy (`--zims`, a
+     few minutes) and upload. Possibly later: a checkpoint for Wikisource builds, as Wikipedia's
+     sizes pass has. *Then (2026-10-18):* Wikisource's nopic built here from a downloaded
+     copy (108 s, 3.0 MB) and uploaded. The builds now have a workflow of their own
+     (`indexes.yml`), apart from the deploys, which a run of 5 hours held back (a push waited for
+     it), and they go the quickest first (`buildOrder`: Wikipedias by article count, Wikisources
+     last), whatever the list's order. *Fourth run (2026-10-18, the first of `indexes.yml`):* built all 14 topic
+     nopics in 2 h 36 min, saved them in the cache and deployed: the site ships 50 indexes, and
+     every edition in `tools/indexes.txt` has one. The 14 (3.1 MB, taken from the site) go into the
+     release.
   4. New editions rebuilt by the workflow when Kiwix's catalogue lists them, so the shipped
      indexes do not go stale one by one.
 - **URL parameters for testing, and for settings** (asked 2026-10-11). Today there are a few,
@@ -160,6 +181,8 @@
     the page working without it.
   - *Opening straight into a place:* a given library (by id or ZIM name), room (genre, letter,
     page), sort, and a number of books (only the first n of a library; `?roomcap=` caps a room).
+    *Place and room done (2026-10-18):* `?place=<id>&genre=&letter=&page=`, which the address
+    now shows as the room changes (`place-url.js`); a link opens there. Left: sort, the first n.
   - *What the page keeps (asked 2026-10-11), three switches:* ignore it (read nothing, write
     nothing: every load is a first visit, and nothing of it stays), read but do not write (try
     things on top of the saved state without changing it: `util/storage.js` `freezeStorage` from
@@ -233,6 +256,216 @@
   (`quest-perf dump` does not; `run`'s read scenario does). Ideas: smaller layout steps while in
   VR, drawing pages in a worker on an OffscreenCanvas (as the spine atlases are), and showing
   the first spread before the rest of the first chunk is laid out.
+- **Reading: a single-page view** (asked 2026-10-18). *Done (2026-10-18; SPEC §5.6 "One page or
+  two", `reader/spreads.js`):* one page at a time, the page alone (the book's left half hidden
+  once open, not a blank page beside it: asked 2026-10-18); a turn is the book's own leaf turn, one
+  page at a time, the page going as it passes edge-on (a sliding page would have needed a second
+  animation and looked wrong on a 3D book in VR). By
+  default on a flat screen taller than wide (`settings.pageView` 'auto'); the toolbar's "1 page" /
+  "2 pages" and P switch at the page being read, and an open book follows a phone turned. Page
+  counts, the saved place and the pool of 6 canvases are unchanged (a spread's left canvas holds
+  the blank). On a phone upright the page now fills ~90 % of the width (text ~1.9× as large as in
+  the spread); on a wide window it is ~1.7× as large. Fixed with it: on a phone the toolbar was
+  cut off at both sides and the contents were off the screen beside the book (now scaled to the
+  width and shown over the page). Left: try it on a real phone and on the Quest (whether VR
+  should default to it too).
+- **A door back to the Hallway** (asked 2026-10-18). A door in the library, like the
+  doors of the Hallway (https://ariamokr.github.io/hallway/), leading where the way out leads
+  (`hallway.js` `wayOut`): the Hallway (`?from=vrlbry`, so the visitor arrives at this library's
+  door) unless the link that brought them names another place (`?back=`, `?backname=`), its name
+  then on the door. Through it in VR the visitor stays in VR (one origin: SPEC §5.7). To look at
+  first: the Hallway's door (frame, sign, how it is entered: walked through or clicked) and where
+  one fits in the rotunda and in the hall.
+  *Done (2026-10-18; SPEC §5.3 "The door", §5.6):* `world/door.js` and the Hallway's portal
+  shader (`world/portal.js`), against the wall behind the spawn point in both room shapes, a
+  painted view down the Hallway through it, its plaque and sign in the Hallway's enamel; walked
+  through, clicked or triggered, it fades and leaves (`interaction.leave`), and Back to a cached
+  page puts the viewer in front of it again. Checked in the browser (both rooms, pointing, walking
+  in, coming back) and on a Quest 3 (`quest-perf handover` through `leave`: 2 of 2 in VR). Not yet
+  looked at in the headset by a person, nor measured with `quest-perf run`. *The view through it (2026-10-18):* the
+  Hallway now renders and publishes the view out of each of its doors (AriaMoKr/hallway,
+  `tools/door-views.mjs`, `views/views.json`), and the door shows vrlbry's (across the hall to the
+  door opposite, as one would see it standing in that doorway); the painted view stays for when it
+  cannot be read. To do there when the hall changes: run its tool again.
+- **The Hallway's door contract, the rest** (its README, "Going in"; reported 2026-10-19).
+  *Done (2026-10-19):* the way back from the Hallway's door says Hallway and shows its view
+  (`hallway.js`); the VR movement choice is the Hallway's `hallway.nav`, shared both ways
+  (`nav.js`, with smooth turning and left-stick teleporting); the shared session (`room`) is
+  joined and the others in the same room of the library are drawn (`together.js`, SPEC §5.6
+  "Together"), and the way out carries it on. Checked in the emulator and in two browser tabs
+  (join, avatars from the other tab's pose, rooms apart, Leave, leaving and coming back). Not
+  yet: in two headsets; starting a session here and an invite link (the Hallway's panel does
+  it); names and waves (the Hallway's); the arrival pose the door sends (`dx`, `yaw`, `pitch`:
+  arriving where the view through the door was taken), and taking the visit's parameters off
+  the address once read (`back` is kept, as the way out reads it on a reload).
+  *Shared packages (2026-10-21):* the door contract and the movement choice now come from
+  AriaMoKr/common v0.1.0 (`door.js` `wayBack`, `hallwayViews`, `leaveUrl`; `nav.js`), the
+  avatars from layersharedsession v0.2.0 (`avatars.js`), and the door id is one constant
+  (`config.js` `DOOR_ID`). `leaveUrl` also fixed the way out after Leave, which kept the room the
+  Hallway's link had. Still for later: common's `readVisit` (the arrival pose) and `withoutVisit`.
+  *common v0.2.0 (2026-10-21):* the door's portal is common's (`portal.js`, `setView`;
+  `world/portal.js` gone) and the gamepad's pieces too (`gamepad.js`; vrlbry's `readPad` stays).
+  Checked in the browser: the Hallway's view through the door, its veil and glow; a stand-in pad
+  walking, looking, its dead zone and A.
+  *common v0.3.0 (2026-10-22):* the windows and the oculus show its afternoon sky (`sky.js`), the
+  candles as they were. On a Quest 3, the same scenarios before and after (a synthetic 500-book
+  library for the rotunda with windows): rotunda idle 70.5 → 71.2 fps (dropped 2.2 → 1.2 %), hall
+  walk 71.6 → 71.7, all-libraries idle 68.3 → 69.0, all-libraries walk 72 → 72: one run each, no
+  cost. Painting the panorama: 45-68 ms there, once. `public/social.jpg` and
+  `docs/social-preview.jpg` taken again (2026-10-23): the same aisle, the afternoon in its window.
+  *common v0.4.0 (2026-10-23):* the comfort settings (`access.js`, `hallway.access`) on the kiosk
+  and in the help dialog; less motion cuts the eased moves, blinks the fades and holds the door's
+  shimmer (the cover and page turns still move, as chosen); the vignette from smooth walking and
+  turning; seated lifts the eye in VR. Checked in the browser and the emulator, and a Hallway
+  choice holds after a reload. On a Quest 3 with the vignette forced fully closed all the time:
+  rotunda idle 71.1 fps (dropped 1.2 %), hall walk 71.7 (0.4 %), all-libraries walk 72 (0 %),
+  the same as without it. (A first run, in a long session, showed the hall walk at 60 fps and
+  16.6 % dropped; repeated on a fresh page with the vignette still closed, it was 71.7 and 0.4 %.)
+  *common v0.5.0 and layersharedsession v0.3.0 (2026-10-25):* the browser's Back is common's
+  `BackHistory` (`prefix: 'vrlbry'`, so the entries in visitors' tabs stay its own; vrlbry's
+  own tests passed against it before they went), and the shared session the layer's controller
+  (`createTogether`), vrlbry's `together.js` keeping its space, its words and `setSpace`.
+  quest-perf's `--cdp` became `--desktop`: a Chrome window of its own (common's
+  `launchChrome`), drawing while covered (Chrome otherwise counts a covered window hidden: the
+  first run waited for frames), closed at the end, also on Ctrl+C now (and the headset's sensor
+  given back). The Pages and indexes workflows run on Node 24. Checked in the browser: Back
+  with a book out and a link followed (the real button); two tabs in one session (in one room of
+  the library each draws the other and counts them here; in different rooms neither is drawn,
+  and each counts the other "elsewhere in the library"); `quest-perf status` and `run --only
+  small-idle --desktop` (59.7 fps), the bad-password count 0 before and after. A profile can
+  outlive `close()` when Chrome's helpers still hold its files (in `C:\msys64\tmp` under MSYS2,
+  which nothing cleans).
+- **Phones and screen readers** (reported 2026-10-23; done the same day). The library card did not
+  scroll on a phone held sideways (667 × 375: 405 px tall on 375), so its last links were cut off;
+  it now scrolls within the screen and, on a short screen, stops above the buttons at the foot,
+  beside a search box that no longer covers it. The search box is a combobox with a polite result
+  count, so a screen reader hears the highlighted result as the arrow keys move it. Checked at
+  667 × 375 (every control in the card reachable and uncovered, axe clean) and 375 × 667, and in
+  the accessibility tree ("Chemistry": "14 results", ArrowDown through each).
+- **The text view** (requested 2026-10-23; done the same day; SPEC §5.8). The open book's part as a
+  page of text on a screen: T, "Text view", or "Open books as text" in the help. It shares the
+  reader's place with the 3D book: the 3D book follows the view's scrolling once it rests, so
+  closing, a size, Back or a turn start from where the reader is. T now opens it, C (and a pad's
+  X) the contents.
+  - Checked in the browser:
+    - a keyboard-only walk from the search box: open, T, a link and ↩ Back, the contents (1000
+      articles, focus on the current one), Previous and Next part, PageDown, A+, the themes, Esc,
+      and Put back (focus to the search box);
+    - axe clean in paper, sepia and night, with and without the contents;
+    - no sideways scroll at 320 × 568 (a two-row toolbar) or at 320 × 200 (400 % zoom; the
+      toolbar slides away);
+    - Enter VR closes it.
+  - Not yet: a real screen reader (NVDA, VoiceOver, TalkBack), and a phone in the hand.
+  - The saved position is still the 3D page's first block, so a reload opens the view at the top
+    of that page, not at the exact block.
+  - Fixed 2026-10-24: the place landed under the toolbar on opening (about three lines hidden),
+    since the toolbar's height was read while the view was hidden (0); it is now set before each
+    jump. And a book picked from the search is said ("…, in your hands. Enter reads it, T as
+    text, Esc puts it back."), and T reads it straight into the view. Checked with the keys on
+    "The Principles of Language-Study": the place starts at the toolbar's edge on a first opening
+    and on reopening.
+- **The browser's Back puts the book away** (requested 2026-10-24; done the same day; SPEC §5.6,
+  "Links"). A book leaving its shelf now adds a history entry of its own under the links' ones,
+  so Back goes back along the links followed and then puts the book away (it left the page
+  before). Put back, Esc, B and Reset view take the entries out.
+  - Checked in the browser with `history.back()` (the same popstate): a book only taken out; one
+    being opened (cancelled); one read with a link in its volume and one into another volume
+    (back, back, put away); Put back from the page; a book from search while another was open,
+    with less motion.
+  - The browser's own button checked the next day: a book picked from the search with the keys,
+    opened as text with T, Back: put away, the view closed, the page kept. (Also reported working
+    from a link in the text view.) Chrome's button skips entries a page added before any user
+    gesture ([history manipulation intervention](https://chromium.googlesource.com/chromium/src/+/127.0.6533.99/docs/history_manipulation_intervention.md));
+    a book always comes out after one.
+  - The address: a room changed while a book is out (a link into another room's volume) changed
+    only the entry then current, so Back showed the earlier room's address. Back and Forward now
+    put the address right on the entry they land on (`main.js`, checked the same way).
+- **The TV remote** (requested 2026-10-24; SPEC §5.9). The library in the Hallway's Android TV app
+  (AriaMoKr/HallwayApp), walked and read with the remote: common v0.6.1's `tv.js` and the
+  library's `ui/remote.js`. Checked in a browser with `?tv=emulate` and real key presses
+  (2026-10-25, 2026-10-26; SPEC §5.9, Tests). On the TV itself (a Sony BRAVIA, over adb, the
+  debug build of HallwayApp), the TV's session went through it with the remote (HallwayApp's
+  README, "Behind the doors"; reported 2026-10-26): taking and reading a book, its buttons in
+  the card, the stand's lists, the text view and Back one step at a time work; TalkBack reads
+  the view and the card, and its channel and media keys walk. 60 fps with a book open, 57.5
+  among the full shelves and 53.5 at the way in (the pixel ratio 2 at most, as the Hallway's).
+  - Its four awkward things, done 2026-10-26 in a browser, for that session to check on the TV:
+    Menu's first stop is no longer the search box (the Controls help, or the book's buttons),
+    and the TV's keyboard stays down on a text box until OK (common v0.6.1, and the boxes the
+    page focuses); ↓ takes the focus into the search's results, so OK opens one; ↓ past the
+    text view's toolbar goes to a link on the screen, not the part's first; the walking hint
+    has the TalkBack line.
+  - Reading in 3D the spread is small on a TV (the reading pose of a desktop screen); the text
+    view is the readable way for now.
+- **The text view and the 3D panel on common's** (requested 2026-11-01; done the same day; SPEC
+  §5.5, §5.8). common v0.6.1 → v0.8.1: `ui/panel.js` went for common's `panel.js`, and the text
+  view is common's `TextView` with the library's book in a subclass (`ui/text-view.js`), as
+  outside's and music's are to be. With it the first `tsconfig.json`: tsc in `npm test`, a file at
+  a time (28 files with `// @ts-check`, the subclass first; CLAUDE.md, "Types").
+  - New to the view: each theme's `color-scheme` (night's `dark`; it was `dark` in all three), A−
+    and A+ named "A− smaller text" and "A+ larger text" (axe's `label-content-name-mismatch` found
+    the old names), the place kept through a change of width, and the view put at its place again
+    a frame after it opens. New to the panels: nothing allocated per ray, `set` drawing again only
+    on a change, and a slider's mark cleared when the pointer leaves.
+  - Checked live in headless Chrome (common's `launchChrome`; the bad-password count stayed 0),
+    beside the old code (`eb0dfab`), with real keys, clicks and wheel turns: open and close at the
+    place (the focus back on "Text view"), A+, A− and the themes, ← and →, the contents, a link
+    and ↩ Back, the parts; 1280 × 800, 375 × 812, 740 × 360 and 320 × 256 with no sideways
+    scroll and the toolbar sliding away on the short two; 1280 → 375 → 1280 twice with the same
+    block at the top (the old code lost it at 375); `?tv=emulate` (the view keeps the focus, ↑ ↓
+    scroll, Menu to the toolbar and out, OK to a link on the screen, Back to walking); the 3D
+    toolbar, slider, contents scroll bar and tooltip by pointer, and with `?xr=emulate` by a
+    controller (entering VR closes the view); axe with `label-content-name-mismatch` on: nothing,
+    in the three themes, with and without the contents.
+  - Not yet: a real headset, and the TV (that session's).
+  - Seen alike before and after, and fixed after it the same day: a theme stood the 3D book a page
+    back (1:18 → 1:8 → 1:0 at the first two, the view still at block 26, until the reader
+    scrolled). It found the spread again from the page read, and pages pair by their number,
+    estimated before the part read until its layout is in (≈31, then 31 when it was in): now the
+    spread shown is drawn again as it is (`_redraw`; SPEC §5.2), in the 3D book (N) too. And ↩
+    Back in the view, which hides itself at the trail's last step, dropped the focus to the page
+    (`body`): it goes to the view's home (the title; on a TV the view, where walking again put it
+    before; SPEC §5.8). The card's A− and A+ (a TV's) are named as the view's now. Checked live
+    as above (a theme, N three times: the same spread, each in its own paper; the last Back, on a
+    screen and with `?tv=emulate`), and the view's Back by a test. The card's ↩ Back on a TV is
+    left as it is: its last step goes back to walking, as SPEC §5.9 has it.
+- **↩ Back to the reader's place in the text view, common v0.8.3** (requested 2026-11-02; done
+  the same day; SPEC §5.2, §5.8). A link followed from the middle of a part, with the view open,
+  came back to the page's first block (Jespersen's *Language*, chapter III's part, from 164 px
+  into block 3 to block 0): the trail kept only the 3D page. Its step now keeps the view's place
+  as well (`view`, the block the shell brought the 3D book to before the link), which Back and
+  the browser's Back aim the view at; in the 3D book alone Back goes to the page, as before.
+  Nothing more was needed from common's shell. common v0.8.1 → v0.8.3: the view stays at its
+  place while the 3D book's pages shown again show it (v0.8.2), and its own smooth scrolls leave
+  the toolbar of a short screen in sight (v0.8.3).
+  - A test: the trail itself (interaction.js) with common's shell, a stand-in reader and 3D turn;
+    Back, the browser's Back, another font size, the view closed, a link of the 3D book's own.
+  - Checked live in headless Chrome (the bad-password count stayed 0): at 1280 × 800 a link from
+    the middle of a part and ↩ Back by its button, by Enter and by the browser's Back, each time
+    the block left at the top (the reader was 164, 300 and 250 px into it); at
+    740 × 360 A+ and A− clicked with the toolbar shown leave it shown; with `?tv=emulate` axe
+    finds nothing with the card's book buttons out (the book in hand and open). The earlier
+    checks (place, link, sizes, width, TV, themes, axe) as before.
+- **The reader's line in the text view** (requested 2026-11-03; done the same day; SPEC §5.8). The
+  view's place was a block, `{ c, b }`, and a block can be screens tall: wherever the view put the
+  reader back (A+, A−, ↩ Back, a theme, a turned phone, opened again), the block's top came to the
+  top, however far down it they were (Jespersen's *Language*, chapter III, block 27: 2,673 px at
+  375 × 812 here). The place is now the block and the first word on the line at the top,
+  `{ c, b, w }`, as outside's is (`placeAt`: `wordStarts`, `firstWordBelow` and a `Range`;
+  `placeTop`: the top of that word's line), kept by `aim` and `placeAimed` and on the trail
+  (`_here`'s `view`); the 3D book still goes to the block's page. Nothing new from common.
+  - Tests: a block's words and the first in sight; over a layout of a 600-word block, A+ and A−,
+    and a link then ↩ Back and the browser's Back, each bring the same word's line back to the
+    top. Each part of the fix taken out in turn fails them.
+  - Checked live in headless Chrome beside the code before (56d2e1c; the bad-password count
+    stayed 0): at 375 × 812, from the middle of block 27, A+, A−, sepia, the phone turned to
+    812 × 375 and back, Close and Text view again: the reader's word 0 px from the toolbar's foot
+    after each (before: 598 to 1,608 px below it, the block's top at the top). At 1280 × 800, a
+    link from 164, 377 and 470 px into block 3, then ↩ Back by its button, by Enter and by the
+    browser's Back: the reader's line back at the top each time (before: 166, 382 and 463 px
+    below). axe swept through the view (six places from top to end, and the contents) in each
+    theme at 1280 × 800 and 375 × 812: nothing. The earlier checks as before; at 740 × 360 A+
+    and A− keep the toolbar shown and now the line, within block 60.
 - **All-libraries hall draw calls.** On the Quest: 380 → 104 standing (both eyes), 142 → 56
   walking, with one draw call per sign and no books drawn behind a nearer row. The room itself
   (chandeliers, walls, wainscots, ~31 calls per eye) could still be merged per material.
@@ -253,6 +486,23 @@
   - leave them off the shelves, or mark their spines, so that nobody takes one out for nothing;
   - show the PDF: pdf.js drawing each page onto the book's pages (a large library, and PDF pages
     do not reflow to the book's page size).
+- **Possible: audio in Gutenberg books** (counted 2026-10-18). Of the local ZIMs only
+  Gutenberg's has audio or video: `gutenberg_en_all_2023-08` holds 6,586 files (about 1 GB) in 402
+  books, nearly all MIDI (4,465, 6.4 MB) and MP3 (2,069, 942 MB), plus a few M4A, Ogg, WAV, AVI
+  and MPEG. Wikipedia `top1m_maxi` and Wikisource declare no audio or video type.
+  - *How the books use them:* links in the text (`<a href="music/music011.mid">`), not `<audio>`
+    (which `html.js` drops anyway). The converter keeps them as links, and since a Gutenberg link
+    resolves only within the book (`resolveLink`), tapping one says "Not in this library", though
+    the file has it.
+  - *Where they are:* the class ZIM `gutenberg_en_lcc-m_2026-03` (Music, 3.99 GB) holds about
+    70 % of the files and 79 % of their bytes (103 books: 2,932 MIDI, 1,750 MP3, 744 MB;
+    *Principles of Orchestration*, *The Complete Opera Book*). The next are `lcc-g` (479 MIDI),
+    `lcc-e` (251) and `lcc-pz` (203 MIDI, 88 MP3), mostly folk and traditional songs. The tests'
+    reference ZIM `lcc-pe` has 14 MP3s in one book (*The Haliburton Primer*), and `lcc-pm`
+    (0.05 GB) 8 MIDI files. Kiwix's current class ZIMs carry the files themselves.
+  - *Ideas:* play MP3 (and M4A, Ogg, WAV) through the browser's `<audio>` or WebAudio from the
+    entry's bytes (the server already answers `Range` requests on `/zim/`); MIDI needs a
+    synthesizer (no browser plays it), so at most a small soundfont player, or nothing.
 - **Possible: more in "Copy debug info"** (`debug-info.js`; it has browser, GPU, version, state,
   place, viewpoint, the open book and page, the dialogs and the last 20 errors; pasting it into
   the help dialog, or `__vrlbry.reproduce(report)`, restores that scene, see `scene.js`).

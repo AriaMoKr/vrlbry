@@ -1,5 +1,7 @@
 // DOM overlay for non-VR use (SPEC §5.6): library card, search, Enter VR, help, loading, toasts.
-// Hidden while an immersive session is running.
+// Hidden while an immersive session is running. On a TV (SPEC §5.9) it is the remote's card: the
+// book's buttons stand in for the letter keys, nothing opens a file from the device, and a shared
+// session's invite is shown as text.
 
 import { imageSource } from '../api.js';
 import { EXAMPLE_ZIM, MORE_ZIMS_URL, isLocalUrl } from '../local/local.js';
@@ -9,6 +11,8 @@ import { bookIndex, matchBooks, findArticles, findInText } from '../search.js';
 import { load, save } from '../util/storage.js';
 import { noteError } from '../debug-info.js';
 import { RESET_PARTS, defaultResetParts } from '../reset.js';
+import { wayOut } from '../hallway.js';
+import { MOTIONS, MOTION_LABELS } from '../comfort.js';
 
 const ARTICLE_RESULTS = 8; // per Wikipedia library
 const TEXT_RESULTS = 4; // full-text hits per library
@@ -35,6 +39,16 @@ function fillLocalImages(root) {
   }
 }
 
+/** A TV's hint, by what the remote does now (_renderHint). */
+const TV_HINTS = {
+  walk: '↑ ↓ walk · ← → turn · OK takes the book at the dot · Menu: the card\nWith TalkBack: channel up and down walk, rewind and fast-forward turn',
+  list: '↑ ↓ scroll the list · OK chooses · ← → turn away',
+  hand: 'OK reads it · Back puts it back · Menu: more',
+  read: '← → turn the pages · Menu: contents, text size and more · Back: one step back',
+  toc: '↑ ↓ scroll the contents · OK goes there · Back closes them',
+  card: '↑ ↓ from button to button · ← → change a choice · OK presses · Back: walk again',
+};
+
 const HELP = {
   desktop: [
     ['Look around', 'Drag with the mouse'],
@@ -42,6 +56,8 @@ const HELP = {
     ['Take a book', 'Click it on the shelf'],
     ['Read', 'Click the book or “Read” · turn pages with ← → / Space / click a page'],
     ['Text size', '+ / − or the A− A+ buttons'],
+    ['Text view', 'T with a book in hand or open: the part as a page of text (T or Esc: back to the book) · C: the contents'],
+    ['One page or two', 'P or the “1 page” / “2 pages” button (one page when the window is taller than wide)'],
     ['Put it back', 'Esc or “Put back”'],
     ['Book out of sight', 'F, or “Bring the book in front of me” below'],
     ['Back to the start', 'Home, or “Reset view” below'],
@@ -52,6 +68,8 @@ const HELP = {
     ['Walk', 'Drag with two fingers'],
     ['Take a book', 'Tap it on the shelf'],
     ['Read', 'Tap “Read” · swipe or tap the page edges to turn'],
+    ['One page or two', '“1 page” / “2 pages” under the book (one page while the phone is upright)'],
+    ['Text view', '“Text view” at the foot while reading: the part as a page of text'],
     ['Put it back', 'Tap “Put back”'],
     ['Book out of sight', '“Bring the book in front of me” below'],
   ],
@@ -64,6 +82,17 @@ const HELP = {
     ['Book distance', 'Triggers'],
     ['Put it back', 'B'],
     ['Book out of sight', 'Press the right stick'],
+  ],
+  tv: [
+    ['Walk', '↑ ↓ · turn with ← →'],
+    ['Take a book', 'Turn until the dot is on it, then OK'],
+    ['Read', 'OK · turn the pages with ← →'],
+    ['The card', 'Menu: this card, on this button first, and with a book out its buttons (contents, text view, theme, pages, text size) · ↑ ↓ from one to the next, ← → through a choice, OK presses'],
+    ['Search', '↑ from this button to the box, OK to type with the keyboard · ↓ through the results, OK opens one · Back: the box again'],
+    ['A list on the stand', 'Walk up to the stand, the dot on the list: ↑ ↓ scroll it, OK chooses'],
+    ['The text view', '↑ ↓ scroll it, ← → turn the pages · OK: the links on the screen · Menu: its toolbar'],
+    ['Back', 'One step back: the contents closed, back along the links, the text view closed, the book put back; in the card, walking again; else back to the Hallway'],
+    ['With TalkBack', 'Channel up and down walk, rewind and fast-forward turn'],
   ],
   vr: [
     ['Point & select', 'Aim the ray, pull the trigger (or pinch with hand tracking)'],
@@ -79,7 +108,8 @@ const HELP = {
 
 export class Overlay {
   /** @param {{ root: HTMLElement }} o */
-  constructor({ root }) {
+  /** @param {{ root: HTMLElement, wayOut?: ReturnType<typeof wayOut> }} o wayOut: where "← Hallway" leads (hallway.js) */
+  constructor({ root, wayOut: way = wayOut() }) {
     this.root = root;
     this.mode = 'desktop';
     this._pick = null;
@@ -103,7 +133,9 @@ export class Overlay {
         <button class="ov-loading-debug" hidden>Copy debug info</button>
       </div>
       <section class="ov-card" aria-label="Library">
-        <header><span class="ov-brand">vrlbry</span><span class="ov-version"></span><span class="ov-tools"><button class="ov-rescan" aria-label="Rescan the ZIM folder" title="Rescan the ZIM folder">⟳</button><button class="ov-collapse" aria-label="Collapse" title="Collapse">–</button></span></header>
+        <header><span class="ov-brand">vrlbry</span><span class="ov-version"></span><span class="ov-tools"><a class="ov-hallway" href="${esc(way.url)}" title="${esc(way.title)}">${esc(way.label)}</a><button class="ov-rescan" aria-label="Rescan the ZIM folder" title="Rescan the ZIM folder">⟳</button><button class="ov-collapse" aria-label="Collapse" title="Collapse">–</button></span></header>
+        <div class="ov-session" role="status" hidden><span class="ov-session-text"></span><button class="ov-session-leave" title="Leave the shared session">Leave</button>
+          <div class="ov-session-invite" hidden>To join from a phone or a computer, open <span class="ov-invite-link"></span></div></div>
         <div class="ov-libs"></div>
         <div class="ov-open">
           <button class="ov-kiwix-btn" hidden title="The ZIMs this library reads well, from library.kiwix.org">Browse Kiwix's library…</button>
@@ -118,21 +150,30 @@ export class Overlay {
             <button class="ov-reopen-btn">Reopen</button><button class="ov-reopen-forget" title="Forget these files">Forget</button></div>
           <div class="ov-open-hint">No ZIM file yet? Read
             <button class="ov-try-btn" type="button" title="Read it from Kiwix's mirror, a little at a time">${esc(EXAMPLE_ZIM.title)}</button>
-            from Kiwix, or <a href="${esc(EXAMPLE_ZIM.url)}" target="_blank" rel="noopener">download it</a>
+            from Kiwix<span class="ov-files">, or <a href="${esc(EXAMPLE_ZIM.url)}" target="_blank" rel="noopener">download it</a>
             (${esc(EXAMPLE_ZIM.size)}) and open it here.
-            <a href="${esc(MORE_ZIMS_URL)}" target="_blank" rel="noopener">More Gutenberg ZIMs</a>: paste one's address above.</div>
+            <a href="${esc(MORE_ZIMS_URL)}" target="_blank" rel="noopener">More Gutenberg ZIMs</a>: paste one's address above</span>.</div>
         </div>
       </section>
       <div class="ov-drop" hidden>Drop ZIM files, or a ZIM's link, to open them</div>
       <div class="ov-search" role="search">
-        <input type="search" placeholder="Find a book, author or article…" aria-label="Find a book or article" autocomplete="off" spellcheck="false">
-        <ul class="ov-results" role="listbox" hidden></ul>
+        <input type="search" placeholder="Find a book, author or article…" aria-label="Find a book or article" autocomplete="off" spellcheck="false"
+          role="combobox" aria-autocomplete="list" aria-controls="ov-results" aria-expanded="false">
+        <ul class="ov-results" id="ov-results" role="listbox" aria-label="Search results" hidden></ul>
+        <div class="ov-search-status ov-sr" role="status" aria-live="polite"></div>
       </div>
       <div class="ov-bottom">
         <button class="ov-help-btn" aria-label="Controls help" title="Controls">?</button>
+        <span class="ov-book ov-book-hand" role="group" aria-label="The book in hand">
+          <button data-key="Enter">Read</button><button data-key="t" data-code="KeyT">Read as text</button><button data-key="f" data-code="KeyF">In front of me</button><button data-key="Escape">Put back</button>
+        </span>
+        <span class="ov-book ov-book-open" role="group" aria-label="The open book">
+          <button class="ov-b-toc" data-key="c" data-code="KeyC" aria-pressed="false">Contents</button><button data-key="-" data-code="Minus" aria-label="A− smaller text">A−</button><button data-key="+" data-code="Equal" aria-label="A+ larger text">A+</button><button data-key="n" data-code="KeyN">Theme</button><button class="ov-b-pages" data-key="p" data-code="KeyP">1 page</button><button data-key="f" data-code="KeyF">In front of me</button><button class="ov-b-back" data-key="Backspace" hidden>↩ Back</button><button data-key="Escape">Put back</button>
+        </span>
+        <button class="ov-textview" title="The part you are reading, as a page of text (T)">Text view</button>
         <button class="ov-vr" hidden>Enter VR</button>
       </div>
-      <div class="ov-hint"></div>
+      <div class="ov-hint" id="ov-hint"></div>
       <div class="ov-help" role="dialog" aria-label="Controls" hidden>
         <div class="ov-help-inner">
           <header><h2>How to use the library</h2><button class="ov-help-close" aria-label="Close">×</button></header>
@@ -143,6 +184,13 @@ export class Overlay {
             <span class="ov-view-note">Back to the start, looking into the room; a book that is out goes back on its shelf.</span>
           </div>
           <label class="ov-update-pref"><input type="checkbox" checked> Tell me when this site has been updated</label>
+          <label class="ov-update-pref ov-textview-pref"><input type="checkbox"> Open books as text (the text view, at once)</label>
+          <fieldset class="ov-comfort">
+            <legend>Comfort <span class="ov-comfort-note">(kept for every site behind the Hallway's doors)</span></legend>
+            <label>Motion <select class="ov-comfort-motion">${MOTIONS.map((m) => `<option value="${m}">${esc(MOTION_LABELS[m])}</option>`).join('')}</select></label>
+            <label><input type="checkbox" class="ov-comfort-vignette"> A vignette while moving or turning smoothly in VR</label>
+            <label><input type="checkbox" class="ov-comfort-seated"> Seated: my eyes 45 cm higher in VR</label>
+          </fieldset>
           <footer class="ov-debug">
             <div><button class="ov-debug-btn">Copy debug info</button><button class="ov-shot-btn" title="The 3D view as a PNG, without this page's menus">Save screenshot</button><span class="ov-debug-note">Something wrong? Copy this and paste it into your bug report, with the screenshot.</span></div>
             <div><button class="ov-scene-save">Save scene</button><button class="ov-scene-restore" disabled>Restore scene</button><button class="ov-scene-paste">Paste a scene…</button><span class="ov-scene-note">No saved scene</span></div>
@@ -164,6 +212,7 @@ export class Overlay {
         <button class="ov-update-close" aria-label="Dismiss" title="Dismiss">×</button>
       </div>
       <div class="ov-toasts" aria-live="polite"></div>
+      <div class="ov-announce ov-sr" role="status" aria-live="polite"></div>
       <section class="ov-status" aria-label="Your ZIM files" hidden>
         <div class="ov-status-head">
           <span class="ov-status-text" role="status"></span>
@@ -174,6 +223,8 @@ export class Overlay {
         <ul class="ov-status-rows" hidden></ul>
       </section>`;
     this.$ = (sel) => root.querySelector(sel);
+    // The book's buttons (a TV's card): each presses its key (interaction.pressKey).
+    for (const b of root.querySelectorAll('.ov-book button')) b.onclick = () => this._bookKey?.(b.dataset.key, b.dataset.code ?? b.dataset.key);
     this.$('.ov-collapse').onclick = () => this.setCardCollapsed(!this.$('.ov-card').classList.contains('collapsed'));
     // A minimized library card stays minimized when the page is reloaded.
     if (load('card', 'open') === 'collapsed') this.setCardCollapsed(true);
@@ -295,7 +346,10 @@ export class Overlay {
       this.$('.ov-reset-go').disabled = false;
     };
     this.$('.ov-reset-btn').onclick = () => showReset(this.$('.ov-reset').hidden);
-    this.$('.ov-reset-cancel').onclick = () => showReset(false);
+    this.$('.ov-reset-cancel').onclick = () => {
+      showReset(false);
+      this.$('.ov-reset-btn').focus(); // not lost with the button that hid itself
+    };
     this.$('.ov-reset').onchange = () => { this.$('.ov-reset-go').disabled = !resetBoxes().some((b) => b.checked); };
     this.$('.ov-reset-go').onclick = () => {
       const parts = Object.fromEntries(resetBoxes().map((b) => [b.value, b.checked]));
@@ -319,9 +373,10 @@ export class Overlay {
     const input = this.$('.ov-search input');
     input.addEventListener('input', () => this._search(input.value));
     input.addEventListener('keydown', (e) => this._searchKey(e));
-    input.addEventListener('focus', () => this._search(input.value));
+    input.addEventListener('focus', () => { if (!this._backToBox) this._search(input.value); });
+    this.$('.ov-results').addEventListener('keydown', (e) => this._resultKey(e));
     document.addEventListener('pointerdown', (e) => {
-      if (!this.$('.ov-search').contains(e.target)) this.$('.ov-results').hidden = true;
+      if (!this.$('.ov-search').contains(e.target)) this._showList(false);
     });
     this.setMode(matchMedia('(pointer: coarse)').matches ? 'touch' : 'desktop');
   }
@@ -365,7 +420,77 @@ export class Overlay {
   onView(handlers) { this._view = handlers; }
 
   /** A book is out (in hand or open): the help dialog offers to bring it in front of the eyes. */
-  setBookOut(on) { this.$('.ov-view-book').hidden = !on; }
+  setBookOut(on) {
+    this.$('.ov-view-book').hidden = !on;
+    this.root.classList.toggle('ov-bookout', !!on);
+    this._renderHint();
+  }
+
+  /** fn(key, code): a book's button in the card (a TV's), which does what that key does. */
+  onBookKey(fn) { this._bookKey = fn; }
+
+  /**
+   * The open book's buttons as they are on its 3D toolbar: { back } (links followed), { pages }
+   * (the other view's name), { toc } (the contents shown).
+   */
+  setBookButtons({ back, pages, toc } = {}) {
+    if (back !== undefined) this.$('.ov-b-back').hidden = !back;
+    if (pages !== undefined) this.$('.ov-b-pages').textContent = pages;
+    if (toc !== undefined) this.$('.ov-b-toc').setAttribute('aria-pressed', String(!!toc));
+  }
+
+  /**
+   * A TV (common's tvMode: SPEC §5.9): the hint and the help say what the remote does, and what a
+   * file of this device would be opened with goes (style.css, html.tv).
+   */
+  setTV(on) {
+    this.tv = !!on;
+    this._renderHint();
+    this._renderHelp();
+  }
+
+  /** What a TV's remote does now, for its hint: { card } (the card has the focus), { list } (↑ ↓ scroll the list at the dot). */
+  setRemote({ card, list } = {}) {
+    if (card !== undefined) this._tvCard = card;
+    if (list !== undefined) this._tvList = list;
+    this._renderHint();
+  }
+
+  /** The page's dialog that is open (Kiwix's library, the help), the card a TV's remote moves in; else null. */
+  dialog() {
+    if (this._kiwix?.visible) return this._kiwix.el;
+    const help = this.$('.ov-help');
+    return help.hidden ? null : help;
+  }
+
+  /** Closes the page's open dialog: the button that opens it, to go back to; null when none was open. */
+  closeDialog() {
+    if (this._kiwix?.visible) {
+      this._kiwix.hide();
+      return this.$('.ov-kiwix-btn');
+    }
+    if (!this.$('.ov-help').hidden) {
+      this.showHelp(false);
+      return this.$('.ov-help-btn');
+    }
+    return null;
+  }
+
+  /** Closes the page's dialogs, and the search's results (a TV's remote walking again). */
+  closeDialogs() {
+    while (this.closeDialog() !== null);
+    if (!this.$('.ov-results').hidden) this._showList(false);
+  }
+
+  /**
+   * Where a TV remote's Menu goes with nothing to come back to (common's first()): the book's first
+   * button while one is out, else the Controls help, never a text box (its keyboard would come up).
+   */
+  remoteStart() {
+    const cls = this.root.classList;
+    if (cls.contains('ov-bookout')) return this.$(cls.contains('ov-reading') ? '.ov-book-open button' : '.ov-book-hand button');
+    return this.$('.ov-help-btn');
+  }
 
   /** Handlers of the help dialog's scene buttons: { save(), restore(), restoreText(text) }. */
   onScene(handlers) { this._scene = handlers; }
@@ -444,6 +569,20 @@ export class Overlay {
   }
 
   hideUpdate() { this.$('.ov-update').hidden = true; }
+
+  /** The help dialog's comfort choices (common's access.js: motion, vignette, seated), as set. */
+  setAccess(access) {
+    this.$('.ov-comfort-motion').value = access.motion;
+    this.$('.ov-comfort-vignette').checked = !!access.vignette;
+    this.$('.ov-comfort-seated').checked = !!access.seated;
+  }
+
+  /** @param {(change: { motion?: string, vignette?: boolean, seated?: boolean }) => void} fn a choice made there */
+  onAccess(fn) {
+    this.$('.ov-comfort-motion').onchange = (e) => fn({ motion: e.target.value });
+    this.$('.ov-comfort-vignette').onchange = (e) => fn({ vignette: e.target.checked });
+    this.$('.ov-comfort-seated').onchange = (e) => fn({ seated: e.target.checked });
+  }
 
   /** The help dialog's "Tell me when this site has been updated" (settings.updateNotices): onChange(on). */
   setUpdateNotices(on, onChange) {
@@ -561,13 +700,20 @@ export class Overlay {
   }
 
   _renderHint() {
+    if (this.tv) {
+      const cls = this.root.classList;
+      const reading = cls.contains('ov-reading');
+      const kind = this._tvCard ? 'card' : reading ? (this._tvList ? 'toc' : 'read') : cls.contains('ov-bookout') ? 'hand' : this._tvList ? 'list' : 'walk';
+      this.$('.ov-hint').textContent = TV_HINTS[kind];
+      return;
+    }
     this.$('.ov-hint').textContent = this._pad ? 'Right stick to look · left stick to walk · A takes a book'
       : this.mode === 'touch' ? 'Drag to look · two fingers to walk · tap a book'
         : 'Drag to look · WASD to walk · click a book';
   }
 
   _renderHelp() {
-    const sections = [[this.mode === 'touch' ? 'Touch' : 'Mouse & keyboard', HELP[this.mode]]];
+    const sections = this.tv ? [['TV remote', HELP.tv]] : [[this.mode === 'touch' ? 'Touch' : 'Mouse & keyboard', HELP[this.mode]]];
     if (this._padSeen) sections.push(['Gamepad', HELP.gamepad]);
     if (this._vr) sections.push(['VR headset', HELP.vr]);
     this.$('.ov-help-body').innerHTML = sections.map(([title, rows]) => `
@@ -618,7 +764,7 @@ export class Overlay {
       const input = this.$('.ov-search input');
       input.value = ui.search.q || '';
       if (ui.search.open && input.value) this._search(input.value);
-      else this.$('.ov-results').hidden = true;
+      else this._showList(false);
     }
     if (this._kiwix) {
       if (ui.kiwix) {
@@ -633,6 +779,27 @@ export class Overlay {
    * under way, with kind 'busy' (a spinner) and progress(fraction) (a bar, from its first call).
    * @returns {{ update: (msg: string) => void, progress: (fraction: number) => void, close: () => void }}
    */
+  /**
+   * The shared session (together.js): its line under the card's header, or '' to hide it; on a TV
+   * with its invite link as text to type on another device (no copying there).
+   */
+  setSession(text, invite = '') {
+    this.$('.ov-session').hidden = !text;
+    this.$('.ov-session-text').textContent = text || '';
+    this.$('.ov-session-invite').hidden = !(text && invite);
+    this.$('.ov-invite-link').textContent = invite.replace(/^https?:\/\//, '');
+  }
+
+  /** @param {() => void} fn the session line's Leave */
+  onLeaveSession(fn) {
+    this.$('.ov-session-leave').onclick = fn;
+  }
+
+  /** Where "← Hallway" leads now: the way out, carrying a shared session's room. */
+  setWayOutHref(url) {
+    this.$('.ov-hallway').href = url;
+  }
+
   showToast(msg, kind = 'info', ms = 3500) {
     if (kind === 'error') noteError('toast', msg); // in "Copy debug info"'s errors too
     const t = document.createElement('div');
@@ -669,10 +836,31 @@ export class Overlay {
   show() { this.root.classList.remove('ov-hidden'); }
 
   /** Fades the card, search and hint away while a book is open (they cover the pages). */
-  setReading(on) { this.root.classList.toggle('ov-reading', !!on); }
+  setReading(on) {
+    this.root.classList.toggle('ov-reading', !!on);
+    this._renderHint();
+  }
+
+  /** Says something politely to a screen reader (a book opening), once each time it is said. */
+  announce(text) {
+    const el = this.$('.ov-announce');
+    el.textContent = '';
+    setTimeout(() => { el.textContent = text; }, 50);
+  }
+
+  /** @param {() => void} fn the "Text view" button's (while a book is open on a screen) */
+  onTextView(fn) {
+    this.$('.ov-textview').onclick = fn;
+  }
+
+  /** The help dialog's "Open books as text" (settings.textView): onChange(on). */
+  setTextViewPref(on, onChange) {
+    const box = this.$('.ov-textview-pref input');
+    box.checked = !!on;
+    if (onChange) box.onchange = () => onChange(box.checked);
+  }
 
   _search(q) {
-    const list = this.$('.ov-results');
     const s = q.trim().toLowerCase();
     const token = ++this._searchToken;
     clearTimeout(this._searchTimer);
@@ -680,8 +868,9 @@ export class Overlay {
     this._articles = [];
     this._texts = [];
     if (!s) {
-      list.hidden = true;
+      this._showList(false);
       this._results = [];
+      this._announce('');
       return;
     }
     // Wikipedia articles: from the server (millions of titles), a moment after typing stops.
@@ -710,28 +899,36 @@ export class Overlay {
     const list = this.$('.ov-results');
     const books = this._articles.length || this._texts.length ? this._books.slice(0, 6) : this._books;
     this._results = [...books, ...this._articles, ...this._texts];
-    this._sel = this._results.length ? 0 : -1;
+    // On a TV a result can hold the focus (↓ from the box), and keeps it when the articles or the text hits arrive.
+    const focused = this.tv && list.contains(document.activeElement) ? Number(document.activeElement.dataset.i ?? -1) : -1;
+    this._sel = this._results.length ? Math.min(Math.max(focused, 0), this._results.length - 1) : -1;
+    const tab = this.tv ? ' tabindex="-1"' : '';
     const textHead = books.length + this._articles.length;
     list.innerHTML = this._results.length
       ? this._results.map((e, i) => (e.hit ? `${i === textHead ? '<li class="ov-r-head" aria-hidden="true">In the text</li>' : ''}
-        <li role="option" data-i="${i}" class="${i === this._sel ? 'sel' : ''}">
+        <li role="option" id="ov-result-${i}" aria-selected="${i === this._sel}" data-i="${i}" class="${i === this._sel ? 'sel' : ''}"${tab}>
           ${e.lib.illustration ? `<img class="ov-r-icon" ${imgSrc(e.lib.illustration)} alt="" width="34" height="34">` : '<span class="ov-nocover"></span>'}
           <div><div class="ov-r-title">${esc(e.hit.title)}</div><div class="ov-r-snip">${snippetHtml(e.hit.snippet)}</div><div class="ov-r-sub">${e.hit.author ? `${esc(e.hit.author)} · ` : ''}${esc(e.lib.title)}</div></div>
         </li>` : e.article ? `
-        <li role="option" data-i="${i}" class="${i === this._sel ? 'sel' : ''}">
+        <li role="option" id="ov-result-${i}" aria-selected="${i === this._sel}" data-i="${i}" class="${i === this._sel ? 'sel' : ''}"${tab}>
           ${e.lib.illustration ? `<img class="ov-r-icon" ${imgSrc(e.lib.illustration)} alt="" width="34" height="34">` : '<span class="ov-nocover"></span>'}
           <div><div class="ov-r-title">${e.article.from ? `${esc(e.article.from)} → ` : ''}${esc(e.article.title)}</div><div class="ov-r-sub">${esc(e.lib.title)} · Volume ${esc(e.article.book.slice(1))}</div></div>
         </li>` : `
-        <li role="option" data-i="${i}" class="${i === this._sel ? 'sel' : ''}">
+        <li role="option" id="ov-result-${i}" aria-selected="${i === this._sel}" data-i="${i}" class="${i === this._sel ? 'sel' : ''}"${tab}>
           ${e.book.cover ? `<img ${imgSrc(e.book.cover)} alt="" loading="lazy" width="34" height="48">` : '<span class="ov-nocover"></span>'}
           <div><div class="ov-r-title">${esc(e.book.title)}</div><div class="ov-r-sub">${esc(e.book.author || '')}${this._multi() ? ' · ' + esc(e.lib.title) : ''}</div></div>
         </li>`)).join('')
-      : '<li class="ov-empty">No matching books</li>';
+      : '<li class="ov-empty" role="option" aria-disabled="true" aria-selected="false">No matching books</li>';
     fillLocalImages(list);
-    list.hidden = false;
+    this._showList(true);
+    this._announce(this._results.length ? `${this._results.length} ${this._results.length === 1 ? 'result' : 'results'}` : 'No results');
     list.querySelectorAll('li[data-i]').forEach((li) => {
       li.onclick = () => this._choose(+li.dataset.i);
     });
+    if (focused >= 0) {
+      if (this._sel >= 0) this._focusResult(this._sel);
+      else this._toBox();
+    }
   }
 
   /** Whether more than one library has books (results then name their library). */
@@ -744,21 +941,115 @@ export class Overlay {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
       if (!this._results.length) return;
+      if (this.tv) {
+        // On a TV the results take the focus, so OK presses one (on the box OK is the keyboard's).
+        if (e.key === 'ArrowDown' && !list.hidden) this._focusResult(0);
+        return;
+      }
       this._sel = (this._sel + (e.key === 'ArrowDown' ? 1 : -1) + this._results.length) % this._results.length;
-      list.querySelectorAll('li[data-i]').forEach((li, i) => li.classList.toggle('sel', i === this._sel));
+      this._markSel();
       list.querySelector('li.sel')?.scrollIntoView({ block: 'nearest' });
+      this._activeDescendant();
     } else if (e.key === 'Enter') {
       if (this._sel >= 0) this._choose(this._sel);
     } else if (e.key === 'Escape') {
-      list.hidden = true;
-      e.target.blur();
+      this._showList(false);
+      if (!this.tv) e.target.blur(); // a TV's Back closes the list only (common's Remote)
     }
+  }
+
+  /**
+   * A key on a result that holds the focus (a TV): ↑ ↓ from one to the next (staying at the last),
+   * ↑ from the first back to the box, OK opens it, Escape (Back) closes them, back on the box.
+   * @param {KeyboardEvent} e
+   */
+  _resultKey(e) {
+    const li = /** @type {HTMLElement} */ (e.target).closest?.('li[data-i]');
+    if (!li) return;
+    const i = Number(li.dataset.i);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const to = i + (e.key === 'ArrowDown' ? 1 : -1);
+      if (to < 0) this._toBox();
+      else this._focusResult(Math.min(to, this._results.length - 1));
+    } else if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      this._choose(i);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      this._showList(false);
+      this._toBox();
+    }
+  }
+
+  /** The focus on result i (a TV), highlighted as the one OK opens. */
+  _focusResult(i) {
+    this._sel = i;
+    this._markSel();
+    this.$(`#ov-result-${i}`)?.focus();
+  }
+
+  /** The focus back on the search's box from its results, the list left as it is (the keyboard's search key opens the first). */
+  _toBox() {
+    if (this._sel > 0) {
+      this._sel = 0;
+      this._markSel();
+    }
+    this._backToBox = true;
+    this.$('.ov-search input').focus();
+    this._backToBox = false;
+    this._activeDescendant();
+  }
+
+  /** The highlighted result (`_sel`) marked: its class and aria-selected. */
+  _markSel() {
+    this.$('.ov-results').querySelectorAll('li[data-i]').forEach((li, i) => {
+      li.classList.toggle('sel', i === this._sel);
+      li.setAttribute('aria-selected', String(i === this._sel));
+    });
+  }
+
+  /**
+   * Shows or hides the results (the combobox pattern: the input's aria-expanded, and its
+   * aria-activedescendant naming the highlighted result while they show).
+   */
+  _showList(open) {
+    if (!open) {
+      // Closed: the article results still to come stay away (they arrive 150 ms after a search).
+      this._searchToken++;
+      clearTimeout(this._searchTimer);
+    }
+    this.$('.ov-results').hidden = !open;
+    this.$('.ov-search input').setAttribute('aria-expanded', String(open));
+    this._activeDescendant();
+  }
+
+  /** The input's aria-activedescendant: the highlighted result, while the results show. */
+  _activeDescendant() {
+    const input = this.$('.ov-search input');
+    const open = !this.$('.ov-results').hidden;
+    if (open && this._sel >= 0 && this._results?.[this._sel]) input.setAttribute('aria-activedescendant', `ov-result-${this._sel}`);
+    else input.removeAttribute('aria-activedescendant');
+  }
+
+  /**
+   * The number of results for a screen reader (a polite status), said once typing pauses rather
+   * than at every letter.
+   */
+  _announce(text) {
+    clearTimeout(this._announceTimer);
+    const status = this.$('.ov-search-status');
+    if (!text) {
+      status.textContent = '';
+      return;
+    }
+    this._announceTimer = setTimeout(() => { status.textContent = text; }, 400);
   }
 
   _choose(i) {
     const e = this._results[i];
     if (!e) return;
-    this.$('.ov-results').hidden = true;
+    this._showList(false);
     const input = this.$('.ov-search input');
     input.blur();
     if (e.hit) this._pickText?.(e.lib.id, e.hit);

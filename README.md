@@ -102,7 +102,8 @@ and a Gutenberg collection shelves its most-read books first. As an experiment, 
 puts all your libraries in one big hall of up to 200 bookcases: small libraries whole, and the
 first books of the large ones (each large library gets an equal share). You stay where you are
 while the shelves change around you. Search still covers every book of every library: picking
-one that is not on the shelves takes you to its room.
+one that is not on the shelves takes you to its room. The address bar names the room you are in
+(`?place=…&genre=…&letter=…`), so a bookmark or a shared link opens that room.
 
 ## Reading ZIM files in the browser
 
@@ -150,14 +151,16 @@ Then press **Enter VR**.
 | | Desktop | Touch | Gamepad | VR |
 | --- | --- | --- | --- | --- |
 | Look | drag the mouse | drag one finger | right stick | turn your head |
-| Move | W A S D / arrows, Q E to turn, Shift to hurry | drag two fingers | left stick (click it to hurry) | right stick forward: teleport arc · flick right stick: snap turn · left stick: walk |
+| Move | W A S D / arrows, Q E to turn, Shift to hurry | drag two fingers | left stick (click it to hurry) | right stick forward: teleport arc · flick right stick: snap turn · left stick: walk (or teleport, and turning smoothly: the kiosk, or your choice in the Hallway) |
 | Take a book | click it | tap it | aim the crosshair, **A** | point and pull the trigger (or pinch) |
 | Read | click the book or **Read** | tap **Read** | **A** | trigger on the book, or **A** |
 | Turn pages | ← → Space, or click a page | swipe, or tap a page | bumpers, or D-pad ← → | flick the right stick, or trigger on a page |
-| Text size, theme, contents | + / −, toolbar | toolbar | D-pad ↑ ↓ · **Y** · **X** | toolbar |
+| Text size, theme, contents | + / − · **N** · **C**, or the toolbar | toolbar | D-pad ↑ ↓ · **Y** · **X** | toolbar |
+| Read as text (screen readers, zoom) | **T**, or **Text view** | **Text view** | | |
+| One page or two | **P**, or **1 page** / **2 pages** | **1 page** / **2 pages** (one page while the phone is upright) | toolbar | toolbar |
 | Book distance / size | mouse wheel | pinch | triggers | right stick up/down · left stick up/down · grip to move the book |
 | Follow a link | click it | tap it | **A** on it | trigger on it |
-| Back (along links, then close) | Backspace, or **↩ Back** | **↩ Back** | **B** | **B** or **Y** |
+| Back (along links, then close) | Backspace, **↩ Back**, or the browser's Back | **↩ Back**, or the back gesture | **B** | **B** or **Y** |
 | Close / put back | Esc | **✕** / **Put back** | **B** | **B** or **Y** |
 | Book out of sight | **F** | **Bring the book in front of me** (in **?**) | press the right stick | press a thumbstick |
 | Back to the start | Home, or **Reset view** (in **?**) | **Reset view** (in **?**) | | |
@@ -170,6 +173,13 @@ over as soon as you use it, and moving the mouse hands control back.
 
 ![A gamepad and what each button does, with Xbox and PlayStation names](docs/controls/gamepad.svg)
 
+In the Hallway's Android TV app the TV's remote walks and reads: the arrows walk and turn, OK
+takes the book at the dot in the middle of the view and reads it, ← → turn its pages, Menu opens
+the card (the search, where OK brings up the keyboard and ↓ goes through the results, and the
+book's buttons for its contents, the text view, the theme and the text size), and Back takes one
+step back. With TalkBack on, channel up and down walk, and rewind and fast-forward turn. Add
+`?tv=emulate` to the address to try it in a browser.
+
 The catalogue stand next to where you start lets you re-shelve the books by title, author or
 popularity, jump to a letter, pick a book at random ("Surprise me"), reopen recently read books,
 filter a large library by genre and title letter, rescan the folder, and reload the page (handy
@@ -179,6 +189,12 @@ is running. The search box (desktop and phone), or the kiosk's Search tab with i
 keyboard (in a headset), finds any book by title or author and takes you to it, and any
 Wikipedia article by title and opens its volume there. Your reading position, text size, theme and
 rooms are remembered in the browser.
+
+On a screen, **Text view** (or **T**, also with a book in hand) shows the part you are reading as an ordinary page of text,
+for a screen reader, the keyboard, the browser's zoom or a small phone. It has the contents, the
+text size and theme, the page slider, Back and the parts in its toolbar, and its links work as in
+the book. It keeps your place with the 3D book: close it (**T** or Esc) and the book is open
+where you were reading. **Open books as text** in the help (**?**) opens every book this way.
 
 To report a problem, open the help (**?**) and press **Copy debug info**, then paste the result
 into your message: it says which browser, graphics and version of the site you have, where you
@@ -197,6 +213,36 @@ It has a demo set of Kiwix's ZIM files (a Gutenberg collection, Wikipedia 100, a
 Chemistry, Medicine, Mathematics, Physics and Golf), opens more from Kiwix's library or from your
 device, and notices a new version within seconds and offers to reload. How it is built and
 deployed is in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#the-online-version-github-pages).
+
+## The Hallway, or your own
+
+vrlbry is behind one of the doors of the [Hallway](https://ariamokr.github.io/hallway/), a WebXR
+corridor whose doors lead to other places. A door like the Hallway's stands in the library, behind
+where you arrive: through it you see the Hallway, and walking through it (or clicking it, or
+pointing at it and pulling the trigger) takes you back there, to vrlbry's door. So does the
+**← Hallway** link on the library card and on the catalogue stand. On a Meta Quest, walking
+through the door in VR keeps you in VR: Quest Browser hands the session to the next page when both are on one
+origin, as the Hallway and vrlbry are (`ariamokr.github.io`).
+
+In VR you move and turn as you chose in the Hallway (walking with the stick or teleporting,
+turning in steps or smoothly), and changing it on the catalogue stand changes it there too. So do
+the comfort settings, on the stand and in the help (?): less motion (or as your system asks), a
+vignette while moving smoothly, and seated, which raises your eyes 45 cm. Come in
+through the Hallway's door in a shared session and you stay in it: the others in the same room of
+the library are there with you, as heads, hands and names, the library card says who else is in
+the session, and the way back to the Hallway keeps you in it.
+
+To put vrlbry behind a door of your own hallway, or link to it from anywhere, name your page in
+the link and the way out leads back to it instead:
+
+```
+https://ariamokr.github.io/vrlbry/?back=https%3A%2F%2Fexample.org%2Fhall%2F%3Ffrom%3Dvrlbry&backname=My%20Hall
+```
+
+`back` is your page's address and `backname` its name on the button and on the door (both
+URL-encoded; without a name they show your host). Only `http` and `https` addresses are taken. Between your site
+and vrlbry, a Quest visitor leaves VR and presses Enter VR again, since the two are on different
+origins.
 
 ## Developing
 

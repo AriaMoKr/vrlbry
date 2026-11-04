@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Runs the edge proxy (worker.js) on this machine, for trying it without Cloudflare: a page on
-// http://localhost reads through it with ?zimproxy=http://localhost:8090/ (zim-url.js zimProxyOf).
+// http://localhost reads through it with ?zimproxy=http://localhost:8094/ (zim-url.js zimProxyOf).
 //
-//   node tools/zim-proxy/serve.mjs [--port 8090] [--continent NA] [--origins <list>]
+//   node tools/zim-proxy/serve.mjs [--port 8094] [--continent NA] [--origins <list>]
 //
 // --continent stands in for Cloudflare's guess of where the visitor is (which mirrors go first);
 // --origins for wrangler.toml's ALLOWED_ORIGINS (the pages that may use it; any by default).
@@ -18,7 +18,7 @@ import { handle } from './worker.js';
  * Serves `handler` (a Worker's fetch: Request → Response) over HTTP on this machine.
  * @returns {Promise<http.Server>}
  */
-export async function serveWorker(handler, { port = 8090, host = '127.0.0.1' } = {}) {
+export async function serveWorker(handler, { port = 8094, host = '127.0.0.1' } = {}) {
   const server = http.createServer(async (req, res) => {
     try {
       const headers = {};
@@ -43,7 +43,7 @@ export async function serveWorker(handler, { port = 8090, host = '127.0.0.1' } =
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const { values } = parseArgs({ options: {
-    port: { type: 'string', default: '8090' }, continent: { type: 'string', default: 'NA' }, origins: { type: 'string', default: '*' },
+    port: { type: 'string', default: '8094' }, continent: { type: 'string', default: 'NA' }, origins: { type: 'string', default: '*' },
   } });
   const server = await serveWorker((request) => {
     const t = performance.now();

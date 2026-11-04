@@ -9,7 +9,7 @@ import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import '../server/platform-node.js';
 import { ZimArchive } from '../public/js/core/zim/reader.js';
-import { buildListed, currentEditions, indexNameOf, readList, shipIndexes, writeIndexList } from '../tools/build-indexes.mjs';
+import { buildListed, buildOrder, currentEditions, indexNameOf, readList, shipIndexes, writeIndexList } from '../tools/build-indexes.mjs';
 import { startRangeServer } from './helpers/range-server.js';
 import { writeWikipediaZim } from './helpers/zim-fixtures.js';
 
@@ -162,5 +162,25 @@ describe('prebuilt indexes (tools/build-indexes.mjs)', () => {
     assert.deepEqual([...idx.sizes], [...exact].map(storedSize));
     assert.deepEqual(idx.volumes, built.volumes);
     assert.deepEqual(fs.readdirSync(out).sort(), ['list.json', `wikipedia-${uuid}.v5.json`], 'the v4 one pruned');
+  });
+});
+
+describe('prebuilt indexes: the build order', () => {
+  it('builds the quickest first: Wikipedias by article count, those without one by size, Wikisources last', () => {
+    const t = (file, kind, articles, size) => ({ file, entry: { kind, articles, size } });
+    const todo = [
+      t('wikisource_en_all_nopic', 'wikisource', 1_400_000, 3.9e9),
+      t('wikipedia_en_movies_nopic', 'wikipedia', 220_000, 2.6e9),
+      t('wikipedia_en_unknown', 'wikipedia', null, 0.2e9),
+      t('wikipedia_en_physics_nopic', 'wikipedia', 30_000, 0.3e9),
+      t('wikipedia_en_physics_maxi', 'wikipedia', 30_000, 1.3e9),
+      t('wikisource_en_small', 'wikisource', 20_000, 0.1e9),
+      t('wikipedia_en_unsized', 'wikipedia', null, null),
+    ];
+    assert.deepEqual(buildOrder(todo).map((x) => x.file), [
+      'wikipedia_en_physics_nopic', 'wikipedia_en_physics_maxi', 'wikipedia_en_movies_nopic',
+      'wikipedia_en_unknown', 'wikipedia_en_unsized', 'wikisource_en_small', 'wikisource_en_all_nopic',
+    ]);
+    assert.equal(todo[0].file, 'wikisource_en_all_nopic', 'the list itself is left as it was');
   });
 });

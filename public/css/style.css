@@ -51,7 +51,13 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 
 /* Library card */
 .ov-card { position: fixed; top: max(12px, env(safe-area-inset-top)); left: max(12px, env(safe-area-inset-left)); width: min(360px, calc(100vw - 24px));
-  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 14px 12px; backdrop-filter: blur(8px); box-shadow: 0 10px 30px rgba(0,0,0,.35); }
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 14px 12px; backdrop-filter: blur(8px); box-shadow: 0 10px 30px rgba(0,0,0,.35);
+  /* Within the screen, scrolling inside it when the screen is short (a phone held sideways). */
+  max-height: calc(100vh - max(12px, env(safe-area-inset-top)) - max(12px, env(safe-area-inset-bottom)));
+  max-height: calc(100dvh - max(12px, env(safe-area-inset-top)) - max(12px, env(safe-area-inset-bottom)));
+  overflow-y: auto; overscroll-behavior: contain; }
+/* Only for a screen reader (the search's result count). */
+.ov-sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .ov-card header { display: flex; align-items: center; justify-content: space-between; }
 .ov-brand { font: 600 20px/1.2 var(--serif); letter-spacing: .05em; color: var(--accent); }
 .ov-tools { display: flex; gap: 6px; }
@@ -61,12 +67,19 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .ov-version { flex: 1; margin: 0 8px; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ov-collapse, .ov-rescan { background: none; border: 1px solid var(--line); border-radius: 8px; width: 28px; height: 28px; line-height: 1; color: var(--muted); }
 .ov-rescan:hover, .ov-collapse:hover { color: var(--accent); border-color: var(--accent); }
+/* The way out (hallway.js: the Hallway, or the place that linked here), beside the card's buttons. */
+.ov-hallway { display: inline-flex; align-items: center; height: 28px; padding: 0 9px; border: 1px solid var(--line); border-radius: 8px;
+  color: var(--muted); font-size: 13px; text-decoration: none; white-space: nowrap; max-width: 14em; overflow: hidden; text-overflow: ellipsis; }
+.ov-hallway:hover, .ov-hallway:focus-visible { color: var(--accent); border-color: var(--accent); }
 .ov-card.collapsed .ov-libs, .ov-card.collapsed .ov-open { display: none; }
 .ov-open { margin-top: 10px; }
 .ov-open-btn { padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--accent); }
 .ov-open-btn:hover { border-color: var(--accent); }
 .ov-open-hint { margin-top: 6px; color: var(--muted); font-size: 12px; line-height: 1.4; }
 .ov-reopen { margin-top: 6px; font-size: 12px; line-height: 1.6; color: var(--muted); }
+/* The shared session (together.js): who else is in it, and Leave. */
+.ov-session { margin-top: 6px; font-size: 12px; line-height: 1.6; color: var(--text); }
+.ov-session button { margin-left: 6px; padding: 1px 8px; font-size: 12px; }
 .ov-reopen-names { color: var(--text); }
 .ov-reopen button { margin-left: 6px; padding: 1px 8px; font-size: 12px; }
 .ov-open-hint a { color: var(--accent); }
@@ -144,6 +157,12 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .ov-update-never { text-decoration: underline; font-size: 13px; }
 .ov-update-close { font-size: 20px; line-height: 1; }
 .ov-update-pref { display: flex; align-items: center; gap: 8px; margin-top: 16px; color: var(--muted); font-size: 13px; }
+/* The accessibility settings (common's access.js), in the help dialog. */
+.ov-comfort { margin: 14px 0 0; padding: 8px 12px 10px; border: 1px solid var(--line); border-radius: 10px; color: var(--muted); font-size: 13px; }
+.ov-comfort legend { padding: 0 4px; color: var(--text); }
+.ov-comfort-note { color: var(--muted); }
+.ov-comfort label { display: flex; align-items: center; gap: 8px; min-height: 24px; margin-top: 4px; }
+.ov-comfort select { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px; font: inherit; }
 .ov-update-btn { padding: 4px 14px; border-radius: 999px; border: 1px solid var(--accent); background: var(--accent); color: #1a120a; font-weight: 600; }
 /* width: max-content, or a box at left: 50% shrinks to the half of the page right of its start: on
    a phone each toast wrapped into a tall oval over the search field. */
@@ -169,6 +188,22 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .ov-status-cancel { flex: none; padding: 0 7px; line-height: 1.4; }
 .ov-status-rows .ov-toast-bar { margin: 4px 0 0; height: 3px; }
 
+/* A short screen (a phone held sideways): the card stops above the buttons at the foot, and the
+   hint goes, as on a narrow one. */
+@media (max-height: 500px) {
+  .ov-card {
+    max-height: calc(100vh - max(12px, env(safe-area-inset-top)) - 72px - env(safe-area-inset-bottom));
+    max-height: calc(100dvh - max(12px, env(safe-area-inset-top)) - 72px - env(safe-area-inset-bottom));
+  }
+  .ov-hint { display: none; }
+  .ov-libs { max-height: none; overflow: visible; } /* one scroll, the card's, not one inside it */
+}
+/* Too narrow for the card and the search side by side, wider than a phone held upright: the
+   search takes the space beside the card. */
+@media (min-width: 641px) and (max-width: 780px) {
+  .ov-search { width: calc(100vw - 396px); }
+}
+
 @media (max-width: 640px) {
   .ov-card { width: calc(100vw - 24px); }
   .ov-search { top: auto; bottom: 74px; left: 12px; right: 12px; width: auto; }
@@ -180,10 +215,11 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 /* A ZIM's web address (milestone 3), the example read online, and a local library's × */
 .ov-url { display: flex; gap: 6px; margin-top: 8px; }
 .ov-url-input { flex: 1; min-width: 0; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--text); font-size: 13px; }
-.ov-url-input:focus { outline: none; border-color: var(--accent); }
+/* Focused: the gold border and, as every control, the 2 px outline (input:focus-visible). */
+.ov-url-input:focus { border-color: var(--accent); }
 .ov-url button { padding: 5px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--accent); }
 .ov-url button:hover { border-color: var(--accent); }
-.ov-try-btn { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; text-decoration: underline; cursor: pointer; }
+.ov-try-btn { padding: 0; min-height: 24px; border: 0; background: none; color: var(--accent); font: inherit; text-decoration: underline; cursor: pointer; } /* a 24 px target (WCAG 2.5.8) */
 .ov-lib-body { flex: 1; min-width: 0; }
 .ov-lib-close { flex: none; width: 24px; height: 24px; padding: 0; border-radius: 6px; border: 1px solid transparent; background: none; color: var(--muted); font-size: 16px; line-height: 1; }
 .ov-lib-close:hover { border-color: var(--line); color: var(--text); }
@@ -229,3 +265,88 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .ov-kiwix-index { display: inline-block; margin-left: 6px; padding: 0 7px; border-radius: 999px; border: 1px solid var(--line); font-size: 11px; line-height: 17px; color: var(--muted); }
 .ov-kiwix-index.here, .ov-kiwix-index.site { border-color: #6f8f4e; color: #a9c98a; }
 .ov-kiwix-index.build { border-style: dashed; }
+
+/* The text view (ui/text-view.js, SPEC §5.8): the open book's part as a page of text, over the 3D
+   view. The view itself is common's (text-view.js TEXT_VIEW_CSS, put first in <head>, so these come
+   after it): its themes (the reader's, reader.js THEMES: a test keeps them the same), toolbar,
+   contents, column, title and parts. Here, the text's own. */
+.tv-body h2, .tv-body h3, .tv-body h4, .tv-body h5, .tv-body h6 { line-height: 1.3; margin: 1.4em 0 .5em; }
+.tv-body p { margin: 0 0 .8em; text-align: justify; hyphens: auto; }
+.tv-body .tv-verse { text-align: left; hyphens: manual; }
+.tv-body .tv-ac { text-align: center; } .tv-body .tv-ar { text-align: right; }
+.tv-body figure { margin: 1em 0; text-align: center; }
+.tv-body img { max-width: 100%; height: auto; }
+.tv-body img.tv-inline { vertical-align: middle; }
+.tv-view[data-theme="night"] .tv-inv { filter: invert(1); }
+.tv-body pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .88em; line-height: 1.45; }
+.tv-table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: .95em; }
+.tv-table td, .tv-table th { border: 1px solid var(--tv-rule); padding: .25em .5em; vertical-align: top; overflow-wrap: anywhere; text-align: left; }
+.tv-list { list-style: none; margin: 0 0 .8em; padding-left: 1.4em; }
+.tv-list li { margin: .2em 0; }
+.tv-smallcaps { font-variant: small-caps; } .tv-larger { font-size: 1.15em; }
+.tv-view hr { border: 0; border-top: 1px solid var(--tv-rule); margin: 1.5em 0; }
+/* The overlay's "Text view" button: only while a book is open (on a screen: the overlay is not drawn in VR). */
+.ov-textview { height: 42px; padding: 0 16px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); color: var(--accent); font-weight: 600; backdrop-filter: blur(8px); }
+#overlay:not(.ov-reading) .ov-textview { display: none; }
+/* Toasts over the text view (z-index 3), under the dialogs. */
+.ov-toasts { z-index: 4; }
+/* A book's buttons for a TV's card (overlay.js): the letter keys a remote has not got. */
+.ov-book { display: none; flex-wrap: wrap; justify-content: center; gap: 8px; }
+.ov-book button { height: 42px; padding: 0 16px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); color: var(--accent); font-weight: 600; white-space: nowrap; backdrop-filter: blur(8px); }
+.ov-book button[aria-pressed="true"] { background: var(--accent); color: #24170a; }
+/* A shared session's invite as text (a TV's: nothing there copies it). */
+.ov-session-invite { color: var(--muted); }
+.ov-invite-link { color: var(--accent); font-weight: 600; overflow-wrap: anywhere; }
+
+/* A TV (SPEC §5.9; common's tv.js, html.tv; its README, "The TV app"): the ten-foot view of the
+   card, the search and the text view. Larger text, a focus ring seen from across the room (a dark
+   halo around it, for the paper of the text view too), margins inside a TV's overscan, the book's
+   buttons at the foot. Nothing opens a file of this device, and there is no VR. */
+html.tv { --tv-edge-x: 32px; --tv-edge-y: 24px; }
+html.tv, html.tv body { font-size: 18px; }
+html.tv :focus:not(canvas, .tv-view) { outline: 4px solid #ffd98a; outline-offset: 3px; box-shadow: 0 0 0 9px rgba(0, 0, 0, .65); }
+html.tv #app canvas:focus { outline: none; }
+html.tv :is(.ov-open-btn, .ov-reopen, .ov-files, .ov-drop, .ov-vr) { display: none !important; }
+html.tv .ov-comfort label:has(.ov-comfort-vignette, .ov-comfort-seated) { display: none; } /* VR's own */
+html.tv .pad-crosshair { width: 24px; height: 24px; margin: -14px 0 0 -14px; border-width: 3px; box-shadow: 0 0 0 2px rgba(0, 0, 0, .55); }
+html.tv .ov-card { top: var(--tv-edge-y); left: var(--tv-edge-x); width: min(420px, calc(50vw - var(--tv-edge-x) - 12px));
+  max-height: calc(100vh - var(--tv-edge-y) - 128px); max-height: calc(100dvh - var(--tv-edge-y) - 128px); padding: 12px 16px 14px; }
+html.tv .ov-search { top: var(--tv-edge-y); right: var(--tv-edge-x); width: min(420px, calc(50vw - var(--tv-edge-x) - 12px)); }
+html.tv :is(.ov-collapse, .ov-rescan) { width: 36px; height: 36px; }
+html.tv .ov-hallway { height: 36px; max-width: 9em; }
+html.tv .ov-brand { font-size: 22px; }
+html.tv .ov-lib-title { font-size: 19px; }
+html.tv .ov-r-title { font-size: 18px; }
+html.tv :is(.ov-version, .ov-hallway, .ov-lib-desc, .ov-lib-meta, .ov-open-hint, .ov-session, .ov-session button, .ov-r-sub, .ov-url-input,
+  .ov-help h3, .ov-view-note, .ov-debug-note, .ov-scene-note, .ov-reset-note, .ov-reset legend, .ov-comfort, .ov-update-pref, .ov-update-never,
+  .ov-status, .ov-status-line, .ov-status-toggle, .ov-status-stop, .ov-kiwix-note, .ov-kiwix-summary, .ov-kiwix-meta, .ov-kiwix-warn,
+  .ov-kiwix-lang, .ov-kiwix-find, .ov-kiwix-state, .ov-kiwix-index) { font-size: 16px; }
+/* On a TV the result OK opens is the one with the focus (↓ from the box): on the box OK is the keyboard's. */
+html.tv .ov-results li.sel { background: none; }
+html.tv .ov-results li:focus { background: rgba(217, 178, 106, .34); outline: 4px solid #ffd98a; outline-offset: -4px; box-shadow: none; }
+html.tv .ov-results li:focus .ov-r-sub { color: var(--text); } /* the muted line on the stronger highlight */
+html.tv .ov-libs { max-height: none; overflow: visible; } /* one scroll, the card's, which the remote's focus moves */
+html.tv :is(.ov-help-inner, .ov-kiwix-inner) { max-width: min(760px, calc(100vw - 2 * var(--tv-edge-x))); max-height: calc(100vh - 2 * var(--tv-edge-y)); }
+html.tv .ov-kiwix-inner { height: calc(100vh - 2 * var(--tv-edge-y)); }
+/* The foot: the bar (the help, a book's buttons, the text view) centred and wrapping, the hint
+   above it saying what the remote does now (overlay.js TV_HINTS), messages above that. */
+html.tv .ov-bottom, html.tv #overlay.ov-reading .ov-bottom { left: 50%; right: auto; bottom: var(--tv-edge-y); transform: translateX(-50%);
+  width: max-content; max-width: calc(100vw - 2 * var(--tv-edge-x)); flex-wrap: wrap; justify-content: center; gap: 8px; }
+html.tv #overlay.ov-bookout:not(.ov-reading) .ov-book-hand, html.tv #overlay.ov-reading .ov-book-open { display: flex; }
+html.tv .ov-hint { left: 50%; bottom: calc(var(--tv-edge-y) + 54px); transform: translateX(-50%); width: max-content; max-width: calc(100vw - 2 * var(--tv-edge-x));
+  padding: 5px 14px; text-align: center; font-size: 16px; color: var(--text); background: rgba(20, 15, 10, .72); white-space: pre-line; }
+html.tv .ov-toasts { bottom: calc(var(--tv-edge-y) + 100px); }
+html.tv .ov-status { right: var(--tv-edge-x); bottom: calc(var(--tv-edge-y) + 100px); }
+/* A book out: what would cover it goes (hidden, so the remote's up and down pass it by), its
+   buttons stay; reading, they are seen while the card has the focus (Menu), and the hint at the top. */
+html.tv #overlay.ov-bookout :is(.ov-card, .ov-search) { visibility: hidden; opacity: 0; transition: opacity .35s ease, visibility 0s .35s; }
+html.tv #overlay.ov-reading .ov-bottom { opacity: 0; }
+html.tv #overlay.ov-reading:focus-within .ov-bottom, html.tv #overlay.ov-reading .ov-help-btn { opacity: 1; }
+html.tv #overlay.ov-reading .ov-hint { opacity: .85; top: var(--tv-edge-y); bottom: auto; }
+html.tv #overlay.ov-reading:focus-within .ov-hint { top: auto; bottom: calc(var(--tv-edge-y) + 54px); }
+/* The text view: its toolbar and text inside the overscan, larger. */
+html.tv .tv-bar { padding: var(--tv-edge-y) var(--tv-edge-x) 10px; font-size: 18px; }
+html.tv :is(.tv-bar button, .tv-parts button, .tv-bar select) { min-height: 40px; padding: 4px 12px; }
+html.tv .tv-col { padding: 16px var(--tv-edge-x) 64px; }
+html.tv :is(.tv-sub, .tv-parts, .tv-toc) { font-size: 18px; }
+html.tv .tv-partno { font-size: 16px; }

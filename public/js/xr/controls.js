@@ -1,5 +1,7 @@
 // Input (SPEC §5.4): XR controllers and hands, mouse + keyboard, touch — unified into pointers
-// (world-space raycasters) and events, plus locomotion (teleport arc, snap turn, smooth move).
+// (world-space raycasters) and events, plus locomotion (teleport arc, snap or smooth turn, smooth
+// move; how, by the Hallway's choice: nav.js, setNav). A TV's remote (SPEC §5.9) is the keyboard's
+// arrows and Enter: keys are named by common's keyOf, as its OK has no code.
 //
 // Desktop uses drag-to-look rather than pointer lock (a deliberate deviation from the spec): it
 // keeps the DOM overlay usable and works in embedded browsers where pointer lock is refused.
@@ -9,6 +11,9 @@ import { firstPad, readPad } from './gamepad.js';
 import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
 import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js';
 import { PLAYER } from '../config.js';
+// The comfort vignette and the seated eye height: every site's (AriaMoKr/common access.js).
+import { eyeLift, Vignette } from '../../vendor/common/access.js';
+import { keyOf } from '../../vendor/common/tv.js';
 
 const DEADZONE = 0.15;
 const FLICK_ON = 0.7;
@@ -17,11 +22,13 @@ const RAY_LENGTH = 5;
 const DRAG_THRESHOLD = 6; // px before a press becomes a drag (look) instead of a click
 const ARC_SPEED = 7.5;
 const GRAVITY = 9.8;
+const SMOOTH_TURN = 1.6; // radians per second at full stick, turn 'smooth' (the Hallway's)
 
 const _v = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 const _q = new THREE.Quaternion();
 const _up = new THREE.Vector3(0, 1, 0);
+const _head = new THREE.Vector3();
 /** The xr-standard buttons that raise 'button' events, per hand (fixed: _pollXR runs every frame). */
 const BUTTON_NAMES = {
   left: { 4: 'x', 5: 'y', 3: 'stick', 12: 'menu' },
@@ -37,7 +44,7 @@ function makePointerVisual() {
   line.name = 'pointer-ray';
   const cursor = new THREE.Mesh(
     new THREE.RingGeometry(0.006, 0.011, 24),
-    // forceSinglePass: one pass, not two with a program check each (see ui/panel.js); flat.
+    // forceSinglePass: one pass, not two with a program check each (see common's panel.js); flat.
     new THREE.MeshBasicMaterial({ color: 0xfff1d0, transparent: true, opacity: 0.95, depthTest: false, side: THREE.DoubleSide, forceSinglePass: true }),
   );
   cursor.renderOrder = 30;
@@ -80,7 +87,15 @@ export class Controls extends EventTarget {
     this.world = world;
     this.dom = domElement;
     this.locomotionEnabled = true;
-    this.smoothMove = true;
+    /** How to move and turn in VR (nav.js, setNav): move 'smooth' | 'teleport', turn 'snap' | 'smooth'. */
+    this.move = 'smooth';
+    this.turn = 'snap';
+    /** The comfort vignette (common's Vignette): closes in while the stick walks or turns smoothly in VR. */
+    this.vignette = new Vignette(camera, true);
+    /** How far the eye is raised in VR (common's eyeLift: seated). */
+    this.eyeLift = 0;
+    this._speed = 0; // this frame's smooth walking, m/s, and turning, rad/s (the vignette's)
+    this._turnRate = 0;
     this.snapAngle = PLAYER.snapTurn;
     this.pointers = [];
     this.yaw = 0;
@@ -103,6 +118,15 @@ export class Controls extends EventTarget {
     // True while a 3D text field takes the keyboard (the kiosk's search, set by interaction.js):
     // characters, Backspace, Enter and Escape are then text, not walking or turning.
     this.textEntry = false;
+    // A TV's remote (main.js, ui/remote.js): the middle of the view is a pointer, as a gamepad's,
+    // with its dot (aimShown: not while the page's card has the focus), and ↑ ↓ may be a list's
+    // (scrollKey(dir) → true when it took the key: interaction.js scrollUnderDot).
+    this.aimMiddle = false;
+    this.aimShown = true;
+    this.scrollKey = null;
+    this._listKey = null; // the arrow a list took with its press, and takes until let go
+    /** A gamepad's B: set on a TV (the remote's Back, padBack), else a 'button' b event. */
+    this.onPadBack = null;
     this._pad = this._makePad();
     this._bindDom();
     this._teleport = this._makeTeleportVisual();
@@ -252,16 +276,47 @@ export class Controls extends EventTarget {
     }
   }
 
+  /** The XR controllers, each { controller, source, … }: the shared session's hands (together.js). */
+  get xrInputs() {
+    return this._xr;
+  }
+
+  /** The accessibility settings (common's access.js): the vignette on or off, the seated eye height. */
+  setAccess(access) {
+    this.vignette.enabled = !!access.vignette;
+    this.eyeLift = eyeLift(access);
+  }
+
+  /** Sets how to move and turn in VR (nav.js): move 'smooth' | 'teleport', turn 'snap' | 'smooth'. */
+  setNav({ move, turn }) {
+    this.move = move === 'teleport' ? 'teleport' : 'smooth';
+    this.turn = turn === 'smooth' ? 'smooth' : 'snap';
+    // A left stick that stops aiming: no arc left behind.
+    if (this.move !== 'teleport') {
+      for (const e of this._xr) if (e.aiming && (e.pointer?.hand || (e.index === 0 ? 'left' : 'right')) !== 'right') this._endAim(e, false);
+    }
+  }
+
   _xrLocomotion(e, hand, x, y, dt) {
+    // Teleport: push forward to aim, release to jump. The right stick always; the left one too
+    // when moving by teleport (as in the Hallway), one arc at a time.
+    if ((hand === 'right' || this.move === 'teleport') && !e.aiming && y < -0.6 && !this._aiming()) {
+      e.aiming = true;
+      this._syncRay(e);
+    }
+    if (e.aiming) {
+      this._updateAim(e);
+      if (y > -0.3) this._endAim(e, true);
+    }
     if (hand === 'right') {
-      // Teleport: push forward to aim, release to jump.
-      if (!e.aiming && y < -0.6) {
-        e.aiming = true;
-        this._syncRay(e);
-      }
       if (e.aiming) {
-        this._updateAim(e);
-        if (y > -0.3) this._endAim(e, true);
+        // no turning while aiming
+      } else if (this.turn === 'smooth') {
+        // Held sideways (more than forward, which aims): turning while held.
+        if (Math.abs(x) > DEADZONE && Math.abs(x) > Math.abs(y)) {
+          this._rotateAroundViewer(-x * SMOOTH_TURN * dt);
+          this._turnRate = Math.abs(x) * SMOOTH_TURN;
+        }
       } else if (e.flicks.left && !e._turned) {
         e._turned = 'left';
         this.snapTurn(this.snapAngle);
@@ -270,9 +325,16 @@ export class Controls extends EventTarget {
         this.snapTurn(-this.snapAngle);
       }
       if (!e.flicks.left && !e.flicks.right) e._turned = null;
-    } else if (this.smoothMove && (Math.abs(x) > DEADZONE || Math.abs(y) > DEADZONE)) {
+    } else if (this.move === 'smooth' && (Math.abs(x) > DEADZONE || Math.abs(y) > DEADZONE)) {
       this._move(-y, x, PLAYER.walkSpeed * dt);
+      this._speed = PLAYER.walkSpeed * Math.min(1, Math.hypot(x, y));
     }
+  }
+
+  /** Whether a controller is aiming a teleport (the arc is one). */
+  _aiming() {
+    for (let i = 0; i < this._xr.length; i++) if (this._xr[i].aiming) return true;
+    return false;
   }
 
   _makeTeleportVisual() {
@@ -284,7 +346,7 @@ export class Controls extends EventTarget {
     const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0x9be7ff, transparent: true, opacity: 0.85 }));
     line.frustumCulled = false;
     const ring = new THREE.Mesh(new THREE.RingGeometry(0.22, 0.27, 40),
-      // One pass (see ui/panel.js): of one colour, the arrow's faces blend the same in any order.
+      // One pass (see common's panel.js): of one colour, the arrow's faces blend the same in any order.
       new THREE.MeshBasicMaterial({ color: 0x9be7ff, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false, forceSinglePass: true }));
     ring.rotation.x = -Math.PI / 2;
     const arrow = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.16, 12), ring.material);
@@ -436,8 +498,9 @@ export class Controls extends EventTarget {
   }
 
   _rotateAroundViewer(angle) {
-    const head = this.viewerPosition(new THREE.Vector3());
-    this.rig.position.sub(head).applyAxisAngle(new THREE.Vector3(0, 1, 0), angle).add(head);
+    // Every frame while turning smoothly: nothing allocated (GC pauses on a Quest).
+    const head = this.viewerPosition(_head);
+    this.rig.position.sub(head).applyAxisAngle(_up, angle).add(head);
     this.rig.rotation.y += angle;
     if (!this.presenting) this.yaw = this.rig.rotation.y;
     this.rig.updateMatrixWorld(true);
@@ -540,15 +603,17 @@ export class Controls extends EventTarget {
     const P = this._pad;
     const s = P.state;
     if (!s) return;
-    P.pointer.raycaster.setFromCamera(SCREEN_CENTRE, this.camera);
     const key = (k, code, pressed) => this._emit('key', { key: k, code, pressed });
     const each = (names, pressed) => {
       for (const name of names) {
         if (name === 'a') {
           if (pressed) this._emit('select', { pointer: P.pointer });
           this._emit('button', { hand: 'right', name: 'a', pressed });
-        } else if (name === 'b' || name === 'back') this._emit('button', { hand: 'right', name: 'b', pressed });
-        else if (name === 'x') key('t', 'KeyT', pressed); // contents
+        } else if (name === 'b' || name === 'back') {
+          if (!this.onPadBack) this._emit('button', { hand: 'right', name: 'b', pressed });
+          else if (pressed) this.onPadBack();
+        }
+        else if (name === 'x') key('c', 'KeyC', pressed); // contents
         else if (name === 'y') key('n', 'KeyN', pressed); // page theme
         else if (name === 'lb' || name === 'left') key('ArrowLeft', 'ArrowLeft', pressed);
         else if (name === 'rb' || name === 'right') key('ArrowRight', 'ArrowRight', pressed);
@@ -627,17 +692,31 @@ export class Controls extends EventTarget {
       this._emit('wheel', { deltaY: e.deltaY });
     }, { passive: false });
     window.addEventListener('keydown', (e) => {
-      if (isTyping(e)) return;
+      // A key the page has used already (the TV remote's OK: common's Remote, use()).
+      if (isTyping(e) || pressesControl(e) || e.defaultPrevented) return;
+      const code = keyOf(e);
       const text = this.textEntry && !e.ctrlKey && !e.metaKey && !e.altKey
         && (e.key.length === 1 || ['Backspace', 'Enter', 'Escape'].includes(e.key));
-      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' ', 'PageUp', 'PageDown'].includes(e.key) || (text && e.key === 'Backspace')) e.preventDefault();
+      // ↑ ↓ for the list the dot is on (a TV): its press decides, and its repeats follow it.
+      if (this.scrollKey && !text && (code === 'ArrowUp' || code === 'ArrowDown')) {
+        const dir = code === 'ArrowDown' ? 1 : -1;
+        if (!e.repeat) this._listKey = this.scrollKey(dir) ? code : null;
+        else if (this._listKey === code) this.scrollKey(dir);
+        if (this._listKey === code) {
+          e.preventDefault();
+          return;
+        }
+      }
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' ', 'PageUp', 'PageDown'].includes(code) || (text && e.key === 'Backspace')) e.preventDefault();
       // Typed keys repeat while held, like in any text field.
-      if (!e.repeat || text) this._emit('key', { code: e.code, key: e.key, pressed: true, shift: e.shiftKey, text });
-      if (!text) this._keys.add(e.code);
+      if (!e.repeat || text) this._emit('key', { code, key: e.key, pressed: true, shift: e.shiftKey, text });
+      if (!text) this._keys.add(code);
     });
     window.addEventListener('keyup', (e) => {
-      this._keys.delete(e.code);
-      if (!isTyping(e)) this._emit('key', { code: e.code, key: e.key, pressed: false });
+      const code = keyOf(e);
+      this._keys.delete(code);
+      if (this._listKey === code) this._listKey = null;
+      if (!isTyping(e)) this._emit('key', { code, key: e.key, pressed: false });
     });
     window.addEventListener('blur', () => this._keys.clear());
   }
@@ -747,20 +826,44 @@ export class Controls extends EventTarget {
     }
     this.rig.updateMatrixWorld(true);
     this._updateScreenRay(this._mouse.pointer);
+    if (this._pad.active || this.aimMiddle) this._pad.pointer.raycaster.setFromCamera(SCREEN_CENTRE, this.camera);
     this._padEvents(dt);
   }
 
   /** Per frame: poll input, apply locomotion, refresh pointer rays and the active pointer list. */
   update(dt) {
     this.pointers.length = 0;
+    this._speed = 0;
+    this._turnRate = 0;
+    // Seated, the eye is raised in VR (and only there: a screen's view has its own height).
+    const lift = this.presenting ? this.eyeLift : 0;
+    if (this.rig.position.y !== lift) {
+      this.rig.position.y = lift;
+      this.rig.updateMatrixWorld(true);
+    }
     if (this.presenting) {
       this._pollXR(dt);
       for (const e of this._xr) if (e.pointer) this.pointers.push(e.pointer);
+      this.vignette.update(dt, this._speed, this._turnRate, true);
     } else {
+      this.vignette.update(dt, 0, 0, false);
       this._desktopUpdate(dt);
-      if (this._pad.active) this.pointers.push(this._pad.pointer);
-      else if (this._mouse.inside) this.pointers.push(this._mouse.pointer);
+      const P = this._pad;
+      if (P.active || this.aimMiddle) this.pointers.push(P.pointer);
+      if (!P.active && this._mouse.inside) this.pointers.push(this._mouse.pointer);
+      const dot = P.active || (this.aimMiddle && this.aimShown);
+      if (P.crosshair.hidden === dot) P.crosshair.hidden = !dot;
     }
+  }
+
+  /**
+   * The pointer at the middle of the view (a gamepad's, and a TV remote's OK), its ray from the
+   * camera as it is now: for a key pressed between frames.
+   */
+  get aimPointer() {
+    this.camera.updateWorldMatrix(true, false);
+    this._pad.pointer.raycaster.setFromCamera(SCREEN_CENTRE, this.camera);
+    return this._pad.pointer;
   }
 
   /** Called when an XR session ends: restore the desktop camera pose facing the same way. */
@@ -780,7 +883,13 @@ export class Controls extends EventTarget {
   }
 }
 
+/** Keys typed into a field, or pressed in something that handles its own (data-own-keys: the text view). */
 function isTyping(e) {
   const t = e.target;
-  return t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
+  return t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || !!t.closest?.('[data-own-keys]'));
+}
+
+/** Enter or Space on a button or link of the page (a TV's OK in the card): it presses that, not the view's key. */
+function pressesControl(e) {
+  return (e.key === 'Enter' || e.key === ' ') && !!e.target?.closest?.('button, a[href], summary, [role="button"]');
 }

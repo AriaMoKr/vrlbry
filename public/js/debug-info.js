@@ -145,7 +145,7 @@ export function debugReport(app, { overlay = app?.overlay } = {}) {
     book: scene.book,
     ui: scene.ui,
     settings: part(() => ({
-      ...scene.settings, smoothMove: s.smoothMove, sound: s.sound, updateNotices: s.updateNotices,
+      ...scene.settings, smoothMove: s.smoothMove, nav: I.nav, access: I.access, reducedMotion: I.reduced, sound: s.sound, updateNotices: s.updateNotices,
     })),
     errors: recentErrors(),
   };

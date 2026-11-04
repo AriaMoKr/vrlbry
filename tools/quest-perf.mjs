@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs, promisify } from 'node:util';
+import { launchChrome } from 'common/tools/chrome.mjs';
 
 const execFileP = promisify(execFile);
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -20,6 +21,8 @@ Commands:
   status   check adb, the headset and the vrlbry page
   dump     save what the page has recorded so far (use vrlbry with ?perf first)
   run      run the built-in scenarios in the page, then save the dump
+  handover enter VR, take the page's way out and watch the next page: whether Quest Browser
+           granted it a session and whether it took it, with the times (SPEC §5.7; no dump)
 
 Options:
   --open           open http://localhost:<port>/?perf in Quest Browser first (sets up adb reverse)
@@ -31,17 +34,26 @@ Options:
   --out <dir>      where to write the dump (default perf/)
   --serial <id>    adb device serial, when several devices are connected
   --no-gc          do not trace garbage collection during run (on by default)
-  --no-prox        leave the proximity sensor alone during run (by default run makes the headset
-                   act as if worn, and gives the sensor back at the end)
-  --cdp <url>      use this DevTools endpoint instead of the headset (e.g. http://127.0.0.1:9222
-                   for a desktop browser started with --remote-debugging-port); skips adb
+  --no-prox        leave the proximity sensor alone during run and handover (by default they make
+                   the headset act as if worn, and give the sensor back at the end)
+  --runs <n>       handover: how many times (default 3)
+  --to <url>       handover: where the way out leads (default: the page itself; Quest Browser
+                   grants only within one origin, so another one shows what a visitor gets there)
+  --delay <ms>     handover: hold the next page's granted request back this long (a grant lasts
+                   about 5 s from the page's start)
+  --desktop        measure on this PC instead of the headset: a Chrome window of its own opens
+                   http://localhost:<port>/?perf (common's launchChrome, on a new profile set up so
+                   Windows sees no failed logon) and is closed at the end; skips adb, and the
+                   scenarios run in 2D. It draws while covered, not while minimized or with the
+                   screen locked. CHROME_PATH chooses the browser.
   -h, --help       this help
 
 The headset must be connected (USB or adb over Wi-Fi) with USB debugging allowed for this PC.
 The scenarios move you around the library (smooth gliding along aisles): wearing the headset is
 optional. A headset nobody wears stops rendering, so run overrides its proximity sensor for the run
 (PROXIMITY: as if worn, then the sensor given back, also when the run fails or is stopped; a
-restart of the headset gives it back too). No tape on the sensor needed.`;
+restart of the headset gives it back too). No tape on the sensor needed. handover starts VR from
+here; the first time, Quest Browser asks in the headset to allow VR for the page's address.`;
 
 /**
  * Meta's power manager broadcasts (adb): the headset acts as if worn, its proximity sensor
@@ -308,6 +320,77 @@ async function startGcTrace(cdp) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// The VR hand-over (handover, exported for tests): after a navigation from an immersive session,
+// Quest Browser grants the next page a session without a click (sessiongranted, SPEC §5.7)
+
+/**
+ * The page a hand-over starts from: the open page's address without its query, its way out
+ * (?back=) leading to `to`, else to the page itself.
+ */
+export function handoverStart(pageUrl, to) {
+  const u = new URL(pageUrl);
+  const self = `${u.origin}${u.pathname}`;
+  const start = new URL(self);
+  start.searchParams.set('back', to || self);
+  start.searchParams.set('backname', 'hand-over test');
+  return start.href;
+}
+
+/**
+ * Runs before every document in the tab (Page.addScriptToEvaluateOnNewDocument), whatever its
+ * site: notes in window.__handover (performance.now() times) when the page loaded, when the grant
+ * came, and what became of the session it asked for. `delayMs` holds a granted request back that
+ * long, to find how long a grant lasts.
+ */
+export function handoverProbe(delayMs = 0) {
+  const delay = Math.max(0, Math.round(Number(delayMs) || 0));
+  return `(() => {
+  const ho = window.__handover = {};
+  addEventListener('load', () => { ho.load = performance.now(); });
+  const note = (m) => { (ho.errors ||= []).push(String(m).slice(0, 160)); };
+  addEventListener('error', (e) => note(e.message || e.type));
+  addEventListener('unhandledrejection', (e) => note(e.reason && e.reason.message || e.reason));
+  const xr = navigator.xr;
+  if (!xr || !xr.requestSession) return;
+  xr.addEventListener('sessiongranted', () => { ho.granted = performance.now(); });
+  const request = xr.requestSession.bind(xr);
+  const ask = (args) => {
+    ho.asked = performance.now();
+    return request(...args).then((s) => {
+      ho.started = performance.now();
+      s.addEventListener('end', () => { ho.ended = performance.now(); });
+      return s;
+    }, (err) => { ho.failed = performance.now(); ho.error = String(err && err.message || err); throw err; });
+  };
+  xr.requestSession = (...args) => {
+    ho.requested = performance.now();
+    if (ho.granted == null || !${delay}) return ask(args);
+    return new Promise((r) => setTimeout(r, ${delay})).then(() => ask(args));
+  };
+})();`;
+}
+
+/** One hand-over's outcome from the next page's window.__handover: a line, and whether it is in VR. */
+export function describeHandover(ho) {
+  const ms = (v) => `${Math.round(v)} ms`;
+  const inVr = ho.started != null && ho.ended == null;
+  const parts = [`load ${ho.load != null ? ms(ho.load) : '—'}`];
+  if (ho.granted == null) parts.push('no grant (Quest Browser grants only within one origin)');
+  else parts.push(`granted ${ms(ho.granted)}`);
+  if (ho.requested == null) {
+    if (ho.granted != null) parts.push('never asked for a session');
+  } else {
+    parts.push(`asked ${ms(ho.requested)}`);
+    if (ho.asked != null && ho.asked - ho.requested >= 1) parts.push(`held back to ${ms(ho.asked)}`);
+  }
+  if (ho.started != null) parts.push(`started ${ms(ho.started)}`);
+  if (ho.failed != null) parts.push(`refused ${ms(ho.failed)} (${ho.error})`);
+  if (ho.ended != null) parts.push(`ended ${ms(ho.ended)}`);
+  if (ho.errors?.length) parts.push(`errors: ${ho.errors.join('; ')}`);
+  return { inVr, line: `${inVr ? 'in VR' : '2D'} · ${parts.join(' · ')} (times from the page's start)` };
+}
+
+// ---------------------------------------------------------------------------------------------
 // adb
 
 function adbArgs(opts, args) {
@@ -465,11 +548,15 @@ async function listPages(endpoint) {
   return (await res.json()).filter((p) => p.type === 'page');
 }
 
-/** Connects to the open vrlbry page (the one defining window.__vrlbry), waiting up to `waitMs`. */
-async function connectPage(endpoint, { waitMs = 0 } = {}) {
+/**
+ * Connects to the open vrlbry page (the one defining window.__vrlbry), waiting up to `waitMs`;
+ * with `prefer`, only one whose address starts with it (the page --open opened, not another tab).
+ */
+async function connectPage(endpoint, { waitMs = 0, prefer = null } = {}) {
   const until = Date.now() + waitMs;
   for (;;) {
     for (const page of await listPages(endpoint).catch(() => [])) {
+      if (prefer && !page.url.startsWith(prefer)) continue;
       // Rebuild the socket URL on our forwarded port (Android may report a different host).
       const url = `${endpoint.replace(/^http/, 'ws')}/devtools/page/${page.id}`;
       const cdp = await Cdp.connect(url).catch(() => null);
@@ -498,6 +585,72 @@ async function waitFor(fn, ms, what) {
 
 // ---------------------------------------------------------------------------------------------
 // Commands
+
+/** Polls the page every 100 ms until `expression` is truthy (its value), or null after `ms`. */
+async function pollPage(cdp, expression, ms) {
+  const until = Date.now() + ms;
+  for (;;) {
+    const v = await cdp.eval(expression).catch(() => null);
+    if (v) return v;
+    if (Date.now() >= until) return null;
+    await sleep(100);
+  }
+}
+
+/**
+ * handover: from a fresh start page, enters VR, takes the way out as the stand's button does and
+ * watches the next page (handoverProbe), `opts.runs` times.
+ */
+async function handover(cdp, opts) {
+  const self = await cdp.eval('location.origin + location.pathname');
+  const start = handoverStart(self, opts.to);
+  const runs = Math.max(1, Number(opts.runs) || 3);
+  const delay = Math.max(0, Number(opts.delay) || 0);
+  const endSession = () => cdp.eval('window.__vrlbry?.renderer.xr.getSession()?.end(), true').catch(() => {});
+  await cdp.send('Page.enable');
+  // VR starts only in the tab in front (another window's tab may be).
+  await cdp.send('Page.bringToFront').catch(() => {});
+  const { identifier } = await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: handoverProbe(delay) });
+  console.log(`Hand-over from ${start}${delay ? `, a granted request held back ${delay} ms` : ''}:`);
+  let inVr = 0;
+  try {
+    for (let run = 1; run <= runs; run++) {
+      await endSession();
+      await sleep(1500);
+      await cdp.send('Page.navigate', { url: start });
+      if (!(await pollPage(cdp, '!!(window.__handover && window.__vrlbry)', 60000))) throw new Error(`${start} did not load`);
+      await sleep(2000);
+      await cdp.eval('window.__vrlbry.enterVR(), true', { userGesture: true });
+      if (!(await pollPage(cdp, 'window.__vrlbry.renderer.xr.isPresenting', 15000))) {
+        throw new Error('could not enter VR from here: allow VR for this address in the headset (Quest Browser asks once per origin), then try again');
+      }
+      await sleep(2000);
+      const way = await cdp.eval('window.__vrlbry.interaction.wayOut ?? null');
+      if (!way) throw new Error('this vrlbry has no way out (an older version)');
+      const before = await cdp.eval('performance.timeOrigin');
+      // As the door and the stand's button do (leave: a fade, then the way out), else (an older
+      // version) straight there.
+      cdp.eval('(I => (I.leave ? I.leave() : I.onHallway(), true))(window.__vrlbry.interaction)', { userGesture: true }).catch(() => {});
+      const arrived = await pollPage(cdp, `performance.timeOrigin !== ${before} && document.readyState !== 'loading' && location.href`, 20000);
+      if (!arrived) throw new Error(`the way out (${way.url}) did not navigate`);
+      // A grant lasts about 5 s from the page's start: wait past that (and the delay) for the outcome.
+      await pollPage(cdp, 'window.__handover && (window.__handover.started != null || window.__handover.failed != null)', 8000 + delay);
+      await sleep(2000);
+      const result = describeHandover(await cdp.eval('({ ...window.__handover })'));
+      if (result.inVr) inVr++;
+      console.log(`  run ${run}: ${way.label} → ${arrived}\n    ${result.line}`);
+    }
+    console.log(`${inVr} of ${runs} stayed in VR.`);
+  } finally {
+    await cdp.send('Page.removeScriptToEvaluateOnNewDocument', { identifier }).catch(() => {});
+    // Back to the library (from wherever the way out led), out of VR.
+    if (!(await cdp.eval('!!window.__vrlbry').catch(() => false))) {
+      await cdp.send('Page.navigate', { url: self }).catch(() => {});
+      await pollPage(cdp, '!!window.__vrlbry', 30000);
+    }
+    await endSession();
+  }
+}
 
 function printSummary(dump) {
   const s = dump.page?.summary;
@@ -554,41 +707,76 @@ async function main() {
     options: {
       open: { type: 'boolean' }, port: { type: 'string', default: '8080' }, only: { type: 'string' },
       'enter-vr': { type: 'boolean' }, 'allow-2d': { type: 'boolean' }, out: { type: 'string', default: path.join(ROOT, 'perf') },
-      serial: { type: 'string' }, cdp: { type: 'string' }, 'no-gc': { type: 'boolean' }, 'no-prox': { type: 'boolean' },
+      serial: { type: 'string' }, desktop: { type: 'boolean' }, 'no-gc': { type: 'boolean' }, 'no-prox': { type: 'boolean' },
+      runs: { type: 'string', default: '3' }, to: { type: 'string' }, delay: { type: 'string', default: '0' },
       help: { type: 'boolean', short: 'h' },
     },
   });
   const command = positionals[0];
-  if (opts.help || !['status', 'dump', 'run'].includes(command)) {
+  if (opts.help || !['status', 'dump', 'run', 'handover'].includes(command)) {
     console.log(HELP);
     process.exitCode = opts.help ? 0 : 1;
     return;
   }
-  const useAdb = !opts.cdp;
+  const useAdb = !opts.desktop;
+  const pageUrl = `http://localhost:${opts.port}/?perf`;
   const dump = { tool: 'quest-perf', version: 1, command, startedAt: new Date().toISOString(), snapshots: [] };
   let release = async () => {};
   let logger = null;
   let gcTrace = null;
   let cdp = null;
   let proximityHeld = false;
+  let cleaned = false;
+  const cleanup = async () => {
+    if (cleaned) return;
+    cleaned = true;
+    logger?.stop();
+    cdp?.close();
+    await release();
+    if (proximityHeld) {
+      await adb(opts, ...PROXIMITY.sensor).then(() => console.log('The proximity sensor is back in charge.'),
+        (err) => console.warn(`Could not give the proximity sensor back (${err.message}): restart the headset, or run adb ${PROXIMITY.sensor.join(' ')}`));
+    }
+  };
+  // Stopped with Ctrl+C: the desktop's window closed and the headset's sensor given back all the same.
+  const onSigint = () => {
+    console.log('\nStopping…');
+    cleanup().finally(() => process.exit(130));
+  };
+  process.once('SIGINT', onSigint);
   try {
     if (useAdb) {
       await chooseDevice(opts);
       dump.device = { serial: opts.serial, ...(await deviceInfo(opts)) };
       console.log(`Headset: ${dump.device.model} (${opts.serial}) · build ${dump.device.build} · Quest Browser ${dump.device.browser ?? '?'}`);
-      if (command === 'run' && !opts['no-prox']) {
+      if ((command === 'run' || command === 'handover') && !opts['no-prox']) {
         await adb(opts, ...PROXIMITY.worn);
         proximityHeld = true;
-        console.log('The headset acts as if worn (its proximity sensor overridden) until the run ends.');
+        console.log(`The headset acts as if worn (its proximity sensor overridden) until the ${command} ends.`);
       }
       if (opts.open) {
         await adb(opts, 'reverse', `tcp:${opts.port}`, `tcp:${opts.port}`);
-        await adb(opts, 'shell', 'am', 'start', '-a', 'android.intent.action.VIEW', '-d', `http://localhost:${opts.port}/?perf`);
-        console.log(`Opened http://localhost:${opts.port}/?perf in the headset.`);
+        await adb(opts, 'shell', 'am', 'start', '-a', 'android.intent.action.VIEW', '-d', pageUrl);
+        console.log(`Opened ${pageUrl} in the headset.`);
       }
     }
-    const fwd = useAdb ? await forwardDevtools(opts) : { endpoint: opts.cdp.replace(/\/$/, ''), release: async () => {} };
+    let fwd;
+    if (useAdb) fwd = await forwardDevtools(opts);
+    else {
+      // A window of its own: current Chrome opens its DevTools port only on a new profile, and
+      // launchChrome writes that profile's Local State first, so Windows sees no failed logon. It
+      // keeps drawing when other windows cover it (Chrome would count it hidden and stop its frames,
+      // and the scenarios would wait), though not while minimized or with the screen locked.
+      const chrome = await launchChrome({
+        headless: false,
+        url: pageUrl,
+        args: ['--window-size=1280,800', '--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding', '--disable-background-timer-throttling'],
+      });
+      console.log(`Opened ${pageUrl} in a Chrome window of its own (${chrome.endpoint}).`);
+      fwd = { endpoint: chrome.endpoint, release: () => chrome.close() };
+    }
     release = fwd.release;
+    const opened = opts.open || !useAdb;
     // Scenario progress from the page; a memory snapshot at the end of each scenario.
     const attach = async (c) => {
       await c.send('Runtime.enable');
@@ -601,7 +789,8 @@ async function main() {
       });
       return c;
     };
-    ({ cdp } = await connectPage(fwd.endpoint, { waitMs: opts.open ? 60000 : 0 }));
+    ({ cdp } = await connectPage(fwd.endpoint, { waitMs: opened ? 60000 : 0, prefer: opened ? pageUrl : null }));
+    if (command === 'handover') return await handover(cdp, opts);
     await attach(cdp);
 
     // Whether the page records (?perf) and runs the code the server has now: a page opened before
@@ -644,7 +833,7 @@ async function main() {
     console.log(describe(state));
 
     if (command === 'run') {
-      if (!state.presenting && !opts['allow-2d']) {
+      if (!state.presenting && useAdb && !opts['allow-2d']) {
         if (opts['enter-vr']) await cdp.eval('window.__vrlbry.enterVR()', { userGesture: true }).catch(() => {});
         if (!(await cdp.eval('window.__vrlbry.renderer.xr.isPresenting'))) {
           console.log('Waiting for VR: put the headset on and press Enter VR (up to 3 minutes)…');
@@ -681,13 +870,8 @@ async function main() {
     const shown = path.relative(process.cwd(), file);
     console.log(`\nSaved ${shown.startsWith('..') ? file : shown} (${Math.round(fs.statSync(file).size / 1024)} KB)`);
   } finally {
-    logger?.stop();
-    cdp?.close();
-    await release();
-    if (proximityHeld) {
-      await adb(opts, ...PROXIMITY.sensor).then(() => console.log('The proximity sensor is back in charge.'),
-        (err) => console.warn(`Could not give the proximity sensor back (${err.message}): restart the headset, or run adb ${PROXIMITY.sensor.join(' ')}`));
-    }
+    process.removeListener('SIGINT', onSigint);
+    await cleanup();
   }
 }
 

@@ -1,3 +1,4 @@
+// @ts-check
 // Textures from canvases (or from ImageBitmaps painted by the atlas worker) with the settings every
 // world texture wants.
 

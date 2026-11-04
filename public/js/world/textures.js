@@ -159,35 +159,6 @@ export function makePlasterCanvas({ w = 512, h = 512, base = '#b9a88c', seed = 5
   return c;
 }
 
-/** Evening sky for the windows: deep blue to amber horizon, a few stars. */
-export function makeSkyCanvas({ w = 256, h = 512 } = {}) {
-  const c = newCanvas(w, h);
-  const g = c.getContext('2d');
-  const grd = g.createLinearGradient(0, 0, 0, h);
-  grd.addColorStop(0, '#0d1633');
-  grd.addColorStop(0.45, '#2c3f73');
-  grd.addColorStop(0.75, '#b9786a');
-  grd.addColorStop(0.9, '#f0b36c');
-  grd.addColorStop(1, '#f7cf8a');
-  g.fillStyle = grd;
-  g.fillRect(0, 0, w, h);
-  const r = rng(11);
-  for (let i = 0; i < 40; i++) {
-    g.globalAlpha = 0.3 + r() * 0.7;
-    g.fillStyle = '#fff';
-    g.fillRect(r() * w, r() * h * 0.45, 1.5, 1.5);
-  }
-  g.globalAlpha = 1;
-  // Distant tree line silhouette.
-  g.fillStyle = '#1b1612';
-  g.beginPath();
-  g.moveTo(0, h);
-  for (let x = 0; x <= w; x += 6) g.lineTo(x, h * 0.92 - Math.abs(Math.sin(x * 0.07) * 18 + Math.sin(x * 0.21) * 8));
-  g.lineTo(w, h);
-  g.fill();
-  return c;
-}
-
 /** Page-edge texture: fine horizontal lines on cream (used for the book block sides). */
 export function makePageEdgeCanvas({ w = 64, h = 256 } = {}) {
   const c = newCanvas(w, h);

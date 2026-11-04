@@ -5,7 +5,7 @@ import { describe, it } from 'node:test';
 import { Recorder, MAX_FRAMES } from '../public/js/perf.js';
 import {
   devtoolsSockets, parseVrApiLine, parseMeminfo, parseBattery, summarizeVrApi, parseAdbDevices, isNetworkSerial,
-  keepTraceEvent, gcPauses, summarizeGc, TRACE_SYNC_MARK, atlasStalls, PROXIMITY,
+  keepTraceEvent, gcPauses, summarizeGc, TRACE_SYNC_MARK, atlasStalls, PROXIMITY, handoverStart, handoverProbe, describeHandover,
 } from '../tools/quest-perf.mjs';
 
 const HZ72 = 1000 / 72;
@@ -153,14 +153,15 @@ Total RSS by OOM adjustment:
   });
 
   it('lists adb devices from Windows output (CRLF), with their state', () => {
-    const out = 'List of devices attached\r\n2G0YC1ZG3P071X\tdevice\r\n192.168.50.176:5555\tdevice\r\nABC\tunauthorized\r\n\r\n';
+    // A made-up serial, and an address from the documentation range (RFC 5737), no one's own.
+    const out = 'List of devices attached\r\nHEADSET0000001\tdevice\r\n192.0.2.10:5555\tdevice\r\nABC\tunauthorized\r\n\r\n';
     assert.deepEqual(parseAdbDevices(out), [
-      { serial: '2G0YC1ZG3P071X', state: 'device' }, { serial: '192.168.50.176:5555', state: 'device' }, { serial: 'ABC', state: 'unauthorized' },
+      { serial: 'HEADSET0000001', state: 'device' }, { serial: '192.0.2.10:5555', state: 'device' }, { serial: 'ABC', state: 'unauthorized' },
     ]);
     assert.deepEqual(parseAdbDevices('List of devices attached\n\n'), []);
-    assert.equal(isNetworkSerial('192.168.50.176:5555'), true);
-    assert.equal(isNetworkSerial('adb-2G0YC1ZG3P071X-abc._adb-tls-connect._tcp'), true);
-    assert.equal(isNetworkSerial('2G0YC1ZG3P071X'), false);
+    assert.equal(isNetworkSerial('192.0.2.10:5555'), true);
+    assert.equal(isNetworkSerial('adb-HEADSET0000001-abc._adb-tls-connect._tcp'), true);
+    assert.equal(isNetworkSerial('HEADSET0000001'), false);
   });
 
   it('turns a V8 trace into main-thread GC pauses in page time, and relates them to dropped frames', () => {
@@ -234,5 +235,34 @@ describe('quest-perf: the proximity override', () => {
     assert.deepEqual(PROXIMITY.worn, ['shell', 'am', 'broadcast', '-a', 'com.oculus.vrpowermanager.prox_close']);
     assert.deepEqual(PROXIMITY.sensor, ['shell', 'am', 'broadcast', '-a', 'com.oculus.vrpowermanager.automation_disable']);
     assert.ok(Object.isFrozen(PROXIMITY));
+  });
+});
+
+describe('quest-perf: the VR hand-over', () => {
+  it('starts from the page itself, its way out leading back to it or to --to', () => {
+    assert.equal(handoverStart('http://localhost:8080/?perf&place=demo'),
+      'http://localhost:8080/?back=http%3A%2F%2Flocalhost%3A8080%2F&backname=hand-over+test');
+    const start = new URL(handoverStart('https://ariamokr.github.io/vrlbry/', 'https://ariamokr.github.io/hallway/?from=vrlbry'));
+    assert.equal(start.origin + start.pathname, 'https://ariamokr.github.io/vrlbry/');
+    assert.equal(start.searchParams.get('back'), 'https://ariamokr.github.io/hallway/?from=vrlbry');
+  });
+
+  it('builds a probe that parses, holding a granted request back only when asked to', () => {
+    for (const d of [0, 2500, 'x']) assert.doesNotThrow(() => new Function(handoverProbe(d)), String(d));
+    assert.match(handoverProbe(2500), /setTimeout\(r, 2500\)/);
+    assert.match(handoverProbe(0), /!0\) return ask/);
+  });
+
+  it('describes each outcome', () => {
+    assert.deepEqual(describeHandover({ load: 173.2, granted: 94, requested: 1567, asked: 1567.4, started: 1576 }), {
+      inVr: true, line: "in VR · load 173 ms · granted 94 ms · asked 1567 ms · started 1576 ms (times from the page's start)",
+    });
+    const late = describeHandover({ load: 170, granted: 81, requested: 1598, asked: 5199, failed: 5199,
+      error: 'The requested session requires user activation.' });
+    assert.equal(late.inVr, false);
+    assert.match(late.line, /^2D · .* held back to 5199 ms · refused 5199 ms \(The requested session requires user activation\.\)/);
+    assert.match(describeHandover({ load: 836 }).line, /^2D · load 836 ms · no grant \(Quest Browser grants only within one origin\)/);
+    assert.match(describeHandover({ load: 200, granted: 90 }).line, /granted 90 ms · never asked for a session/);
+    assert.equal(describeHandover({ granted: 90, requested: 1500, asked: 1500, started: 1510, ended: 4000 }).inVr, false);
   });
 });
