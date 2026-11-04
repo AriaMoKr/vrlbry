@@ -1,8 +1,8 @@
 # The Librarian: experiments
 
-Experiments with an AI librarian in vrlbry, on the local branch `librarian` (not pushed, not on
-GitHub Pages). Nothing here is built yet: these are the proposals, cheapest first, each one
-something to try on its own.
+Experiments with an AI librarian in vrlbry, on the branch `librarian`: in the Pi 5's repository
+(`origin`, `api5`) only, never on GitHub, so not on GitHub Pages either. Nothing here is built
+yet: these are the proposals, cheapest first, each one something to try on its own.
 
 The model is the Librarian of Neal Stephenson's *Snow Crash* (1992): a daemon who fronts a vast
 library in the Metaverse, appears as a pleasant silver-haired man in a sweater and tie, and finds,
@@ -19,9 +19,9 @@ A figure near the kiosk takes a question and answers it with the search the app 
 to you (`interaction.ensureShelved`, `interaction.openArticle`). It can speak its answers with the
 browser's speech synthesis (`speechSynthesis`).
 
-This builds the body, the conversation panel (`ui/panel.js`; `interaction.notice` for a word in
-the headset) and the "take me there" part that every later experiment reuses. It works offline and
-on the Quest.
+This builds the body, the conversation panel (common's `Panel`, SPEC §5.5; `interaction.notice`
+for a word in the headset) and the "take me there" part that every later experiment reuses. It
+works offline and on the Quest.
 
 ### 2. "I can only find things": answers with citations
 
@@ -227,7 +227,7 @@ files, so the same UUIDs): Gutenberg all 2023-08 (already on the Pi), Wikisource
 all mini 2024-04. Then on the PC:
 
 ```bash
-node server/index.js --kiwix-serve http://192.168.50.204:8095/
+node server/index.js --kiwix-serve http://<host>:8095/
 ```
 
 **Measured** (the PC asking the Pi over the LAN):
@@ -255,7 +255,9 @@ node server/index.js --kiwix-serve http://192.168.50.204:8095/
 
 **Not done in the probe.** The kiosk's Search tab (VR) does not show text hits yet; the words are
 not highlighted on the page; no "more results"; libraries opened in the browser and the GitHub
-Pages site get none (only option 4 would reach them).
+Pages site get none (only option 4 would reach them). On a TV, ↓ pressed in the box before any
+result has come (a query that only the text matches: the hits take about half a second) leaves the
+box, as ↓ does with no results, and the hits that come after are dropped.
 
 ### Spike: reading the Xapian databases ourselves (option 4, 2026-10-18)
 

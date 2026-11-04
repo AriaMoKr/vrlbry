@@ -1,3 +1,4 @@
+// @ts-check
 // Finding a full-text search hit in a book's blocks (SPEC §4, full-text search). The reader opens
 // at the block holding most of the query's words; among those, the one holding the words of the
 // search engine's snippet (Xapian's, through kiwix-serve: an excerpt of the page around a hit) in a

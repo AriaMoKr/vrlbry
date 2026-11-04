@@ -1,3 +1,4 @@
+// @ts-check
 // A ZIM's Xapian databases (experimental: docs/LIBRARIAN.md, option 4). Kiwix's tools put a title
 // index (X/title/xapian) and a full-text index (X/fulltext/xapian) in a ZIM: single-file Glass
 // databases, each stored uncompressed, so any part of one is a positional read into the ZIM. This
@@ -166,6 +167,7 @@ export class XapianDb {
     this._stem = stem;
     this._cacheBlocks = cacheBlocks;
     this._blocks = new Map(); // n -> Promise<Block>, least recently used first
+    this._lengthHead = null; // the documents' lengths' list (a Promise of its head), from the first length()
     /** Blocks read so far, and the reads that fetched them (over HTTP, a request each). */
     this.reads = 0;
     this.requests = 0;

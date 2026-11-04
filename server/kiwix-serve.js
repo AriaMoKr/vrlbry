@@ -78,7 +78,7 @@ export function parseSearchXml(xml) {
 
 /**
  * A client of the kiwix-serve at `base`.
- * @param {string} base e.g. 'http://192.168.50.204:8095/'
+ * @param {string} base e.g. 'http://<host>:8095/'
  * @param {{ fetch?: typeof fetch, timeoutMs?: number, catalogMs?: number }} [opts] catalogMs: how
  *   long the list of the books it serves is trusted
  */
