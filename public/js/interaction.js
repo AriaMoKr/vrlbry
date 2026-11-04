@@ -2029,8 +2029,9 @@ export class Interaction {
 
   /**
    * Where the reader is, to come back to (the trail): the page, and the text view's own place when
-   * it is open (`view`, the block at its top: the page may begin blocks before it).
-   * @param {{ c: number, b: number } | null} [view]
+   * it is open (`view`, the block at its top and the word on its top line, w: the page may begin
+   * blocks before it, and a block be screens tall).
+   * @param {{ c: number, b: number, w?: number } | null} [view]
    */
   _here(view = null) {
     const s = this._cur.spread;
@@ -2039,7 +2040,7 @@ export class Interaction {
     return {
       libId: this.book.libId, id: this.book.id, at: this.reader.anchorOf(page), side,
       page: { c: page.c, p: page.p }, fontScale: this.reader.fontScale,
-      ...(view ? { view: { c: view.c, b: view.b } } : {}),
+      ...(view ? { view: { c: view.c, b: view.b, ...(view.w ? { w: view.w } : {}) } } : {}),
     };
   }
 
@@ -2048,7 +2049,7 @@ export class Interaction {
    * the library's books, `href` is asked of the library first (resolveLink). Where the reader was
    * goes on the trail, for back(): with `view`, the text view's place, which Back brings it to.
    * @param {object} link
-   * @param {{ view?: { c: number, b: number } | null }} [options]
+   * @param {{ view?: { c: number, b: number, w?: number } | null }} [options]
    */
   async followLink(link, { view = null } = {}) {
     if (this.state !== 'read' || this._turnBusy || this._following) return;
@@ -2137,7 +2138,8 @@ export class Interaction {
    * in another of the library's books by putting this one back and taking that one out (a Wikipedia
    * volume, a Wikisource work). `page` (a trail's) is used while the font size is the same. A
    * trail's `view` (followed from the text view) is the place while the view is open: it shows
-   * that block again, not the page's first, and the 3D book goes there at another font size.
+   * that block's line again (w), not the page's first block, and the 3D book goes to the block at
+   * another font size.
    * @returns {Promise<boolean>} whether the place is shown
    */
   async _goTo(dest) {
@@ -2289,9 +2291,9 @@ export class Interaction {
   }
 
   /**
-   * Opens the book at a block anchor { c, b } (the text view's place, a part's start), unless the
-   * spread shown holds that block already; inPlace: without a turn (the text view covers the
-   * book). Whether it moved.
+   * Opens the book at a block anchor { c, b } (the text view's place, whose line w is the view's
+   * own, a part's start), unless the spread shown holds that block already; inPlace: without a
+   * turn (the text view covers the book). Whether it moved.
    */
   async jumpToAnchor(anchor, { inPlace = false } = {}) {
     if (this.state !== 'read' || this._turnBusy || this._showsBlock(anchor)) return false;

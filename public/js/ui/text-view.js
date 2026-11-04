@@ -4,14 +4,17 @@
 // page is in (a chapter-sized part, or one Wikipedia article), built from its blocks (§3.5) as
 // DOM nodes and text, never as HTML. The 3D book stays the reading position: opening the view
 // scrolls it to the open page's first block, turning pages keeps it in step, and closing it
-// leaves the book open at the block at the top of the view. Its header is the reader's toolbar:
+// leaves the book open at the block at the top of the view. The view's own place is finer, the
+// line within that block (its first word), which a size, Back and a turned phone bring back to
+// the top, however tall the block. Its header is the reader's toolbar:
 // contents, text size, theme, where the reader is, Back, Put back. On a TV (SPEC §5.9) the view
 // itself holds the remote's focus while reading: ↑ ↓ scroll it, ← → turn the 3D book's pages, and
 // its toolbar and links are the card that Menu and OK go into (ui/remote.js).
 //
 // The view itself, its toolbar, keys, place and CSS, is AriaMoKr/common's TextView (text-view.js,
 // the shell music's and outside's views extend too); this module gives it the library's book.
-// renderBlocks and topBlock are pure (a document passed in), for the tests; TextView is the page's.
+// renderBlocks, topBlock, wordStarts and firstWordBelow are pure (a document passed in), for the
+// tests; TextView is the page's.
 
 import { TextView as Shell } from '../../vendor/common/text-view.js';
 
@@ -248,13 +251,56 @@ export function topBlock(rects, top) {
   return rects.length ? rects[rects.length - 1].b : 0;
 }
 
+/**
+ * The words of a block's element, as a place's `w` counts them: each [text node, where in it the
+ * word starts], in order. A list inside an item is blocks of its own, and left out.
+ * @param {Node} el
+ * @returns {[Text, number][]}
+ */
+export function wordStarts(el) {
+  /** @type {[Text, number][]} */
+  const out = [];
+  /** @param {Node} n */
+  const walk = (n) => {
+    for (const c of Array.from(n.childNodes)) {
+      if (c.nodeType === 3) {
+        const node = /** @type {Text} */ (c); // nodeType 3: a text node
+        const re = /\S+/g;
+        for (let m = re.exec(node.data); m; m = re.exec(node.data)) out.push([node, m.index]);
+      } else if (c.nodeType === 1 && /** @type {Element} */ (c).getAttribute('data-b') == null) walk(c);
+    }
+  };
+  walk(el);
+  return out;
+}
+
+/**
+ * The first of `count` words whose line reaches below `top`: lineBottom(i) is the foot of word i's
+ * line, which only grows with i. The last when none does, 0 when there are none.
+ * @param {number} count
+ * @param {number} top
+ * @param {(i: number) => number} lineBottom
+ */
+export function firstWordBelow(count, top, lineBottom) {
+  let lo = 0;
+  let hi = count - 1;
+  if (count === 0 || lineBottom(hi) <= top + 1) return Math.max(0, count - 1);
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (lineBottom(mid) > top + 1) hi = mid;
+    else lo = mid + 1;
+  }
+  return lo;
+}
+
 // ---------------------------------------------------------------------------------------------
 // The view on the page: common's shell (text-view.js) with the library's book
 
 /**
- * A place in the open book: a part (chunk) c and a block b in it, with f for an element a link
- * leads to (the 3D page finds it).
- * @typedef {{ c: number, b: number, f?: string | null }} Place
+ * A place in the open book: a part (chunk) c and a block b in it; in the view, w for the word on
+ * the line at its top (wordStarts' count; left out when 0, the block's top), and f for an element
+ * a link leads to (the 3D page finds it). The 3D book's own place is the block.
+ * @typedef {{ c: number, b: number, w?: number, f?: string | null }} Place
  */
 
 /** A picture of the part shown, loaded as the 3D reader loads it (api.imageSource). @typedef {{ url: string | null, release(): void }} ImageSource */
@@ -296,14 +342,27 @@ export class TextView extends Shell {
      * a link): a link followed from the view keeps it on the trail, for Back. @type {Place | null}
      */
     this._shared = null;
+    /** What placeTop and placeAt measure a word with, made when first needed. @type {Range | null} */
+    this._range = null;
   }
 
   /**
-   * Where a jump is going (a link, Back, the contents, a part): { c, b?, f? }, kept as a place.
+   * Where a jump is going (a link, Back, the contents, a part, a size): { c, b?, w?, f? }, kept as
+   * a place.
    * @param {Partial<Place> | null | undefined} at
    */
   aim(at) {
-    super.aim(at && Number.isInteger(at.c) ? { c: /** @type {number} */ (at.c), b: at.b ?? 0, f: at.f ?? null } : null);
+    super.aim(at && Number.isInteger(at.c)
+      ? { c: /** @type {number} */ (at.c), b: at.b ?? 0, ...(at.w ? { w: at.w } : {}), f: at.f ?? null }
+      : null);
+  }
+
+  /** Where a word ([text node, offset], wordStarts) is drawn: its first letter's box. @param {[Text, number]} word */
+  _rangeRect([node, offset]) {
+    const r = (this._range ??= this.doc.createRange());
+    r.setStart(node, offset);
+    r.setEnd(node, Math.min(node.data.length, offset + 1));
+    return r.getBoundingClientRect();
   }
 
   /**
@@ -443,36 +502,58 @@ export class TextView extends Shell {
   }
 
   /**
-   * A place aimed at: its block, unless it named an element (f) the 3D page already found, whose
-   * page's place it shows.
+   * A place aimed at: its block and line, unless it named an element (f) the 3D page already found,
+   * whose page's place it shows.
    * @param {Place} aim
    */
   placeAimed(aim) {
     const shown = this.placeShown();
     if (shown && aim.f && aim.c === shown.c) return shown;
-    return { c: aim.c, b: aim.f ? 0 : aim.b };
+    return aim.f ? { c: aim.c, b: 0 } : { c: aim.c, b: aim.b, ...(aim.w ? { w: aim.w } : {}) };
   }
 
-  /** Its block's top; the part's own top for its first block. @param {Place} place */
+  /**
+   * Where a place is: the line with its word (the reader's line in a tall block), or its block's
+   * top; the part's own top for its first block.
+   * @param {Place} place
+   */
   placeTop(place) {
-    if (!(place.b > 0)) return null;
-    return this.$('.tv-body').querySelector(`[data-b="${place.b}"]`)?.getBoundingClientRect().top ?? null;
+    if (!(place.b > 0) && !place.w) return null;
+    const target = this.$('.tv-body').querySelector(`[data-b="${place.b}"]`);
+    if (!target) return null;
+    const word = place.w && target.tagName !== 'TR' ? wordStarts(target)[place.w] : null;
+    return (word ? this._rangeRect(word) : target.getBoundingClientRect()).top;
   }
 
-  /** The block at the view's top (topBlock), top being the toolbar's foot. @param {number} top */
+  /**
+   * The place at the view's top, top being the toolbar's foot: the block there (topBlock), and when
+   * it began above the top, the word on its first line in sight. A table row's cells stand side by
+   * side, their words not in order down the page: a row is its top.
+   * @param {number} top
+   */
   placeAt(top) {
     const rects = [];
+    const nodes = [];
     for (const n of Array.from(this.$('.tv-body').querySelectorAll('[data-b]'))) {
       const r = n.getBoundingClientRect();
       // An item's own lines end where a list inside it begins (that list's items are blocks).
       const inner = n.tagName === 'LI' ? n.querySelector(':scope > ul') : null;
       const bottom = inner ? Math.min(r.bottom, inner.getBoundingClientRect().top) : r.bottom;
       rects.push({ b: Number(n.getAttribute('data-b')), top: r.top, bottom });
+      nodes.push(n);
     }
-    return { c: this.part, b: topBlock(rects, top) };
+    const b = topBlock(rects, top);
+    const i = rects.findIndex((r) => r.b === b);
+    if (i >= 0 && rects[i].top < top - 1 && nodes[i].tagName !== 'TR') {
+      const words = wordStarts(nodes[i]);
+      const w = firstWordBelow(words.length, top, (k) => this._rangeRect(words[k]).bottom);
+      if (w > 0) return { c: this.part, b, w };
+    }
+    return { c: this.part, b };
   }
 
   /**
+   * The 3D book to a place: to its block's page (its own place is the block, w the view's).
    * @param {Place} place
    * @param {{ inPlace: boolean }} options
    */
@@ -511,7 +592,8 @@ export class TextView extends Shell {
 
   /**
    * Back returns here: the shell has brought the 3D book to the reader's place, and the trail keeps
-   * that place too (view), the block at the view's top, which the 3D page may begin blocks before.
+   * that place too (view), the block and line at the view's top, which the 3D page may begin blocks
+   * before.
    * @param {unknown} link
    */
   followLink(link) {

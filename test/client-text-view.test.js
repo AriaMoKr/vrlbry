@@ -1,8 +1,9 @@
 // The text view (public/js/ui/text-view.js, SPEC §5.8): a chunk's blocks as DOM nodes (each block
 // type, the styles, pictures' alt, every kind of link, an empty part), the block at the top of
-// the view, the reading position's round trip: page → text view → page lands on the same block,
-// ↩ Back's last step leaving the focus in the view, and its themes (common's shell, TEXT_VIEW_CSS)
-// in the reader's colours.
+// the view and the reader's line within it (A+ and a link then ↩ Back bring it back to the top,
+// over a layout of a tall block), the reading position's round trip: page → text view → page
+// lands on the same block, ↩ Back's last step leaving the focus in the view, and its themes
+// (common's shell, TEXT_VIEW_CSS) in the reader's colours.
 
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -18,7 +19,7 @@ globalThis.OffscreenCanvas = class {
   }
 };
 
-const { renderBlocks, runsText, topBlock, TextView } = await import('../public/js/ui/text-view.js');
+const { firstWordBelow, renderBlocks, runsText, topBlock, TextView, wordStarts } = await import('../public/js/ui/text-view.js');
 const { BookReader, THEMES } = await import('../public/js/reader/reader.js');
 const { TEXT_VIEW_CSS } = await import('../public/vendor/common/text-view.js');
 
@@ -170,6 +171,170 @@ describe('the text view: the reading position', () => {
       assert.equal(back.p, pageOf(a.b), `page ${page}: back on the page where block ${a.b} starts`);
       assert.ok(back.p <= page && page - back.p <= 1, `page ${page}: the same page, or the one before when the block began there`);
     }
+  });
+});
+
+/**
+ * Part 1 of a book shown in the view (common's shell, the library's TextView) over interaction.js's
+ * trail and font sizes as they are, laid out as a browser would: the view 800 px tall at the
+ * window's top, its toolbar 50, the text from 100 px down; lines of as many 40-px words as 480 px
+ * holds, each 24 px tall, at text size 1 (all of it scaled with the size), the letters 4 px inside
+ * the line; 12 px between blocks. Block 5 is 600 words, 50 lines at size 1: 1,200 px. The 3D book
+ * and its turns are stand-ins: page p begins block p.
+ */
+async function tallBlockView() {
+  const { Interaction } = await import('../public/js/interaction.js');
+  const sizes = [0, 40, 30, 50, 20, 600, 40, 30, 60, 30, 200, 200];
+  const blocks = sizes.map((n, b) => (b === 0
+    ? { t: 'h', l: 1, r: [['Chapter III', 0]] }
+    : { t: 'p', r: [[Array.from({ length: n }, (_, i) => `w${b}.${i}`).join(' '), 0]] }));
+  const doc = fakeDocument();
+  const body = doc.createElement('div');
+  renderBlocks(doc, body, blocks, { c: 1 });
+  const els = body.children;
+  const reader = {
+    fontScale: 1,
+    anchorOf: (ref) => ({ c: ref.c, b: ref.p }),
+    blocksOn: (ref) => ({ first: ref.p, last: ref.p }),
+    refForAnchor: async (at) => ({ c: at.c, p: at.b }),
+    setFontScale(s) { reader.fontScale = s; },
+  };
+  const I = Object.assign(Object.create(Interaction.prototype), {
+    state: 'read', _turnBusy: false, _following: false, _trail: [], _trailBase: 0, backHistory: null,
+    book: { libId: 'lib', id: 'book' }, reader, settings: { fontScale: 1 }, toolbar: { w: 1000, set() {} },
+    reduced: true, // the view's scrolls instant
+    _cur: { spread: { left: { c: 1, p: 4 }, right: { c: 1, p: 5 } } },
+  });
+  // A turn or jump of the 3D book (in place or not): its spread, and the view following it (_afterTurn).
+  const turn = async (ref, side = null) => {
+    I._cur = { spread: side === 'right' ? { left: { c: ref.c, p: ref.p - 1 }, right: ref } : { left: ref, right: { c: ref.c, p: ref.p + 1 } } };
+    I.textView.follow();
+  };
+  I._jump = turn;
+  I._jumpInPlace = (ref) => turn(ref);
+  // Each block's box and each word's line, in the text's own coordinates, at the size now.
+  const layout = () => {
+    const s = I.settings.fontScale;
+    const perLine = Math.floor(480 / (40 * s));
+    const boxes = new Map();
+    const lines = new Map(); // text node → (offset → its line's top)
+    let y = 100;
+    for (const el of els) {
+      const words = wordStarts(el);
+      const n = Math.max(1, Math.ceil(words.length / perLine));
+      boxes.set(el, { top: y, bottom: y + n * 24 * s });
+      words.forEach(([node, at], i) => {
+        if (!lines.has(node)) lines.set(node, new Map());
+        lines.get(node).set(at, y + Math.floor(i / perLine) * 24 * s);
+      });
+      y += n * 24 * s + 12 * s;
+    }
+    return { boxes, lines, height: y };
+  };
+  const el = {
+    scrollTop: 0,
+    style: { setProperty() {} },
+    getBoundingClientRect: () => ({ top: 0, bottom: 800, height: 800 }),
+    scrollTo({ top }) { el.scrollTop = Math.max(0, Math.min(top, layout().height - 800)); },
+  };
+  for (const e of els) {
+    e.getBoundingClientRect = () => {
+      const r = layout().boxes.get(e);
+      return { top: r.top - el.scrollTop, bottom: r.bottom - el.scrollTop };
+    };
+  }
+  body.querySelectorAll = () => els; // '[data-b]': the blocks, in order
+  body.querySelector = (sel) => els.find((e) => sel === `[data-b="${e.getAttribute('data-b')}"]`) ?? null;
+  doc.createRange = () => ({
+    setStart(node, at) { Object.assign(this, { node, at }); },
+    setEnd() {},
+    getBoundingClientRect() { // the word's first letter
+      const s = I.settings.fontScale;
+      const top = layout().lines.get(this.node).get(this.at) - el.scrollTop;
+      return { top: top + 4 * s, bottom: top + 20 * s };
+    },
+  });
+  const bar = { offsetHeight: 50, classList: { contains: () => false, remove() {} }, getBoundingClientRect: () => ({ top: 0, bottom: 50, height: 50 }) };
+  const view = Object.assign(Object.create(TextView.prototype), {
+    I, doc, el, $: (sel) => (sel === '.tv-body' ? body : sel === '.tv-bar' ? bar : null), tv: false,
+    _open: true, part: 1, _at: null, _moved: false, _laid: null, _quiet: 0, _turning: 0, _aim: null, _self: false,
+    _selfTop: null, _lastY: null, _book: 'lib\nbook', _shared: null, _showing: Promise.resolve(), _style() {}, _header() {},
+  });
+  I.textView = view;
+  return {
+    I, view, els,
+    /** Where a line of a block begins in the text, at the size now. */
+    lineAt: (b, line) => layout().boxes.get(els[b]).top + line * 24 * I.settings.fontScale,
+    /** Where word w of block b is drawn now, in the window. */
+    wordTop: (b, w) => view._rangeRect(wordStarts(els[b])[w]).top,
+  };
+}
+
+describe('the text view: the reader\'s line', () => {
+  it('counts a block\'s words as it shows them, a list in an item left out, and finds the first in sight', () => {
+    const { box } = render([
+      { t: 'p', r: [['Two words ', 0], ['in italics', 1], [' and ', 0], ['a link', 0, { at: [0, 3] }]] },
+      { t: 'li', d: 1, m: '1.', r: [['One item', 0]] },
+      { t: 'li', d: 2, m: '•', r: [['Inner item here', 0]] },
+    ]);
+    const [p, ul] = box.children;
+    const words = (el) => wordStarts(el).map(([node, at]) => node.data.slice(at).split(/\s/)[0]);
+    assert.deepEqual(words(p), ['Two', 'words', 'in', 'italics', 'and', 'a', 'link']);
+    const item = ul.children[0];
+    assert.deepEqual(words(item), ['1.', 'One', 'item'], 'the item inside it is a block of its own');
+    assert.deepEqual(words(item.children[2].children[0]), ['•', 'Inner', 'item', 'here']);
+    // Ten words a line, lines 30 px: the first word whose line reaches below 95 begins the fourth line.
+    const bottom = (i) => 30 * (Math.floor(i / 10) + 1);
+    assert.equal(firstWordBelow(100, 95, bottom), 30);
+    assert.equal(firstWordBelow(100, 0, bottom), 0);
+    assert.equal(firstWordBelow(100, 5000, bottom), 99, 'past the end: the last');
+    assert.equal(firstWordBelow(0, 10, bottom), 0);
+  });
+
+  it('brings the reader\'s line in a tall block back to the top after A+ and A−, not the block\'s top', async () => {
+    const { I, view, els, lineAt, wordTop } = await tallBlockView();
+    // The reader 600 px into block 5: the toolbar's foot 10 px into its line 25 (12 words a line).
+    view.el.scrollTop = lineAt(5, 25) + 10 - 50;
+    view._read(); // a scroll of the reader's: the shell takes the place at the top
+    assert.deepEqual(view._at, { c: 1, b: 5, w: 300 }, 'the block, and the first word in sight');
+    // A+, as its click: the 3D book to the reader's place first (synced), then the size.
+    await view._sync();
+    await view._size(1);
+    await view._showing;
+    assert.equal(I.settings.fontScale, 1.1);
+    assert.ok(Math.abs(wordTop(5, 300) - 50) <= 1, `A+: the reader's line just below the toolbar (${wordTop(5, 300)})`);
+    assert.ok(els[5].getBoundingClientRect().top < -700, 'the block\'s top far above it');
+    await view._sync();
+    await view._size(-1);
+    await view._showing;
+    assert.equal(I.settings.fontScale, 1);
+    assert.ok(Math.abs(wordTop(5, 300) - 50) <= 1, `A−: the same line (${wordTop(5, 300)})`);
+    assert.deepEqual(view._at, { c: 1, b: 5, w: 300 }, 'the place kept as it was: the view\'s own scrolls are not reading');
+  });
+
+  it('brings the reader\'s line back with ↩ Back from a link, and with the browser\'s Back', async () => {
+    const { I, view, els, lineAt, wordTop } = await tallBlockView();
+    view.el.scrollTop = lineAt(5, 33) + 6 - 50; // 800 px into block 5, at its line 33
+    view._read();
+    assert.deepEqual(view._at, { c: 1, b: 5, w: 396 });
+    // A link clicked in the view (renderPart's onLink): the 3D book to the reader's place, then the link.
+    const click = async () => {
+      await view._sync();
+      await view.followLink({ at: [1, 8] });
+      await view._showing;
+      assert.ok(Math.abs(els[8].getBoundingClientRect().top - 50) <= 1, 'the view at the link\'s block');
+    };
+    await click();
+    assert.deepEqual(I._trail.at(-1).view, { c: 1, b: 5, w: 396 }, 'the trail keeps the reader\'s line');
+    await view._sync(); // ↩ Back's click: synced, then Back
+    await view.goBack();
+    await view._showing;
+    assert.ok(Math.abs(wordTop(5, 396) - 50) <= 1, `↩ Back: the reader's line at the top, not block 5's (${wordTop(5, 396)})`);
+    await click();
+    assert.equal(await I.backTo(0), true); // the browser's Back: the popstate back to the trail's depth 0
+    await view._showing;
+    assert.ok(Math.abs(wordTop(5, 396) - 50) <= 1, `the browser's Back: the reader's line (${wordTop(5, 396)})`);
+    assert.equal(I._trail.length, 0);
   });
 });
 

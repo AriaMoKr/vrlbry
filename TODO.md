@@ -446,6 +446,26 @@
     740 × 360 A+ and A− clicked with the toolbar shown leave it shown; with `?tv=emulate` axe
     finds nothing with the card's book buttons out (the book in hand and open). The earlier
     checks (place, link, sizes, width, TV, themes, axe) as before.
+- **The reader's line in the text view** (requested 2026-11-03; done the same day; SPEC §5.8). The
+  view's place was a block, `{ c, b }`, and a block can be screens tall: wherever the view put the
+  reader back (A+, A−, ↩ Back, a theme, a turned phone, opened again), the block's top came to the
+  top, however far down it they were (Jespersen's *Language*, chapter III, block 27: 2,673 px at
+  375 × 812 here). The place is now the block and the first word on the line at the top,
+  `{ c, b, w }`, as outside's is (`placeAt`: `wordStarts`, `firstWordBelow` and a `Range`;
+  `placeTop`: the top of that word's line), kept by `aim` and `placeAimed` and on the trail
+  (`_here`'s `view`); the 3D book still goes to the block's page. Nothing new from common.
+  - Tests: a block's words and the first in sight; over a layout of a 600-word block, A+ and A−,
+    and a link then ↩ Back and the browser's Back, each bring the same word's line back to the
+    top. Each part of the fix taken out in turn fails them.
+  - Checked live in headless Chrome beside the code before (56d2e1c; the bad-password count
+    stayed 0): at 375 × 812, from the middle of block 27, A+, A−, sepia, the phone turned to
+    812 × 375 and back, Close and Text view again: the reader's word 0 px from the toolbar's foot
+    after each (before: 598 to 1,608 px below it, the block's top at the top). At 1280 × 800, a
+    link from 164, 377 and 470 px into block 3, then ↩ Back by its button, by Enter and by the
+    browser's Back: the reader's line back at the top each time (before: 166, 382 and 463 px
+    below). axe swept through the view (six places from top to end, and the contents) in each
+    theme at 1280 × 800 and 375 × 812: nothing. The earlier checks as before; at 740 × 360 A+
+    and A− keep the toolbar shown and now the line, within block 60.
 - **All-libraries hall draw calls.** On the Quest: 380 → 104 standing (both eyes), 142 → 56
   walking, with one draw call per sign and no books drawn behind a nearer row. The room itself
   (chandeliers, walls, wainscots, ~31 calls per eye) could still be merged per material.

@@ -1956,6 +1956,12 @@ the view says as a book comes out, opens and closes (`bookInHand`, `openOnRead`,
     after a size, a turn or Back) leave it in sight (common v0.8.3; before, a click on A+ slid it
     away).
 - **One place.** The view and the 3D book share the reader's place, a block anchor `{ c, b }`.
+  The view's own is finer, the line within the block: `{ c, b, w }`, w the first word on the line
+  at its top (`wordStarts`: the block's words as shown, a list inside an item left out; omitted
+  when 0, the block's top). A block can be screens tall (Jespersen's chapter III, block 27: 2,538
+  px at 375 × 812), and wherever the view puts the reader back (a size, Back, a turned phone,
+  opened again) it is at their line, not at the block's top. The 3D book's place stays the block:
+  `jumpTo` takes it to the block's page.
   - Opening: the view opens at `anchorOf` the page shown, or at its own last place while the 3D
     book still shows it; a frame on, once drawn, it is put there again unless the reader has
     scrolled.
@@ -1965,15 +1971,19 @@ the view says as a book comes out, opens and closes (`bookInHand`, `openOnRead`,
     part before. The 3D book's pages shown again with the view's place still on them (1 page or
     2, a phone turned) leave the view at it (common v0.8.2); a turn of the view's own (← →) goes
     to the new pages' first block.
-  - A link followed in the view keeps the view's place on the trail as well (`view`: the place the
-    shell brought the 3D book to just before, which `jumpTo` in place hands the library's
-    `TextView`; the page may begin blocks before it). Back with the view open (↩ Back clicked or
-    by Enter, the browser's Back: `_goTo`) aims the view at that block, not at the page's first,
-    and at another font size takes the 3D book to that block's page. With the view closed, Back
-    goes to the page, as from a link of the 3D book's own.
-  - The reader's own scrolling: once it rests (250 ms), the block at the view's top becomes the
-    place (`topBlock`, measured below the sticky toolbar). So it does at once before anything that
-    starts from the place: a size, Back, a link, a turn, closing.
+  - A link followed in the view keeps the view's place on the trail as well (`view`, with its w:
+    the place the shell brought the 3D book to just before, which `jumpTo` in place hands the
+    library's `TextView`; the page may begin blocks before it). Back with the view open (↩ Back
+    clicked or by Enter, the browser's Back: `_goTo`) aims the view at that line, not at the
+    page's first block, and at another font size takes the 3D book to that block's page. With the
+    view closed, Back goes to the page, as from a link of the 3D book's own.
+  - The reader's own scrolling: once it rests (250 ms), the place at the view's top becomes the
+    place (`placeAt`, measured below the sticky toolbar): the block there (`topBlock`), and when it
+    began above the top, the first word whose line is in sight (`firstWordBelow`, each word's
+    first letter measured with a `Range`). A table row is its top: its cells' words are not in
+    order down the page. So it does at once before anything that starts from the place: a size,
+    Back, a link, a turn, closing. The view puts a place back with the top of its word's line
+    just below the toolbar, else its block's top (`placeTop`).
     - The 3D book goes there in place, without a turn (`jumpToAnchor(anchor, { inPlace: true })`),
       unless the spread shown holds that block already (`_showsBlock`, `reader.blocksOn`).
     - So the page label, the saved position and the trail follow the text view.
@@ -1999,8 +2009,10 @@ the view says as a book comes out, opens and closes (`bookInHand`, `openOnRead`,
   links, heading levels, the top block, the round trip from a page to the view and back to the
   same block, the focus after ↩ Back's last step, Back to the block a link was followed from
   (interaction.js's trail itself, with common's shell, a stand-in reader and 3D turn: Back, the
-  browser's Back, another font size, the view closed), and the themes' colours and color-schemes in
-  common's `TEXT_VIEW_CSS` (style.css sets none of them).
+  browser's Back, another font size, the view closed), the reader's line in a tall block (a
+  block's words, the first in sight; over a layout of it, A+ and A−, and a link then ↩ Back and
+  the browser's Back, each bringing the same word's line back to the top), and the themes'
+  colours and color-schemes in common's `TEXT_VIEW_CSS` (style.css sets none of them).
 
 ### 5.9 TV remote (`ui/remote.js`, `back-step.js`)
 
