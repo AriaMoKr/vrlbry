@@ -15,6 +15,7 @@ import { wayOut } from '../hallway.js';
 import { MOTIONS, MOTION_LABELS } from '../comfort.js';
 
 const ARTICLE_RESULTS = 8; // per Wikipedia library
+const ARTICLE_WAIT = 10000; // ms a list with nothing in it waits for the articles (a stalled request), then says none came
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 /** A web address's host, for a library read from the web ("mirror.download.kiwix.org"). */
@@ -122,6 +123,7 @@ export class Overlay {
     this._downWaits = false; // a TV's ↓ in the box before any result had come: to the first once they do
     this._searchToken = 0;
     this._searchTimer = 0;
+    this._dueTimer = 0; // the end of the list's wait for the articles (ARTICLE_WAIT)
     this._pickArticle = null;
     root.innerHTML = `
       <div class="ov-loading" role="status" aria-live="polite">
@@ -488,6 +490,14 @@ export class Overlay {
     const cls = this.root.classList;
     if (cls.contains('ov-bookout')) return this.$(cls.contains('ov-reading') ? '.ov-book-open button' : '.ov-book-hand button');
     return this.$('.ov-help-btn');
+  }
+
+  /**
+   * A key other than ↓ on a TV's remote in the card: a ↓ waiting in the search's box for its
+   * results is given up (remote.js; also a key common's Remote takes itself, which the box never sees).
+   */
+  remoteKey() {
+    this._downWaits = false;
   }
 
   /** Handlers of the help dialog's scene buttons: { save(), restore(), restoreText(text) }. */
@@ -868,18 +878,30 @@ export class Overlay {
       return;
     }
     // Wikipedia articles: from the server (millions of titles), a moment after typing stops. Until
-    // they have come, a list with nothing in it yet waits for them (_showResults).
+    // they have come, a list with nothing in it yet waits for them (_showResults), for
+    // ARTICLE_WAIT at most; articles that come after that are still listed.
     this._downWaits = false;
+    clearTimeout(this._dueTimer);
     this._articlesDue = asksArticles(this._libraries, q);
     if (this._articlesDue) {
       this._searchTimer = setTimeout(async () => {
-        const found = await findArticles(this._libraries, q, ARTICLE_RESULTS);
+        const found = await findArticles(this._libraries, q, ARTICLE_RESULTS).catch((err) => {
+          console.warn('[vrlbry] article search', err);
+          return []; // none, as from a library that cannot answer (findArticles)
+        });
         if (token !== this._searchToken) return;
+        const late = !this._articlesDue; // after the list stopped waiting for them
         this._articlesDue = false;
-        if (!found.length && this._results.length) return; // the books as they are
+        clearTimeout(this._dueTimer);
+        if (!found.length && (late || this._results.length)) return; // the list as it is
         this._articles = found;
         this._showResults();
       }, 150);
+      this._dueTimer = setTimeout(() => {
+        if (token !== this._searchToken || !this._articlesDue) return;
+        this._articlesDue = false; // none yet: an empty list says so, and a waiting ↓ is given up
+        if (!this._results.length) this._showResults();
+      }, ARTICLE_WAIT);
     }
     this._books = matchBooks(this._bookIndex(), q, 12);
     this._showResults();
@@ -888,7 +910,7 @@ export class Overlay {
   /**
    * Lists the book results, then the article results (fewer books once articles arrive). With
    * nothing to list while the articles are still to come, the list waits for them: "Searching…",
-   * aria-busy (a TV's ↓ then waits in the box: remote.js), and no "No results" said yet.
+   * shown and said, and aria-busy (a TV's ↓ then waits in the box: remote.js).
    */
   _showResults() {
     const list = this.$('.ov-results');
@@ -914,7 +936,7 @@ export class Overlay {
       : `<li class="ov-empty" role="option" aria-disabled="true" aria-selected="false">${waiting ? 'Searching…' : 'No matching books'}</li>`;
     fillLocalImages(list);
     this._showList(true);
-    this._announce(this._results.length ? `${this._results.length} ${this._results.length === 1 ? 'result' : 'results'}` : waiting ? '' : 'No results');
+    this._announce(this._results.length ? `${this._results.length} ${this._results.length === 1 ? 'result' : 'results'}` : waiting ? 'Searching…' : 'No results');
     list.querySelectorAll('li[data-i]').forEach((li) => {
       li.onclick = () => this._choose(+li.dataset.i);
     });
@@ -1019,9 +1041,11 @@ export class Overlay {
   _showList(open) {
     if (!open) {
       // Closed: the article results still to come stay away (they arrive 150 ms after a search),
-      // and a ↓ waiting for them is given up.
+      // a ↓ waiting for them is given up, and a status still to be said is dropped ("Searching…").
       this._searchToken++;
       clearTimeout(this._searchTimer);
+      clearTimeout(this._dueTimer);
+      clearTimeout(this._announceTimer);
       this._articlesDue = false;
       this._downWaits = false;
       this.$('.ov-results').removeAttribute('aria-busy');

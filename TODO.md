@@ -397,9 +397,9 @@
     has the TalkBack line.
   - ↓ in the search's box before its results had come (seen 2026-11-03, with a word only
     Wikipedia's articles match): it closed the list, dropping them, and went on to the Controls
-    help. Now it waits in the box while they are on the way ("Searching…", `aria-busy`) and goes
-    to the first when they come (done 2026-11-03 in a browser, SPEC §5.9; for that session to
-    check on the TV).
+    help. Now it waits in the box while they are on the way ("Searching…", `aria-busy`, 10 s at
+    most) and goes to the first when they come (done 2026-11-03 in a browser, SPEC §5.9; for
+    that session to check on the TV).
   - Reading in 3D the spread is small on a TV (the reading pose of a desktop screen); the text
     view is the readable way for now.
 - **The text view and the 3D panel on common's** (requested 2026-11-01; done the same day; SPEC

@@ -1776,12 +1776,13 @@ States: `browse` → `inspect` → `opening` → `read` (and back), plus `busy` 
   after up to 6 books; picking an article takes its volume off the shelf and opens it at that
   article, `interaction.openArticle` / `read({ at })`), Enter VR button
   (only when `immersive-vr` is supported), control help, loading progress, error toasts. The
-  search box is a combobox (`aria-controls` its listbox, `aria-expanded` while results show,
+  search box is a combobox (`aria-controls` its listbox, `aria-expanded` while the list shows,
   `aria-activedescendant` the highlighted option, which has `aria-selected`; `_showList`), and a
   polite status says how many results there are ("12 results", "No results") once typing pauses.
   While articles are still to come and nothing else matches (a Wikipedia among the libraries and
-  two letters or more: `asksArticles`), the list says "Searching…" and is `aria-busy`, and "No
-  results" waits until they have come.
+  two letters or more: `asksArticles`), the list and the status say "Searching…" and the list is
+  `aria-busy`, for 10 s at most (`ARTICLE_WAIT`, for a stalled request; articles that come later
+  are still listed); "No results" waits until then. A search that fails counts as none found.
   The card stays within the screen and scrolls inside it; on a short screen (a phone held
   sideways, height ≤ 500 px) it stops above the buttons at the foot, its library list does not
   scroll on its own, and the hint goes; between 641 and 780 px wide the search box takes the space
@@ -2069,11 +2070,13 @@ ui/text-view.js, ui/remote.js); main.js only wires them.
     onto the box. `LibraryRemote` leaves a combobox's focused option its ↑ ↓ OK and Escape (and
     turns TalkBack's channel keys into its arrows). ↑ from the box, or ↓ with no result to go
     to and none on the way, closes the list and goes on as from any control. While the articles
-    are still to come and nothing else matched (the list "Searching…" and `aria-busy`), ↓ is the
-    box's: it waits there, and the focus goes to the first result once they come
-    (`overlay._downWaits`); when none come it stays in the box, from which ↓ then goes on.
-    Typing, another key on the box, Back, the list closing or the focus moved elsewhere give a
-    waiting ↓ up. The highlight follows the focus, so no result looks chosen while the box has
+    are still to come and nothing else matched (the list "Searching…" and `aria-busy`, 10 s at
+    most: §5.6), ↓ is the box's: it waits there, and the focus goes to the first result once
+    they come (`overlay._downWaits`); when none come, or not within those 10 s, it stays in the
+    box, from which ↓ then goes on. Any other key gives a waiting ↓ up, also one common's Remote
+    takes itself, which the box never sees (← → at the caret's ends, TalkBack's rewind and
+    fast-forward: `overlay.remoteKey`), and so do typing, Back, the list closing or the focus
+    moved elsewhere. The highlight follows the focus, so no result looks chosen while the box has
     it. A focused result keeps the focus when the article
     results arrive and the list is made again; closing the list drops the article search still
     to come (on a desktop too, where it reopened the list after Escape).
@@ -2166,5 +2169,14 @@ ui/text-view.js, ui/remote.js); main.js only wires them.
     highlighted when they come).
   - axe with nothing found while the list waits and once the results show, on a desktop and on
     a TV.
+  - With the answers held back 12 s the list and the status say "Searching…" for 10 s, then "No
+    matching books" and "No results", the ↓ given up and the focus kept in the box; the
+    articles are listed when they come, and ↓ then goes to the first. Before: still waiting at
+    10 s, and the articles took the focus 13 s after the ↓.
+  - → at the end of the box's text and TalkBack's fast-forward (common's Remote takes them: the
+    box never sees them) give a waiting ↓ up. Before: the articles took the focus.
+  - An answer the search cannot read (`{}`) is none found at once, a warning logged, and ↓ then
+    goes on. Before: "Searching…" for good, ↓ doing nothing. Nothing is said once the list has
+    closed (`_showList` drops a status still to be said).
 
   The TV itself is another session's (TODO).

@@ -176,6 +176,9 @@ export class LibraryRemote extends Remote {
     const a = /** @type {HTMLElement} */ (document.activeElement);
     if (this.inCard && !(e.ctrlKey || e.altKey || e.metaKey)) {
       const key = keyOf(e);
+      // Any other key gives up a ↓ waiting in the search's box, also one common's Remote takes
+      // itself (← → at the caret's ends, TalkBack's rewind and fast-forward).
+      if (key !== 'ArrowDown') this.overlay.remoteKey();
       if (comboOption(a) && OPTION_KEYS.has(key)) {
         if (key === e.key) {
           this._kept = e; // the option's own (overlay.js), and no further (common's root listener)
