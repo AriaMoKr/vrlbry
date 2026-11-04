@@ -7,7 +7,7 @@ import { imageSource } from '../api.js';
 import { EXAMPLE_ZIM, MORE_ZIMS_URL, isLocalUrl } from '../local/local.js';
 import { droppedHandles } from '../local/handles.js';
 import { KiwixDialog } from './kiwix-dialog.js';
-import { bookIndex, matchBooks, findArticles, findInText } from '../search.js';
+import { bookIndex, matchBooks, asksArticles, findArticles, findInText } from '../search.js';
 import { load, save } from '../util/storage.js';
 import { noteError } from '../debug-info.js';
 import { RESET_PARTS, defaultResetParts } from '../reset.js';
@@ -16,6 +16,7 @@ import { MOTIONS, MOTION_LABELS } from '../comfort.js';
 
 const ARTICLE_RESULTS = 8; // per Wikipedia library
 const TEXT_RESULTS = 4; // full-text hits per library
+const ARTICLE_WAIT = 10000; // ms a list with nothing in it waits for the articles (a stalled request), then says none came
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 /** A full-text hit's snippet ([text, hit] parts) as HTML, the hit words bold. */
@@ -122,8 +123,11 @@ export class Overlay {
     this._books = []; // book results of the current query
     this._articles = []; // article results of the current query
     this._texts = []; // full-text results of the current query
+    this._articlesDue = false; // the current query's articles still to come (its timer, then its request)
+    this._downWaits = false; // a TV's ↓ in the box before any result had come: to the first once they do
     this._searchToken = 0;
     this._searchTimer = 0;
+    this._dueTimer = 0; // the end of the list's wait for the articles (ARTICLE_WAIT)
     this._pickArticle = null;
     root.innerHTML = `
       <div class="ov-loading" role="status" aria-live="polite">
@@ -490,6 +494,14 @@ export class Overlay {
     const cls = this.root.classList;
     if (cls.contains('ov-bookout')) return this.$(cls.contains('ov-reading') ? '.ov-book-open button' : '.ov-book-hand button');
     return this.$('.ov-help-btn');
+  }
+
+  /**
+   * A key other than ↓ on a TV's remote in the card: a ↓ waiting in the search's box for its
+   * results is given up (remote.js; also a key common's Remote takes itself, which the box never sees).
+   */
+  remoteKey() {
+    this._downWaits = false;
   }
 
   /** Handlers of the help dialog's scene buttons: { save(), restore(), restoreText(text) }. */
@@ -873,13 +885,32 @@ export class Overlay {
       this._announce('');
       return;
     }
-    // Wikipedia articles: from the server (millions of titles), a moment after typing stops.
-    this._searchTimer = setTimeout(async () => {
-      const found = await findArticles(this._libraries, q, ARTICLE_RESULTS);
-      if (token !== this._searchToken || !found.length) return;
-      this._articles = found;
-      this._showResults();
-    }, 150);
+    // Wikipedia articles: from the server (millions of titles), a moment after typing stops. Until
+    // they have come, a list with nothing in it yet waits for them (_showResults), for
+    // ARTICLE_WAIT at most; articles that come after that are still listed.
+    this._downWaits = false;
+    clearTimeout(this._dueTimer);
+    this._articlesDue = asksArticles(this._libraries, q);
+    if (this._articlesDue) {
+      this._searchTimer = setTimeout(async () => {
+        const found = await findArticles(this._libraries, q, ARTICLE_RESULTS).catch((err) => {
+          console.warn('[vrlbry] article search', err);
+          return []; // none, as from a library that cannot answer (findArticles)
+        });
+        if (token !== this._searchToken) return;
+        const late = !this._articlesDue; // after the list stopped waiting for them
+        this._articlesDue = false;
+        clearTimeout(this._dueTimer);
+        if (!found.length && (late || this._results.length)) return; // the list as it is
+        this._articles = found;
+        this._showResults();
+      }, 150);
+      this._dueTimer = setTimeout(() => {
+        if (token !== this._searchToken || !this._articlesDue) return;
+        this._articlesDue = false; // none yet: an empty list says so, and a waiting ↓ is given up
+        if (!this._results.length) this._showResults();
+      }, ARTICLE_WAIT);
+    }
     // Full text (through kiwix-serve): a little later, it is the slowest.
     this._textTimer = setTimeout(async () => {
       const found = await findInText(this._libraries, q, TEXT_RESULTS);
@@ -893,12 +924,16 @@ export class Overlay {
 
   /**
    * Lists the book results, then the article results, then the full-text hits (fewer books once
-   * the others arrive).
+   * the others arrive). With nothing to list while the articles are still to come, the list waits
+   * for them: "Searching…", shown and said, and aria-busy (a TV's ↓ then waits in the box: remote.js).
    */
   _showResults() {
     const list = this.$('.ov-results');
     const books = this._articles.length || this._texts.length ? this._books.slice(0, 6) : this._books;
     this._results = [...books, ...this._articles, ...this._texts];
+    const waiting = this._articlesDue && !this._results.length;
+    if (waiting) list.setAttribute('aria-busy', 'true');
+    else list.removeAttribute('aria-busy');
     // On a TV a result can hold the focus (↓ from the box), and keeps it when the articles or the text hits arrive.
     const focused = this.tv && list.contains(document.activeElement) ? Number(document.activeElement.dataset.i ?? -1) : -1;
     this._sel = this._results.length ? Math.min(Math.max(focused, 0), this._results.length - 1) : -1;
@@ -918,16 +953,20 @@ export class Overlay {
           ${e.book.cover ? `<img ${imgSrc(e.book.cover)} alt="" loading="lazy" width="34" height="48">` : '<span class="ov-nocover"></span>'}
           <div><div class="ov-r-title">${esc(e.book.title)}</div><div class="ov-r-sub">${esc(e.book.author || '')}${this._multi() ? ' · ' + esc(e.lib.title) : ''}</div></div>
         </li>`)).join('')
-      : '<li class="ov-empty" role="option" aria-disabled="true" aria-selected="false">No matching books</li>';
+      : `<li class="ov-empty" role="option" aria-disabled="true" aria-selected="false">${waiting ? 'Searching…' : 'No matching books'}</li>`;
     fillLocalImages(list);
     this._showList(true);
-    this._announce(this._results.length ? `${this._results.length} ${this._results.length === 1 ? 'result' : 'results'}` : 'No results');
+    this._announce(this._results.length ? `${this._results.length} ${this._results.length === 1 ? 'result' : 'results'}` : waiting ? 'Searching…' : 'No results');
     list.querySelectorAll('li[data-i]').forEach((li) => {
       li.onclick = () => this._choose(+li.dataset.i);
     });
     if (focused >= 0) {
       if (this._sel >= 0) this._focusResult(this._sel);
       else this._toBox();
+    } else if (this._downWaits && !waiting) {
+      // The ↓ that waited in the box: on to the first result, if any came and the box still has the focus.
+      this._downWaits = false;
+      if (this._sel >= 0 && document.activeElement === this.$('.ov-search input')) this._focusResult(0);
     }
   }
 
@@ -938,9 +977,15 @@ export class Overlay {
 
   _searchKey(e) {
     const list = this.$('.ov-results');
+    if (e.key !== 'ArrowDown') this._downWaits = false; // another key on the box: a waiting ↓ given up
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
-      if (!this._results.length) return;
+      if (!this._results.length) {
+        // On a TV ↓ before any result has come waits for them (the remote leaves it to the box
+        // while the list is aria-busy), then goes to the first (_showResults).
+        if (this.tv && e.key === 'ArrowDown' && list.getAttribute('aria-busy') === 'true') this._downWaits = true;
+        return;
+      }
       if (this.tv) {
         // On a TV the results take the focus, so OK presses one (on the box OK is the keyboard's).
         if (e.key === 'ArrowDown' && !list.hidden) this._focusResult(0);
@@ -1015,9 +1060,15 @@ export class Overlay {
    */
   _showList(open) {
     if (!open) {
-      // Closed: the article results still to come stay away (they arrive 150 ms after a search).
+      // Closed: the article results still to come stay away (they arrive 150 ms after a search),
+      // a ↓ waiting for them is given up, and a status still to be said is dropped ("Searching…").
       this._searchToken++;
       clearTimeout(this._searchTimer);
+      clearTimeout(this._dueTimer);
+      clearTimeout(this._announceTimer);
+      this._articlesDue = false;
+      this._downWaits = false;
+      this.$('.ov-results').removeAttribute('aria-busy');
     }
     this.$('.ov-results').hidden = !open;
     this.$('.ov-search input').setAttribute('aria-expanded', String(open));

@@ -3,7 +3,7 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { fold, bookIndex, matchBooks, findArticles } from '../public/js/search.js';
+import { fold, bookIndex, matchBooks, asksArticles, findArticles } from '../public/js/search.js';
 
 const pg = { id: 'pg', kind: 'gutenberg', title: 'Gutenberg' };
 const wp = { id: 'wp', kind: 'wikipedia', title: 'Wikipedia' };
@@ -53,5 +53,22 @@ describe('search', () => {
     assert.deepEqual(await findArticles(libraries, 'p'), [], 'at least two letters');
     globalThis.fetch = async () => { throw new Error('offline'); };
     assert.deepEqual(await findArticles(libraries, 'paris'), []);
+  });
+
+  it('says when it asks for articles at all (the overlay waits for them only then)', async () => {
+    assert.equal(asksArticles(libraries, 'pa'), true);
+    assert.equal(asksArticles(libraries, ' p '), false, 'one letter');
+    assert.equal(asksArticles(libraries, 'É'), false, 'one letter, folded');
+    assert.equal(asksArticles([pg, ws], 'paris'), false, 'no Wikipedia');
+    const asked = [];
+    globalThis.fetch = async (url) => {
+      asked.push(url);
+      return { ok: true, json: async () => ({ articles: [] }) };
+    };
+    for (const [libs, q] of [[libraries, 'p'], [[pg, ws], 'paris'], [libraries, 'pa']]) {
+      await findArticles(libs, q);
+      assert.equal(asked.length > 0, asksArticles(libs, q), `${q}: asked as it says`);
+      asked.length = 0;
+    }
   });
 });
