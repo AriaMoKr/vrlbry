@@ -1779,6 +1779,9 @@ States: `browse` → `inspect` → `opening` → `read` (and back), plus `busy` 
   search box is a combobox (`aria-controls` its listbox, `aria-expanded` while results show,
   `aria-activedescendant` the highlighted option, which has `aria-selected`; `_showList`), and a
   polite status says how many results there are ("12 results", "No results") once typing pauses.
+  While articles are still to come and nothing else matches (a Wikipedia among the libraries and
+  two letters or more: `asksArticles`), the list says "Searching…" and is `aria-busy`, and "No
+  results" waits until they have come.
   The card stays within the screen and scrolls inside it; on a short screen (a phone held
   sideways, height ≤ 500 px) it stops above the buttons at the foot, its library list does not
   scroll on its own, and the hint goes; between 641 and 780 px wide the search box takes the space
@@ -2065,8 +2068,13 @@ ui/text-view.js, ui/remote.js); main.js only wires them.
     last), ↑ from the first back to the box, OK opens the one with the focus, Back closes them
     onto the box. `LibraryRemote` leaves a combobox's focused option its ↑ ↓ OK and Escape (and
     turns TalkBack's channel keys into its arrows). ↑ from the box, or ↓ with no result to go
-    to, closes the list and goes on as from any control. The highlight follows the focus, so no
-    result looks chosen while the box has it. A focused result keeps the focus when the article
+    to and none on the way, closes the list and goes on as from any control. While the articles
+    are still to come and nothing else matched (the list "Searching…" and `aria-busy`), ↓ is the
+    box's: it waits there, and the focus goes to the first result once they come
+    (`overlay._downWaits`); when none come it stays in the box, from which ↓ then goes on.
+    Typing, another key on the box, Back, the list closing or the focus moved elsewhere give a
+    waiting ↓ up. The highlight follows the focus, so no result looks chosen while the box has
+    it. A focused result keeps the focus when the article
     results arrive and the list is made again; closing the list drops the article search still
     to come (on a desktop too, where it reopened the list after Escape).
   - The focus falling to nowhere (a control that hid itself: ↩ Back after the last link, Put
@@ -2145,5 +2153,18 @@ ui/text-view.js, ui/remote.js); main.js only wires them.
     highlight, Escape, the list staying closed); axe with nothing found walking, on the Controls
     help, in the search's box and on a result, a book in hand, the text view on a link, and with
     the help or Kiwix's library open.
+
+  And again (2026-11-03), ↓ in the search's box before its results have come, with the
+  checkout's Gutenberg, Wikipedia (top 1M) and Wikisource, and with the article answers held
+  back 1.5 s (CDP):
+  - ↓ right after typing a word only articles match ("photosynthesis") waits in the box
+    ("Searching…", `aria-busy`) and goes to the first article once they come, where OK opens
+    it; the same with TalkBack's channel down, and on the box focused again with its query.
+  - With nothing at all ("xqzv") the box keeps the focus and says "No matching books" and "No
+    results"; ↓ then goes on. More letters, ↑, Back or the focus moved elsewhere give a waiting
+    ↓ up. Books shown at once go as before; on a desktop ↓ is as before (the first result
+    highlighted when they come).
+  - axe with nothing found while the list waits and once the results show, on a desktop and on
+    a TV.
 
   The TV itself is another session's (TODO).

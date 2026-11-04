@@ -58,13 +58,23 @@ export function matchBooks(index, q, limit = 12) {
 }
 
 /**
+ * Whether findArticles asks for `q` at all: two letters or more, and a Wikipedia among the
+ * libraries (the overlay's list waits for the articles only then).
+ * @param {Array<{ kind?: string }>} libraries
+ * @param {string} q
+ */
+export function asksArticles(libraries, q) {
+  return fold(String(q ?? '').trim()).length >= 2 && libraries.some((l) => l.kind === 'wikipedia');
+}
+
+/**
  * Wikipedia articles whose titles start with `q`, from every Wikipedia library (failures give
  * no results rather than an error).
  * @returns {Promise<Array<{ article: { title, book, n }, lib }>>}
  */
 export async function findArticles(libraries, q, perLibrary = 8) {
+  if (!asksArticles(libraries, q)) return [];
   const s = String(q ?? '').trim();
-  if (fold(s).length < 2) return [];
   const wikis = libraries.filter((l) => l.kind === 'wikipedia');
   const found = await Promise.all(wikis.map((lib) => searchArticles(lib.id, s, perLibrary)
     .then((articles) => articles.map((article) => ({ article, lib })), () => [])));

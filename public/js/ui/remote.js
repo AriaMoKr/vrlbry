@@ -7,7 +7,8 @@
 // contents closed first. Menu lands on the book's buttons while one is out, else on the Controls
 // help (overlay.remoteStart), never on a text box. A text box keeps the TV's keyboard down until OK
 // on it, whether the remote or the page put the focus there; the search's results take the real
-// focus (↓ from its box), so OK opens one. Shared with music, so it gets what it uses from main.js.
+// focus (↓ from its box, which waits for them while they are on the way), so OK opens one. Shared
+// with music, so it gets what it uses from main.js.
 
 import { keepsKey, keyOf, Remote } from '../../vendor/common/tv.js';
 
@@ -20,6 +21,9 @@ const openCombo = (el) => el?.getAttribute?.('role') === 'combobox' && el.getAtt
 
 /** The listbox a combobox controls. */
 const listOf = (combo) => document.getElementById(combo.getAttribute('aria-controls') ?? '');
+
+/** Whether a combobox's list waits for results still to come (aria-busy: nothing in it yet). */
+const waiting = (combo) => listOf(combo)?.getAttribute('aria-busy') === 'true';
 
 /** Whether this is an option of a combobox's list (the search's results), holding the focus. */
 function comboOption(el) {
@@ -183,8 +187,9 @@ export class LibraryRemote extends Remote {
         }
         return;
       }
-      // ↑ from the search's box, or ↓ with no result to go to: the list closed, and on as from any control.
-      if (openCombo(a) && (key === 'ArrowUp' || (key === 'ArrowDown' && !listOf(a)?.querySelector('[role=option]:not([aria-disabled=true])')))) {
+      // ↑ from the search's box, or ↓ with no result to go to and none on the way: the list closed,
+      // and on as from any control. While they are on the way ↓ is the box's, which waits for them.
+      if (openCombo(a) && (key === 'ArrowUp' || (key === 'ArrowDown' && !listOf(a)?.querySelector('[role=option]:not([aria-disabled=true])') && !waiting(a)))) {
         this._send(a, 'Escape');
       }
       if ((key === 'ArrowUp' || key === 'ArrowDown') && !keepsKey(a, key) && this._textStep(a, key)) {
