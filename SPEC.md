@@ -1802,15 +1802,20 @@ States: `browse` → `inspect` → `opening` → `read` (and back), plus `busy` 
   picking a result = switch room if needed, teleport to it and select it; for Wikipedia
   libraries it also asks the server for articles by title, 150 ms after typing stops, listed
   after up to 6 books; picking an article takes its volume off the shelf and opens it at that
-  article, `interaction.openArticle` / `read({ at })`), Enter VR button
+  article, `interaction.openArticle` / `read({ at })`; for the libraries with `fulltext` (§4,
+  `text`) it asks for full-text hits too, 300 ms after typing stops, three letters or more, up
+  to 4 per library, listed last under "In the text" with their snippets; picking a hit opens its
+  book where the hit is, `interaction.openText`), Enter VR button
   (only when `immersive-vr` is supported), control help, loading progress, error toasts. The
   search box is a combobox (`aria-controls` its listbox, `aria-expanded` while the list shows,
   `aria-activedescendant` the highlighted option, which has `aria-selected`; `_showList`), and a
   polite status says how many results there are ("12 results", "No results") once typing pauses.
-  While articles are still to come and nothing else matches (a Wikipedia among the libraries and
-  two letters or more: `asksArticles`), the list and the status say "Searching…" and the list is
-  `aria-busy`, for 10 s at most (`ARTICLE_WAIT`, for a stalled request; articles that come later
-  are still listed); "No results" waits until then. A search that fails counts as none found.
+  While articles or full-text hits are still to come and nothing else matches (articles: a
+  Wikipedia among the libraries and two letters or more, `asksArticles`; hits: a library with
+  `fulltext` and three letters or more, `asksText`), the list and the status say "Searching…"
+  and the list is `aria-busy`, for 10 s at most (`RESULTS_WAIT`, for a stalled request; what
+  comes later is still listed); "No results" waits until then. A search that fails counts as
+  none found.
   The card stays within the screen and scrolls inside it; on a short screen (a phone held
   sideways, height ≤ 500 px) it stops above the buttons at the foot, its library list does not
   scroll on its own, and the hint goes; between 641 and 780 px wide the search box takes the space
@@ -2098,15 +2103,16 @@ ui/text-view.js, ui/remote.js); main.js only wires them.
     onto the box. `LibraryRemote` leaves a combobox's focused option its ↑ ↓ OK and Escape (and
     turns TalkBack's channel keys into its arrows). ↑ from the box, or ↓ with no result to go
     to and none on the way, closes the list and goes on as from any control. While the articles
-    are still to come and nothing else matched (the list "Searching…" and `aria-busy`, 10 s at
-    most: §5.6), ↓ is the box's: it waits there, and the focus goes to the first result once
-    they come (`overlay._downWaits`); when none come, or not within those 10 s, it stays in the
-    box, from which ↓ then goes on. Any other key gives a waiting ↓ up, also one common's Remote
-    takes itself, which the box never sees (← → at the caret's ends, TalkBack's rewind and
-    fast-forward: `overlay.remoteKey`), and so do typing, Back, the list closing or the focus
-    moved elsewhere. The highlight follows the focus, so no result looks chosen while the box has
-    it. A focused result keeps the focus when the article
-    results arrive and the list is made again; closing the list drops the article search still
+    or the full-text hits are still to come and nothing else matched (the list "Searching…" and
+    `aria-busy`, 10 s at most: §5.6), ↓ is the box's: it waits there, and the focus goes to the
+    first result once any come (`overlay._downWaits`); when none come, or not within those
+    10 s, it stays in the box, from which ↓ then goes on. Any other key gives a waiting ↓ up,
+    also one common's Remote takes itself, which the box never sees (← → at the caret's ends,
+    TalkBack's rewind and fast-forward: `overlay.remoteKey`), and so do typing, Back, the list
+    closing or the focus moved elsewhere. The highlight follows the focus, so no result looks
+    chosen while the box has it. A focused result keeps the focus when the article results or
+    the text hits arrive and the list is made again (by its place in the list, so articles that
+    come after the hits move it onto another: TODO); closing the list drops the searches still
     to come (on a desktop too, where it reopened the list after Escape).
   - The focus falling to nowhere (a control that hid itself: ↩ Back after the last link, Put
     back) is walking again (common's), except in an open dialog, where it goes to the dialog's
@@ -2206,5 +2212,20 @@ ui/text-view.js, ui/remote.js); main.js only wires them.
   - An answer the search cannot read (`{}`) is none found at once, a warning logged, and ↓ then
     goes on. Before: "Searching…" for good, ↓ doing nothing. Nothing is said once the list has
     closed (`_showList` drops a status still to be said).
+
+  And on this branch (2026-11-04), with kiwix-serve's full text for the same three libraries
+  (§4, `text`) and the full-text answers held back or broken (CDP):
+  - ↓ right after typing words only the full text finds ("queequeg harpoon razor") waits in the
+    box and goes to the first hit once they come, where OK opens its book; so with the hits held
+    back 1.5 s and ↓ while they are on the way. Before: "No matching books" once the empty
+    articles came, and ↓ then closed the list.
+  - With the hits held back 12 s: "Searching…" for 10 s, then "No results", the ↓ given up; the
+    hits are listed when they come, and ↓ then goes to the first. → at the end of the box's text
+    gives a waiting ↓ up. A hit answer the search cannot read (`{}`) is none found, a warning
+    logged (before: an uncaught TypeError). Articles still come before the hits; on a desktop
+    the list waits too and Enter opens the first hit. axe while the list waits and with the hits
+    shown, on a desktop and on a TV. Main's checks above, again with the hits coming too.
+  - Articles that come after the hits (held back) move a hit with the focus onto an article: the
+    focus is kept by its place in the list (TODO).
 
   The TV itself is another session's (TODO).

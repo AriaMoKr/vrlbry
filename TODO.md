@@ -399,7 +399,12 @@
     Wikipedia's articles match): it closed the list, dropping them, and went on to the Controls
     help. Now it waits in the box while they are on the way ("Searching…", `aria-busy`, 10 s at
     most) and goes to the first when they come (done 2026-11-03 in a browser, SPEC §5.9; for
-    that session to check on the TV).
+    that session to check on the TV). On this branch it waits for the full-text hits too
+    (2026-11-04).
+  - A result with the focus keeps its place in the list when more results arrive, not the
+    result: articles that come after the full-text hits (a slow article answer) move a focused
+    hit onto an article, as the books cut to 6 when the articles come do a focused 7th to 12th
+    book. Keep the result itself (`_showResults`), and decide where a book that is cut goes.
   - Reading in 3D the spread is small on a TV (the reading pose of a desktop screen); the text
     view is the readable way for now.
 - **The text view and the 3D panel on common's** (requested 2026-11-01; done the same day; SPEC

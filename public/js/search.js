@@ -83,13 +83,23 @@ export async function findArticles(libraries, q, perLibrary = 8) {
 }
 
 /**
+ * Whether findInText asks for `q` at all: three letters or more, and a library with `fulltext`
+ * among the libraries (the overlay's list waits for the hits only then).
+ * @param {Array<{ fulltext?: boolean }>} libraries
+ * @param {string} q
+ */
+export function asksText(libraries, q) {
+  return fold(String(q ?? '').trim()).length >= 3 && libraries.some((l) => l.fulltext);
+}
+
+/**
  * Pages whose text holds the words of `q`, from every library with `fulltext` (the server's,
  * through kiwix-serve), in each library's order of relevance; failures give no results.
  * @returns {Promise<Array<{ hit: object, lib }>>}
  */
 export async function findInText(libraries, q, perLibrary = 4) {
+  if (!asksText(libraries, q)) return [];
   const s = String(q ?? '').trim();
-  if (fold(s).length < 3) return [];
   const searchable = libraries.filter((l) => l.fulltext);
   const found = await Promise.all(searchable.map((lib) => searchText(lib.id, s, perLibrary)
     .then((r) => r.results.map((hit) => ({ hit, lib })), () => [])));
