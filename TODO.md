@@ -400,6 +400,11 @@
     help. Now it waits in the box while they are on the way ("Searching…", `aria-busy`, 10 s at
     most) and goes to the first when they come (done 2026-11-03 in a browser, SPEC §5.9; for
     that session to check on the TV).
+  - A result with the focus kept its place in the list when the articles came, not the result:
+    the books were cut to 6, so the focus on a 7th to 12th book went to an article, and a
+    desktop's highlight went back to the first. Now the result stays, and a book after the 6th
+    keeps every book listed (done 2026-11-05 in a browser, SPEC §5.6, §5.9; for that session to
+    check on the TV).
   - Reading in 3D the spread is small on a TV (the reading pose of a desktop screen); the text
     view is the readable way for now.
 - **The text view and the 3D panel on common's** (requested 2026-11-01; done the same day; SPEC

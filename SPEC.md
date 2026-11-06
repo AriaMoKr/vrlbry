@@ -1779,6 +1779,9 @@ States: `browse` → `inspect` → `opening` → `read` (and back), plus `busy` 
   search box is a combobox (`aria-controls` its listbox, `aria-expanded` while the list shows,
   `aria-activedescendant` the highlighted option, which has `aria-selected`; `_showList`), and a
   polite status says how many results there are ("12 results", "No results") once typing pauses.
+  When the articles arrive and the list is made again, the highlighted result (moved with ↑ ↓)
+  stays that result, not its place: a book after the 6th keeps every book listed
+  (`listResults`). A new query starts at the first again, the list scrolled to its top.
   While articles are still to come and nothing else matches (a Wikipedia among the libraries and
   two letters or more: `asksArticles`), the list and the status say "Searching…" and the list is
   `aria-busy`, for 10 s at most (`ARTICLE_WAIT`, for a stalled request; articles that come later
@@ -2077,9 +2080,10 @@ ui/text-view.js, ui/remote.js); main.js only wires them.
     takes itself, which the box never sees (← → at the caret's ends, TalkBack's rewind and
     fast-forward: `overlay.remoteKey`), and so do typing, Back, the list closing or the focus
     moved elsewhere. The highlight follows the focus, so no result looks chosen while the box has
-    it. A focused result keeps the focus when the article
-    results arrive and the list is made again; closing the list drops the article search still
-    to come (on a desktop too, where it reopened the list after Escape).
+    it. A focused result keeps the focus when the article results arrive and the list is made
+    again: the same result, not its place (a book after the 6th keeps every book listed, §5.6);
+    closing the list drops the article search still to come (on a desktop too, where it
+    reopened the list after Escape).
   - The focus falling to nowhere (a control that hid itself: ↩ Back after the last link, Put
     back) is walking again (common's), except in an open dialog, where it goes to the dialog's
     first control (`LibraryRemote.walk`); the help's reset Cancel gives it back to "Reset stored
@@ -2178,5 +2182,18 @@ ui/text-view.js, ui/remote.js); main.js only wires them.
   - An answer the search cannot read (`{}`) is none found at once, a warning logged, and ↓ then
     goes on. Before: "Searching…" for good, ↓ doing nothing. Nothing is said once the list has
     closed (`_showList` drops a status still to be said).
+
+  And again (2026-11-05), the articles arriving while a result has the focus or the highlight,
+  with the same three libraries and the article answers held back 2.5 s (CDP); "moby" lists 11
+  books at once, then 8 articles:
+  - On a TV, the focus taken down to the 8th book stays on it when the articles come, every
+    book still listed, and ↓ then goes to the 9th. Before: the books were cut to 6 and the focus
+    was on the 2nd article. A focused 3rd book stays focused, as before.
+  - On a desktop, the 3rd or the 9th book highlighted with ↓ stays highlighted and in view, and
+    Enter takes that book out. Before: the highlight went back to the first (out of view when
+    the list had scrolled), and Enter took out the first. Left on the first, it stays there.
+  - A new query starts at the first again, the list scrolled back to its top. Before: a list
+    scrolled down stayed so, its first result highlighted out of view.
+  - The checks above (2026-11-03) again: the same results.
 
   The TV itself is another session's (TODO).

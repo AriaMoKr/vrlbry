@@ -7,7 +7,7 @@ import { imageSource } from '../api.js';
 import { EXAMPLE_ZIM, MORE_ZIMS_URL, isLocalUrl } from '../local/local.js';
 import { droppedHandles } from '../local/handles.js';
 import { KiwixDialog } from './kiwix-dialog.js';
-import { bookIndex, matchBooks, asksArticles, findArticles } from '../search.js';
+import { bookIndex, matchBooks, asksArticles, findArticles, listResults } from '../search.js';
 import { load, save } from '../util/storage.js';
 import { noteError } from '../debug-info.js';
 import { RESET_PARTS, defaultResetParts } from '../reset.js';
@@ -904,24 +904,28 @@ export class Overlay {
       }, ARTICLE_WAIT);
     }
     this._books = matchBooks(this._bookIndex(), q, 12);
+    this._sel = -1; // a new query: the highlight starts at the first again, the list at its top
+    this.$('.ov-results').scrollTop = 0;
     this._showResults();
   }
 
   /**
    * Lists the book results, then the article results (fewer books once articles arrive). With
    * nothing to list while the articles are still to come, the list waits for them: "Searching…",
-   * shown and said, and aria-busy (a TV's ↓ then waits in the box: remote.js).
+   * shown and said, and aria-busy (a TV's ↓ then waits in the box: remote.js). The result with the
+   * focus (a TV: ↓ from the box) or with the highlight moved off the first (a desktop's ↑ ↓) stays
+   * that result as the list is made again, not its place (listResults).
    */
   _showResults() {
     const list = this.$('.ov-results');
-    const books = this._articles.length ? this._books.slice(0, 6) : this._books;
-    this._results = [...books, ...this._articles];
+    const focused = this.tv && list.contains(document.activeElement) ? Number(document.activeElement.dataset.i ?? -1) : -1;
+    const held = this._results[focused >= 0 ? focused : this._sel > 0 ? this._sel : -1];
+    const { results, at } = listResults(this._books, this._articles, held);
+    this._results = results;
     const waiting = this._articlesDue && !this._results.length;
     if (waiting) list.setAttribute('aria-busy', 'true');
     else list.removeAttribute('aria-busy');
-    // On a TV a result can hold the focus (↓ from the box), and keeps it when the articles arrive.
-    const focused = this.tv && list.contains(document.activeElement) ? Number(document.activeElement.dataset.i ?? -1) : -1;
-    this._sel = this._results.length ? Math.min(Math.max(focused, 0), this._results.length - 1) : -1;
+    this._sel = !this._results.length ? -1 : at >= 0 ? at : Math.min(Math.max(focused, 0), this._results.length - 1);
     const tab = this.tv ? ' tabindex="-1"' : '';
     list.innerHTML = this._results.length
       ? this._results.map((e, i) => (e.article ? `
@@ -947,6 +951,8 @@ export class Overlay {
       // The ↓ that waited in the box: on to the first result, if any came and the box still has the focus.
       this._downWaits = false;
       if (this._sel >= 0 && document.activeElement === this.$('.ov-search input')) this._focusResult(0);
+    } else if (at > 0) {
+      list.querySelector('li.sel')?.scrollIntoView({ block: 'nearest' }); // the highlight kept, in view
     }
   }
 

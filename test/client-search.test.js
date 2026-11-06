@@ -3,7 +3,7 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { fold, bookIndex, matchBooks, asksArticles, findArticles } from '../public/js/search.js';
+import { fold, bookIndex, matchBooks, asksArticles, findArticles, listResults } from '../public/js/search.js';
 
 const pg = { id: 'pg', kind: 'gutenberg', title: 'Gutenberg' };
 const wp = { id: 'wp', kind: 'wikipedia', title: 'Wikipedia' };
@@ -70,5 +70,24 @@ describe('search', () => {
       assert.equal(asked.length > 0, asksArticles(libs, q), `${q}: asked as it says`);
       asked.length = 0;
     }
+  });
+
+  it('lists 6 books before the articles, all of them while a later one is held, and finds the held result', () => {
+    const books = Array.from({ length: 12 }, (_, i) => ({ book: book(`b${i}`, `Book ${i}`) }));
+    const articles = Array.from({ length: 8 }, (_, i) => ({ article: { title: `Article ${i}` } }));
+    const ids = ({ results }) => results.map((e) => e.book?.id ?? e.article.title);
+    assert.deepEqual(listResults(books, []), { results: books, at: -1 }, 'no articles: every book');
+    const shown = listResults(books, articles);
+    assert.deepEqual(ids(shown), ['b0', 'b1', 'b2', 'b3', 'b4', 'b5', ...articles.map((e) => e.article.title)]);
+    assert.equal(shown.at, -1, 'nothing held');
+    assert.equal(listResults(books, articles, books[2]).at, 2, 'a book among the first 6 stays where it was');
+    const far = listResults(books, articles, books[8]);
+    assert.deepEqual(ids(far).slice(0, 13), [...books.map((e) => e.book.id), 'Article 0'], 'a later book held: every book, then the articles');
+    assert.equal(far.at, 8, 'the same book');
+    assert.equal(listResults(books, articles, articles[3]).at, 9, 'an article held: found where it is now');
+    assert.equal(listResults(books, [], books[11]).at, 11);
+    assert.deepEqual(listResults(books, articles, { book: book('b2', 'Book 2') }), shown, 'another object is not held');
+    assert.deepEqual(listResults([], articles, articles[0]), { results: articles, at: 0 });
+    assert.deepEqual(listResults([], []), { results: [], at: -1 });
   });
 });

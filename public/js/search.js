@@ -80,3 +80,20 @@ export async function findArticles(libraries, q, perLibrary = 8) {
     .then((articles) => articles.map((article) => ({ article, lib })), () => [])));
   return found.flat();
 }
+
+/**
+ * The overlay's list of results: the books, then the others (the articles), with only the first
+ * 6 books once others have come, unless `held` (the result with the focus or the highlight while
+ * the list is made again) is a later book: then all of them, so it stays listed. `at` is where
+ * `held` is now, -1 for none.
+ * @template T
+ * @param {T[]} books
+ * @param {T[]} more
+ * @param {T} [held]
+ * @returns {{ results: T[], at: number }}
+ */
+export function listResults(books, more, held) {
+  const all = !more.length || books.findIndex((e) => e === held) >= 6;
+  const results = [...(all ? books : books.slice(0, 6)), ...more];
+  return { results, at: results.findIndex((e) => e === held) };
+}
