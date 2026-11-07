@@ -10,6 +10,7 @@
  * archives, so the HTTP layer can send cached bytes without re-serializing.
  */
 import { parseEpub } from './content/epub.js';
+import { findInBlocks, topScore } from './content/find.js';
 import { blockChars, chunkBlocks, htmlToBlocks, imageSize, isImageRun, linkDocs, linkTarget, placeLinks } from './content/html.js';
 import { platform } from './platform.js';
 import { LRUCache } from './util/lru.js';
@@ -504,7 +505,22 @@ export class ArchiveLibrary {
    */
   async resolveLink(bookId, href) {
     await this.books();
-    if (typeof href !== 'string' || !href || href[0] === '#' || !this._byId.has(String(bookId))) return null;
+    if (!this._byId.has(String(bookId))) return null;
+    return this.placeOf(href);
+  }
+
+  /**
+   * Where an archive path ('C/Paris#History', 'C/Moby-Dick; or, The Whale.15.html') is in this
+   * library, as resolveLink answers: { book, c, b?, f? }, or null. A Gutenberg book's page and a
+   * generic library's article open at their start. `exact: false` names a Wikisource part's work
+   * only (its start), without converting the work to find the part; a part past what its work
+   * holds (the work was cut: 1,200 parts) leads to the work's start, or to null with `strict`.
+   * @param {string} href
+   * @param {{ exact?: boolean, strict?: boolean }} [opts]
+   */
+  async placeOf(href, { exact = true, strict = false } = {}) {
+    await this.books();
+    if (typeof href !== 'string' || !href || href[0] === '#') return null;
     const hash = href.indexOf('#');
     let path = hash < 0 ? href : href.slice(0, hash);
     let f = hash < 0 ? '' : href.slice(hash + 1);
@@ -533,12 +549,51 @@ export class ArchiveLibrary {
       for (let url = entry.url; url; url = url.slice(0, Math.max(0, url.lastIndexOf('/')))) {
         const id = this._workByUrl.get(url);
         if (!id) continue;
-        if (url === entry.url) return withF({ book: id, c: 0, b: 0 });
+        if (url === entry.url || !exact) return withF({ book: id, c: 0, b: 0 });
         const at = (await this.content(id))?.parts?.get(entry.path);
-        return at ? withF({ book: id, c: at[0], b: at[1] }) : { book: id, c: 0, b: 0 };
+        if (at) return withF({ book: id, c: at[0], b: at[1] });
+        return strict ? null : { book: id, c: 0, b: 0 };
       }
     }
+    if (this.kind === 'gutenberg') {
+      // A book's page is named after its title and number: '<title>.<id>', '.html' after it in
+      // newer files (CLAUDE.md).
+      const id = /\.(\d+)(?:\.html?)?$/i.exec(path)?.[1];
+      return id && this._byId.has(id) ? withF({ book: id, c: 0, b: 0 }) : null;
+    }
+    if (this.kind === 'generic') {
+      this._genericByPath ??= new Map([...this._byId.values()].filter((r) => r.html).map((r) => [r.html.path, r.book.id]));
+      const entry = await this._linkEntry(path);
+      const id = entry && this._genericByPath.get(entry.path);
+      return id ? withF({ book: id, c: 0, b: 0 }) : null;
+    }
     return null;
+  }
+
+  /**
+   * Where a full-text search hit lies in a book (content/find.js): the block, from block `b` of
+   * chunk `c` on, that best matches the query's words and the snippet's (findInBlocks).
+   * A Wikipedia volume's chunk is one article, and a Wikisource part starts at `c`, so only a
+   * Gutenberg or generic book is read whole. null when none of the words is there.
+   * @param {string} bookId
+   * @param {{ words: string[], hits: string[], terms?: string[] }} target
+   * @param {{ c?: number, b?: number, chunks?: number }} [opts]
+   * @returns {Promise<{ c: number, b: number, exact: boolean } | null>}
+   */
+  async findText(bookId, target, { c = 0, b = 0, chunks = this.kind === 'wikipedia' ? 1 : this.kind === 'wikisource' ? 8 : Infinity } = {}) {
+    const content = await this.content(String(bookId));
+    if (!content) return null;
+    const end = Math.min(content.meta.chunks.length, c + chunks);
+    const top = topScore(target);
+    let best = null;
+    for (let n = Math.max(0, c); n < end; n++) {
+      const chunk = await this.chunk(bookId, n);
+      if (!chunk) break;
+      const found = findInBlocks(chunk.blocks, target, n === c ? b : 0);
+      if (found && (!best || found.score > best.score)) best = { c: n, b: found.b, exact: found.exact, score: found.score };
+      if (best?.score === top) break;
+    }
+    return best && { c: best.c, b: best.b, exact: best.exact };
   }
 
   /** The entry a link's path names, past ZIM redirects; null when there is none. */

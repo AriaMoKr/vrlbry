@@ -7,7 +7,7 @@ import { imageSource } from '../api.js';
 import { EXAMPLE_ZIM, MORE_ZIMS_URL, isLocalUrl } from '../local/local.js';
 import { droppedHandles } from '../local/handles.js';
 import { KiwixDialog } from './kiwix-dialog.js';
-import { bookIndex, matchBooks, asksArticles, findArticles, listResults } from '../search.js';
+import { bookIndex, matchBooks, asksArticles, findArticles, listResults, asksText, findInText } from '../search.js';
 import { load, save } from '../util/storage.js';
 import { noteError } from '../debug-info.js';
 import { RESET_PARTS, defaultResetParts } from '../reset.js';
@@ -15,9 +15,12 @@ import { wayOut } from '../hallway.js';
 import { MOTIONS, MOTION_LABELS } from '../comfort.js';
 
 const ARTICLE_RESULTS = 8; // per Wikipedia library
-const ARTICLE_WAIT = 10000; // ms a list with nothing in it waits for the articles (a stalled request), then says none came
+const TEXT_RESULTS = 4; // full-text hits per library
+const RESULTS_WAIT = 10000; // ms a list with nothing in it waits for the articles and text hits (a stalled request), then says none came
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+/** A full-text hit's snippet ([text, hit] parts) as HTML, the hit words bold. */
+const snippetHtml = (parts) => parts.map(([t, hit]) => (hit ? `<b>${esc(t)}</b>` : esc(t))).join('');
 /** A web address's host, for a library read from the web ("mirror.download.kiwix.org"). */
 const hostOf = (url) => { try { return new URL(url).hostname; } catch { return 'the web'; } };
 
@@ -119,11 +122,14 @@ export class Overlay {
     this._booksByLib = {};
     this._books = []; // book results of the current query
     this._articles = []; // article results of the current query
+    this._texts = []; // full-text results of the current query
     this._articlesDue = false; // the current query's articles still to come (its timer, then its request)
+    this._textsDue = false; // the current query's full-text hits still to come (its timer, then its request)
     this._downWaits = false; // a TV's ↓ in the box before any result had come: to the first once they do
     this._searchToken = 0;
     this._searchTimer = 0;
-    this._dueTimer = 0; // the end of the list's wait for the articles (ARTICLE_WAIT)
+    this._textTimer = 0;
+    this._dueTimer = 0; // the end of the list's wait for the articles and text hits (RESULTS_WAIT)
     this._pickArticle = null;
     root.innerHTML = `
       <div class="ov-loading" role="status" aria-live="polite">
@@ -602,6 +608,8 @@ export class Overlay {
   onSearchPick(cb) { this._pick = cb; }
   /** cb(libId, { title, book, n }) for a Wikipedia article chosen in the search results. */
   onArticlePick(cb) { this._pickArticle = cb; }
+  /** cb(libId, hit) for a full-text hit chosen in the search results (api.searchText). */
+  onTextPick(cb) { this._pickText = cb; }
   onRescan(cb) { this._rescan = cb; }
 
   /**
@@ -870,19 +878,23 @@ export class Overlay {
     const s = q.trim().toLowerCase();
     const token = ++this._searchToken;
     clearTimeout(this._searchTimer);
+    clearTimeout(this._textTimer);
     this._articles = [];
+    this._texts = [];
     if (!s) {
       this._showList(false);
       this._results = [];
       this._announce('');
       return;
     }
-    // Wikipedia articles: from the server (millions of titles), a moment after typing stops. Until
-    // they have come, a list with nothing in it yet waits for them (_showResults), for
-    // ARTICLE_WAIT at most; articles that come after that are still listed.
+    // Wikipedia articles: from the server (millions of titles), a moment after typing stops; the
+    // full text (through kiwix-serve) a little later, it is the slowest. Until they have come, a
+    // list with nothing in it yet waits for them (_showResults), for RESULTS_WAIT at most; what
+    // comes after that is still listed.
     this._downWaits = false;
     clearTimeout(this._dueTimer);
     this._articlesDue = asksArticles(this._libraries, q);
+    this._textsDue = asksText(this._libraries, q);
     if (this._articlesDue) {
       this._searchTimer = setTimeout(async () => {
         const found = await findArticles(this._libraries, q, ARTICLE_RESULTS).catch((err) => {
@@ -892,16 +904,31 @@ export class Overlay {
         if (token !== this._searchToken) return;
         const late = !this._articlesDue; // after the list stopped waiting for them
         this._articlesDue = false;
-        clearTimeout(this._dueTimer);
         if (!found.length && (late || this._results.length)) return; // the list as it is
         this._articles = found;
         this._showResults();
       }, 150);
+    }
+    if (this._textsDue) {
+      this._textTimer = setTimeout(async () => {
+        const found = await findInText(this._libraries, q, TEXT_RESULTS).catch((err) => {
+          console.warn('[vrlbry] full-text search', err);
+          return []; // none, as from a library that cannot answer (findInText)
+        });
+        if (token !== this._searchToken) return;
+        const late = !this._textsDue; // after the list stopped waiting for them
+        this._textsDue = false;
+        if (!found.length && (late || this._results.length)) return; // the list as it is
+        this._texts = found;
+        this._showResults();
+      }, 300);
+    }
+    if (this._articlesDue || this._textsDue) {
       this._dueTimer = setTimeout(() => {
-        if (token !== this._searchToken || !this._articlesDue) return;
-        this._articlesDue = false; // none yet: an empty list says so, and a waiting ↓ is given up
+        if (token !== this._searchToken || !(this._articlesDue || this._textsDue)) return;
+        this._articlesDue = this._textsDue = false; // none yet: an empty list says so, and a waiting ↓ is given up
         if (!this._results.length) this._showResults();
-      }, ARTICLE_WAIT);
+      }, RESULTS_WAIT);
     }
     this._books = matchBooks(this._bookIndex(), q, 12);
     this._sel = -1; // a new query: the highlight starts at the first again, the list at its top
@@ -910,25 +937,31 @@ export class Overlay {
   }
 
   /**
-   * Lists the book results, then the article results (fewer books once articles arrive). With
-   * nothing to list while the articles are still to come, the list waits for them: "Searching…",
-   * shown and said, and aria-busy (a TV's ↓ then waits in the box: remote.js). The result with the
-   * focus (a TV: ↓ from the box) or with the highlight moved off the first (a desktop's ↑ ↓) stays
-   * that result as the list is made again, not its place (listResults).
+   * Lists the book results, then the article results, then the full-text hits (fewer books once
+   * the others arrive). With nothing to list while the articles or the text hits are still to
+   * come, the list waits for them: "Searching…", shown and said, and aria-busy (a TV's ↓ then
+   * waits in the box: remote.js). The result with the focus (a TV: ↓ from the box) or with the
+   * highlight moved off the first (a desktop's ↑ ↓) stays that result as the list is made again,
+   * not its place (listResults).
    */
   _showResults() {
     const list = this.$('.ov-results');
     const focused = this.tv && list.contains(document.activeElement) ? Number(document.activeElement.dataset.i ?? -1) : -1;
     const held = this._results[focused >= 0 ? focused : this._sel > 0 ? this._sel : -1];
-    const { results, at } = listResults(this._books, this._articles, held);
+    const { results, at } = listResults(this._books, [...this._articles, ...this._texts], held);
     this._results = results;
-    const waiting = this._articlesDue && !this._results.length;
+    const waiting = (this._articlesDue || this._textsDue) && !this._results.length;
     if (waiting) list.setAttribute('aria-busy', 'true');
     else list.removeAttribute('aria-busy');
     this._sel = !this._results.length ? -1 : at >= 0 ? at : Math.min(Math.max(focused, 0), this._results.length - 1);
     const tab = this.tv ? ' tabindex="-1"' : '';
+    const textHead = this._results.length - this._texts.length; // the first hit's place: "In the text" before it
     list.innerHTML = this._results.length
-      ? this._results.map((e, i) => (e.article ? `
+      ? this._results.map((e, i) => (e.hit ? `${i === textHead ? '<li class="ov-r-head" aria-hidden="true">In the text</li>' : ''}
+        <li role="option" id="ov-result-${i}" aria-selected="${i === this._sel}" data-i="${i}" class="${i === this._sel ? 'sel' : ''}"${tab}>
+          ${e.lib.illustration ? `<img class="ov-r-icon" ${imgSrc(e.lib.illustration)} alt="" width="34" height="34">` : '<span class="ov-nocover"></span>'}
+          <div><div class="ov-r-title">${esc(e.hit.title)}</div><div class="ov-r-snip">${snippetHtml(e.hit.snippet)}</div><div class="ov-r-sub">${e.hit.author ? `${esc(e.hit.author)} · ` : ''}${esc(e.lib.title)}</div></div>
+        </li>` : e.article ? `
         <li role="option" id="ov-result-${i}" aria-selected="${i === this._sel}" data-i="${i}" class="${i === this._sel ? 'sel' : ''}"${tab}>
           ${e.lib.illustration ? `<img class="ov-r-icon" ${imgSrc(e.lib.illustration)} alt="" width="34" height="34">` : '<span class="ov-nocover"></span>'}
           <div><div class="ov-r-title">${e.article.from ? `${esc(e.article.from)} → ` : ''}${esc(e.article.title)}</div><div class="ov-r-sub">${esc(e.lib.title)} · Volume ${esc(e.article.book.slice(1))}</div></div>
@@ -1046,13 +1079,16 @@ export class Overlay {
    */
   _showList(open) {
     if (!open) {
-      // Closed: the article results still to come stay away (they arrive 150 ms after a search),
-      // a ↓ waiting for them is given up, and a status still to be said is dropped ("Searching…").
+      // Closed: the article results and text hits still to come stay away (they arrive 150 and
+      // 300 ms after a search), a ↓ waiting for them is given up, and a status still to be said is
+      // dropped ("Searching…").
       this._searchToken++;
       clearTimeout(this._searchTimer);
+      clearTimeout(this._textTimer);
       clearTimeout(this._dueTimer);
       clearTimeout(this._announceTimer);
       this._articlesDue = false;
+      this._textsDue = false;
       this._downWaits = false;
       this.$('.ov-results').removeAttribute('aria-busy');
     }
@@ -1089,7 +1125,8 @@ export class Overlay {
     this._showList(false);
     const input = this.$('.ov-search input');
     input.blur();
-    if (e.article) this._pickArticle?.(e.lib.id, e.article);
+    if (e.hit) this._pickText?.(e.lib.id, e.hit);
+    else if (e.article) this._pickArticle?.(e.lib.id, e.article);
     else this._pick?.(e.book);
   }
 }

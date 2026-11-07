@@ -1,9 +1,9 @@
 // Search (public/js/search.js), shared by the overlay and the kiosk: books in the client,
-// Wikipedia articles from the server (fetch is faked).
+// Wikipedia articles and full-text hits from the server (fetch is faked).
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { fold, bookIndex, matchBooks, asksArticles, findArticles, listResults } from '../public/js/search.js';
+import { fold, bookIndex, matchBooks, asksArticles, findArticles, listResults, asksText, findInText } from '../public/js/search.js';
 
 const pg = { id: 'pg', kind: 'gutenberg', title: 'Gutenberg' };
 const wp = { id: 'wp', kind: 'wikipedia', title: 'Wikipedia' };
@@ -89,5 +89,27 @@ describe('search', () => {
     assert.deepEqual(listResults(books, articles, { book: book('b2', 'Book 2') }), shown, 'another object is not held');
     assert.deepEqual(listResults([], articles, articles[0]), { results: articles, at: 0 });
     assert.deepEqual(listResults([], []), { results: [], at: -1 });
+  });
+
+  it('asks the libraries with full text for hits from three letters, as asksText says, and survives failures', async () => {
+    const searchable = [{ ...pg, fulltext: true }, ws, wp];
+    assert.equal(asksText(searchable, 'whale'), true);
+    assert.equal(asksText(searchable, ' wh '), false, 'two letters');
+    assert.equal(asksText(libraries, 'whale'), false, 'no library with full text');
+    const asked = [];
+    globalThis.fetch = async (url) => {
+      asked.push(url);
+      return { ok: true, json: async () => ({ total: 1, results: [{ title: 'Moby-Dick', snippet: [['whale', true]] }] }) };
+    };
+    for (const [libs, q] of [[searchable, 'wh'], [libraries, 'whale'], [searchable, 'whale ']]) {
+      const found = await findInText(libs, q);
+      assert.equal(asked.length > 0, asksText(libs, q), `${q}: asked as it says`);
+      assert.equal(found.length > 0, asksText(libs, q), `${q}: hits only when asked`);
+      asked.length = 0;
+    }
+    await findInText(searchable, 'whale ', 3);
+    assert.deepEqual(asked.map((u) => u.slice(u.indexOf('/api/'))), ['/api/libraries/pg/text?q=whale&limit=3'], 'only the library with full text');
+    globalThis.fetch = async () => { throw new Error('offline'); };
+    assert.deepEqual(await findInText(searchable, 'whale'), []);
   });
 });

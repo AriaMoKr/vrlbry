@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Xapian search test</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 16px; background: #1d1712; color: #eadfcf; font: 14px/1.45 system-ui, sans-serif; }
+  h1 { font-size: 18px; margin: 0 0 6px; }
+  p { color: #b9ab96; margin: 0 0 12px; max-width: 70ch; }
+  form { display: flex; gap: 8px; margin: 0 0 12px; flex-wrap: wrap; }
+  input { flex: 1 1 260px; min-width: 0; padding: 6px 8px; background: #2a221b; color: inherit; border: 1px solid #5a4a38; border-radius: 6px; }
+  button { padding: 6px 12px; background: #d9b26a; color: #1d1712; border: 0; border-radius: 6px; font-weight: 600; }
+  pre { white-space: pre-wrap; word-break: break-word; margin: 0; }
+</style>
+</head>
+<body>
+<h1>Xapian search (experimental)</h1>
+<p>Searches a ZIM's full-text index read over the web (public/js/core/zim/xapian.js; docs/SEARCH.md,
+option 4): <code>?zim=&lt;address&gt;</code> (Kiwix's mirror), <code>&amp;zimproxy=&lt;proxy&gt;</code>
+or <code>off</code>, <code>&amp;inflight=&lt;n&gt;</code>, <code>&amp;title</code> for the title index. No stemmer
+here: type the words as stems ("whale", "harpoon").</p>
+<form id="f"><input id="q" name="q" value="harpoon whale" aria-label="Words"><button>Search</button></form>
+<pre id="out"></pre>
+<script type="module">
+import { decompress } from '../vendor/fzstd/esm/index.js';
+import { inflateSync, unzlibSync } from '../vendor/fflate/esm/browser.js';
+import { Parser } from '../vendor/htmlparser2/dist/Parser.js';
+import { provide } from '../js/core/platform.js';
+import { ZimArchive } from '../js/core/zim/reader.js';
+import { XapianDb } from '../js/core/zim/xapian.js';
+import { browserPlatform } from '../js/local/browser-platform.js';
+import { proxiedUrl } from '../js/local/zim-url.js';
+
+provide(browserPlatform({ zstdDecompress: decompress, unzlibSync, inflateSync, Parser }));
+
+const params = new URL(location.href).searchParams;
+const zim = params.get('zim') ?? 'https://mirror.download.kiwix.org/zim/wikisource/wikisource_en_all_maxi_2026-09.zim';
+const proxy = params.get('zimproxy') ?? 'https://vrlbry-zim-proxy.vrlbry.workers.dev/';
+const via = proxy === 'off' ? null : proxiedUrl(zim, proxy);
+const inFlight = Number(params.get('inflight') ?? 6);
+const out = document.getElementById('out');
+const say = (line) => { out.textContent += `${line}\n`; };
+
+// As the local library reads a ZIM from a web address (local-handler.js URL_ARCHIVE).
+const URL_ARCHIVE = { blockBytes: 8 * 1024, blockCacheBytes: 8 * 1024 * 1024, wholeClusterBytes: 0, wholeCompressedBytes: 4 * 1024 * 1024 };
+const state = { ready: false, error: null, runs: [] };
+window.__xt = state;
+
+let db = null;
+let archive = null;
+try {
+  let t0 = performance.now();
+  archive = await ZimArchive.open(zim, { ...URL_ARCHIVE, http: { via, maxInFlight: inFlight } });
+  state.openMs = Math.round(performance.now() - t0);
+  t0 = performance.now();
+  db = await XapianDb.inArchive(archive, params.has('title') ? 'X/title/xapian' : 'X/fulltext/xapian');
+  state.dbMs = Math.round(performance.now() - t0);
+  state.ready = true;
+  say(`${zim}${via ? ` through ${new URL(proxy).host}` : ''}: opened in ${state.openMs} ms; ${db.kind} index of ${db.docCount} documents in ${state.dbMs} ms`);
+} catch (err) {
+  state.error = String(err.stack || err);
+  say(`Could not open it: ${err.message}`);
+}
+
+/** One search: its timings and results, kept in window.__xt.runs. */
+async function search(q) {
+  const reads = db.reads;
+  const requests = db.requests;
+  const http0 = { ...archive._source.stats };
+  const t0 = performance.now();
+  const found = await db.search(q);
+  const run = {
+    q, ms: Math.round(performance.now() - t0), total: found.total, truncated: found.truncated,
+    blocks: db.reads - reads, requests: db.requests - requests,
+    httpReads: archive._source.stats.reads - http0.reads, viaReads: archive._source.stats.viaReads - http0.viaReads,
+    terms: found.terms, results: found.results.map((r) => r.path),
+  };
+  state.runs.push(run);
+  say(`\n"${q}": ${run.total} documents in ${run.ms} ms (${run.blocks} blocks in ${run.httpReads} requests, ${run.viaReads} through the proxy)`);
+  for (const p of run.results) say(`  ${p}`);
+  return run;
+}
+state.search = search;
+
+document.getElementById('f').addEventListener('submit', (e) => {
+  e.preventDefault();
+  if (db) search(document.getElementById('q').value);
+});
+</script>
+</body>
+</html>

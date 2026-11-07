@@ -1,9 +1,10 @@
 // @ts-check
 // Search (SPEC §5.6), shared by the DOM overlay and the kiosk's Search tab: books by title,
-// subtitle and author across every library (in the client), and Wikipedia articles by title
-// prefix (on the server, which holds the millions of titles).
+// subtitle and author across every library (in the client), Wikipedia articles by title prefix
+// (on the server, which holds the millions of titles), and the full text of the libraries the
+// server can search through kiwix-serve (`fulltext`).
 
-import { searchArticles } from './api.js';
+import { searchArticles, searchText } from './api.js';
 
 /** Lower case without accents, so "eclair" finds "Éclair". */
 export function fold(s) {
@@ -82,10 +83,10 @@ export async function findArticles(libraries, q, perLibrary = 8) {
 }
 
 /**
- * The overlay's list of results: the books, then the others (the articles), with only the first
- * 6 books once others have come, unless `held` (the result with the focus or the highlight while
- * the list is made again) is a later book: then all of them, so it stays listed. `at` is where
- * `held` is now, -1 for none.
+ * The overlay's list of results: the books, then the others (the articles, then the text's
+ * hits), with only the first 6 books once others have come, unless `held` (the result with the
+ * focus or the highlight while the list is made again) is a later book: then all of them, so it
+ * stays listed. `at` is where `held` is now, -1 for none.
  * @template T
  * @param {T[]} books
  * @param {T[]} more
@@ -96,4 +97,28 @@ export function listResults(books, more, held) {
   const all = !more.length || books.findIndex((e) => e === held) >= 6;
   const results = [...(all ? books : books.slice(0, 6)), ...more];
   return { results, at: results.findIndex((e) => e === held) };
+}
+
+/**
+ * Whether findInText asks for `q` at all: three letters or more, and a library with `fulltext`
+ * among the libraries (the overlay's list waits for the hits only then).
+ * @param {Array<{ fulltext?: boolean }>} libraries
+ * @param {string} q
+ */
+export function asksText(libraries, q) {
+  return fold(String(q ?? '').trim()).length >= 3 && libraries.some((l) => l.fulltext);
+}
+
+/**
+ * Pages whose text holds the words of `q`, from every library with `fulltext` (the server's,
+ * through kiwix-serve), in each library's order of relevance; failures give no results.
+ * @returns {Promise<Array<{ hit: object, lib }>>}
+ */
+export async function findInText(libraries, q, perLibrary = 4) {
+  if (!asksText(libraries, q)) return [];
+  const s = String(q ?? '').trim();
+  const searchable = libraries.filter((l) => l.fulltext);
+  const found = await Promise.all(searchable.map((lib) => searchText(lib.id, s, perLibrary)
+    .then((r) => r.results.map((hit) => ({ hit, lib })), () => [])));
+  return found.flat();
 }

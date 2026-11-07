@@ -105,6 +105,9 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .ov-r-title { font: 600 14px/1.25 var(--serif); }
 .ov-r-sub { color: var(--muted); font-size: 12px; }
 .ov-empty { color: var(--muted); cursor: default !important; }
+.ov-results li.ov-r-head { display: block; padding: 8px 8px 2px; color: var(--muted); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; cursor: default; background: none; }
+.ov-r-snip { font-size: 12px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.ov-r-snip b { color: var(--accent); font-weight: 600; }
 
 /* Bottom bar */
 .ov-bottom { position: fixed; left: 50%; bottom: max(18px, env(safe-area-inset-bottom)); transform: translateX(-50%); display: flex; gap: 12px; align-items: center; }
@@ -314,7 +317,7 @@ html.tv .ov-hallway { height: 36px; max-width: 9em; }
 html.tv .ov-brand { font-size: 22px; }
 html.tv .ov-lib-title { font-size: 19px; }
 html.tv .ov-r-title { font-size: 18px; }
-html.tv :is(.ov-version, .ov-hallway, .ov-lib-desc, .ov-lib-meta, .ov-open-hint, .ov-session, .ov-session button, .ov-r-sub, .ov-url-input,
+html.tv :is(.ov-version, .ov-hallway, .ov-lib-desc, .ov-lib-meta, .ov-open-hint, .ov-session, .ov-session button, .ov-r-sub, .ov-r-snip, .ov-r-head, .ov-url-input,
   .ov-help h3, .ov-view-note, .ov-debug-note, .ov-scene-note, .ov-reset-note, .ov-reset legend, .ov-comfort, .ov-update-pref, .ov-update-never,
   .ov-status, .ov-status-line, .ov-status-toggle, .ov-status-stop, .ov-kiwix-note, .ov-kiwix-summary, .ov-kiwix-meta, .ov-kiwix-warn,
   .ov-kiwix-lang, .ov-kiwix-find, .ov-kiwix-state, .ov-kiwix-index) { font-size: 16px; }
@@ -322,6 +325,7 @@ html.tv :is(.ov-version, .ov-hallway, .ov-lib-desc, .ov-lib-meta, .ov-open-hint,
 html.tv .ov-results li.sel { background: none; }
 html.tv .ov-results li:focus { background: rgba(217, 178, 106, .34); outline: 4px solid #ffd98a; outline-offset: -4px; box-shadow: none; }
 html.tv .ov-results li:focus .ov-r-sub { color: var(--text); } /* the muted line on the stronger highlight */
+html.tv .ov-results li:focus .ov-r-snip b { color: #ffd98a; } /* a text hit's words: --accent is 4.1:1 on it, the ring's gold 6 */
 html.tv .ov-libs { max-height: none; overflow: visible; } /* one scroll, the card's, which the remote's focus moves */
 html.tv :is(.ov-help-inner, .ov-kiwix-inner) { max-width: min(760px, calc(100vw - 2 * var(--tv-edge-x))); max-height: calc(100vh - 2 * var(--tv-edge-y)); }
 html.tv .ov-kiwix-inner { height: calc(100vh - 2 * var(--tv-edge-y)); }

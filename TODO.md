@@ -399,12 +399,13 @@
     Wikipedia's articles match): it closed the list, dropping them, and went on to the Controls
     help. Now it waits in the box while they are on the way ("Searching…", `aria-busy`, 10 s at
     most) and goes to the first when they come (done 2026-11-03 in a browser, SPEC §5.9; for
-    that session to check on the TV).
+    that session to check on the TV). It waits for the full-text hits too (2026-11-04).
   - A result with the focus kept its place in the list when the articles came, not the result:
     the books were cut to 6, so the focus on a 7th to 12th book went to an article, and a
     desktop's highlight went back to the first. Now the result stays, and a book after the 6th
     keeps every book listed (done 2026-11-05 in a browser, SPEC §5.6, §5.9; for that session to
-    check on the TV).
+    check on the TV). A full-text hit with the focus stays too when the articles come after the
+    hits (2026-11-06).
   - Reading in 3D the spread is small on a TV (the reading pose of a desktop screen); the text
     view is the readable way for now.
 - **The text view and the 3D panel on common's** (requested 2026-11-01; done the same day; SPEC
@@ -476,6 +477,22 @@
     below). axe swept through the view (six places from top to end, and the contents) in each
     theme at 1280 × 800 and 375 × 812: nothing. The earlier checks as before; at 740 × 360 A+
     and A− keep the toolbar shown and now the line, within block 60.
+- **Full-text search** (kiwix-serve's built 2026-10-18 and 2026-11-04, in the app since
+  2026-11-06; SPEC §3.7, §4, §5.6; the measurements and the options in docs/SEARCH.md). With
+  `--kiwix-serve <url>` the search lists hits in the text of the libraries whose ZIM kiwix-serve
+  serves too, and a hit opens its book at the paragraph. Libraries opened in the browser and the
+  GitHub Pages site get none: for them the ZIMs' Xapian indexes must be read in the page
+  (`core/zim/xapian.js`, experimental, not used by the app yet). Next:
+  - The Quest: `public/dev/xapian-test.html` there, over Wi-Fi through the proxy.
+  - A stemmer for the browser (a full-text index holds Snowball-English stems): `porter2`
+    wrapped as a module, or Snowball's English ported (BSD).
+  - Common words: better candidates than the first 20,000 in document order ("declaration of
+    independence": its rarest stem is in 59,000 pages, past the 20,000 taken).
+  - Into the app: full-text search of the libraries opened from the web or from files (in the
+    local library's worker), beside kiwix-serve's for the server's; snippets from the page's
+    text (as `find` does), titles from the path or the title value.
+  - Not done with kiwix-serve either: the kiosk's Search tab (VR) shows no text hits, the words
+    are not highlighted on the page, no "more results".
 - **All-libraries hall draw calls.** On the Quest: 380 → 104 standing (both eyes), 142 → 56
   walking, with one draw call per sign and no books drawn behind a nearer row. The room itself
   (chandeliers, walls, wainscots, ~31 calls per eye) could still be merged per material.

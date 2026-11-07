@@ -77,6 +77,7 @@ node server/index.js --dir /path/to/zims --port 8080
 | `--cert <file> --key <file>` | use your own certificate |
 | `--max-generic <n>` | max books listed from other (non-Gutenberg, non-Wikisource) ZIMs (default 2000) |
 | `--no-watch` | don't pick up `.zim` files added or removed while the server runs |
+| `--kiwix-serve <url>` | full-text search through Kiwix's own server ([kiwix-serve](https://github.com/kiwix/kiwix-tools)) at `<url>`, for the libraries whose ZIM it serves too (the same file); the search then lists hits "In the text" ([docs/SEARCH.md](docs/SEARCH.md)) |
 | `--quiet` | print only problems and the address |
 
 ## Adding books

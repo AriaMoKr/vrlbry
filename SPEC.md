@@ -898,13 +898,19 @@ export class ArchiveLibrary {
 
 ### 3.7 `server/http.js` and `server/index.js`
 
-`export function createApp(library, { publicDir, vendorDirs, log })` → `(req, res) => void` handler.
+`export function createApp(library, { publicDir, vendorDirs, log, kiwix })` → `(req, res) => void` handler.
 `index.js` CLI:
 
 ```
 node server/index.js [--dir <path>] [--port 8080] [--host 0.0.0.0] [--https] [--https-port 8443]
-                     [--no-http] [--cert <file> --key <file>] [--max-generic 2000] [--no-watch] [--quiet]
+                     [--no-http] [--cert <file> --key <file>] [--max-generic 2000] [--no-watch]
+                     [--kiwix-serve <url>] [--quiet]
 ```
+- `--kiwix-serve <url>` (optional): full-text search through Kiwix's own server, kiwix-serve
+  (`server/kiwix-serve.js`), which searches the Xapian indexes inside ZIM files. A library whose
+  file it serves too (the same UUID, from its catalogue, asked again after a minute) gets
+  `"fulltext": true` in `GET /api/libraries` and the `text` and `find` routes (§4). Without it, or
+  while kiwix-serve cannot be reached, search is as before.
 - `--dir` defaults to `process.cwd()`. **Conventional ports: HTTP 8080 (`--port`), HTTPS 8443
   (`--https-port`).** `--https` (also implied by `--https-port`, `--cert`/`--key`) adds the HTTPS
   listener next to plain HTTP: one process, one shared `Library`, two servers; `--no-http` keeps
@@ -1083,6 +1089,28 @@ as typed, with a capital first letter, in capitals and in title case; at most 40
 spelling), each redirect resolved to its article's position in the index (`searchRedirects` in
 `wikipedia.js`; the spellings searched at once, a spelling's redirects resolved 8 at a time). Title matches come first, except that another name typed in full leads; an
 article appears once. `limit` defaults to 12, at most 50. Empty while indexing.
+
+**`GET /api/libraries/:lib/text?q=<words>&start=<n>&limit=<n>`** (libraries with `"fulltext":
+true`, 404 otherwise, 502 when kiwix-serve fails) → `{ "library": lib, "total", "results": [ {
+"title", "author"?, "snippet": [[text, hit]], "find": { "words", "hits", "terms" }, "words",
+"path", "to": { "book", "c", "b" } } ], "unplaced" }`: kiwix-serve's full-text hits in its order
+of relevance (`limit` defaults to 10, at most 50), each placed in the library (`placeOf`): the
+book (a Gutenberg book by the number in its page's name, titled and authored as the library
+lists it; a Wikipedia article's volume and chunk; a Wikisource page's work, its part placed by
+`find`). `snippet` is kiwix-serve's excerpt with its hit words marked (1); `find` is what to look
+for in the book (`snippetTarget`, `core/content/find.js`): up to 6 words in a row around the
+first hit, the hit words, the query's words. Hits that are no book (an image, a page outside the
+works) are dropped and counted in `unplaced`.
+
+**`GET /api/libraries/:lib/books/:id/find?t=<query words>&w=<words in a row>&h=<hit words>&path=<archive path>&c=<n>`**
+→ `{ "library": lib, "at": { "c", "b", "exact" } | null, "beyond"? }`: where a full-text hit is
+in the book (`findText`): the block, from the page `path` names (a Wikisource part, placed
+exactly now) or chunk `c`, holding most of the query's words (10 points each, other endings
+allowed: "harpoon" finds "harpoons"), then the snippet's words in a row (5, `exact`), then the hit
+words (1 each); the first among equals. A Wikipedia volume's article is one chunk and a
+Wikisource part is read for 8 chunks; a Gutenberg book is read whole. `beyond: true` (and no
+`at`) when the page belongs to this work but lies past what it holds (a work is cut at 1,200
+parts or 36 MB, §3.8).
 
 **`GET /zim/:lib/<archivePath>`** → raw entry content. `<archivePath>` is `ns/url` with each
 segment percent-encoded (decode each segment, join with `/`). Follows ZIM redirects internally.
@@ -1774,18 +1802,23 @@ States: `browse` → `inspect` → `opening` → `read` (and back), plus `busy` 
   picking a result = switch room if needed, teleport to it and select it; for Wikipedia
   libraries it also asks the server for articles by title, 150 ms after typing stops, listed
   after up to 6 books; picking an article takes its volume off the shelf and opens it at that
-  article, `interaction.openArticle` / `read({ at })`), Enter VR button
+  article, `interaction.openArticle` / `read({ at })`; for the libraries with `fulltext` (§4,
+  `text`) it asks for full-text hits too, 300 ms after typing stops, three letters or more, up
+  to 4 per library, listed last under "In the text" with their snippets; picking a hit opens its
+  book where the hit is, `interaction.openText`), Enter VR button
   (only when `immersive-vr` is supported), control help, loading progress, error toasts. The
   search box is a combobox (`aria-controls` its listbox, `aria-expanded` while the list shows,
   `aria-activedescendant` the highlighted option, which has `aria-selected`; `_showList`), and a
   polite status says how many results there are ("12 results", "No results") once typing pauses.
-  When the articles arrive and the list is made again, the highlighted result (moved with ↑ ↓)
-  stays that result, not its place: a book after the 6th keeps every book listed
-  (`listResults`). A new query starts at the first again, the list scrolled to its top.
-  While articles are still to come and nothing else matches (a Wikipedia among the libraries and
-  two letters or more: `asksArticles`), the list and the status say "Searching…" and the list is
-  `aria-busy`, for 10 s at most (`ARTICLE_WAIT`, for a stalled request; articles that come later
-  are still listed); "No results" waits until then. A search that fails counts as none found.
+  When the articles or the full-text hits arrive and the list is made again, the highlighted
+  result (moved with ↑ ↓) stays that result, not its place: a book after the 6th keeps every
+  book listed (`listResults`). A new query starts at the first again, the list scrolled to its
+  top. While articles or full-text hits are still to come and nothing else matches (articles: a
+  Wikipedia among the libraries and two letters or more, `asksArticles`; hits: a library with
+  `fulltext` and three letters or more, `asksText`), the list and the status say "Searching…"
+  and the list is `aria-busy`, for 10 s at most (`RESULTS_WAIT`, for a stalled request; what
+  comes later is still listed); "No results" waits until then. A search that fails counts as
+  none found.
   The card stays within the screen and scrolls inside it; on a short screen (a phone held
   sideways, height ≤ 500 px) it stops above the buttons at the foot, its library list does not
   scroll on its own, and the hint goes; between 641 and 780 px wide the search box takes the space
@@ -2073,17 +2106,17 @@ ui/text-view.js, ui/remote.js); main.js only wires them.
     onto the box. `LibraryRemote` leaves a combobox's focused option its ↑ ↓ OK and Escape (and
     turns TalkBack's channel keys into its arrows). ↑ from the box, or ↓ with no result to go
     to and none on the way, closes the list and goes on as from any control. While the articles
-    are still to come and nothing else matched (the list "Searching…" and `aria-busy`, 10 s at
-    most: §5.6), ↓ is the box's: it waits there, and the focus goes to the first result once
-    they come (`overlay._downWaits`); when none come, or not within those 10 s, it stays in the
-    box, from which ↓ then goes on. Any other key gives a waiting ↓ up, also one common's Remote
-    takes itself, which the box never sees (← → at the caret's ends, TalkBack's rewind and
-    fast-forward: `overlay.remoteKey`), and so do typing, Back, the list closing or the focus
-    moved elsewhere. The highlight follows the focus, so no result looks chosen while the box has
-    it. A focused result keeps the focus when the article results arrive and the list is made
-    again: the same result, not its place (a book after the 6th keeps every book listed, §5.6);
-    closing the list drops the article search still to come (on a desktop too, where it
-    reopened the list after Escape).
+    or the full-text hits are still to come and nothing else matched (the list "Searching…" and
+    `aria-busy`, 10 s at most: §5.6), ↓ is the box's: it waits there, and the focus goes to the
+    first result once any come (`overlay._downWaits`); when none come, or not within those
+    10 s, it stays in the box, from which ↓ then goes on. Any other key gives a waiting ↓ up,
+    also one common's Remote takes itself, which the box never sees (← → at the caret's ends,
+    TalkBack's rewind and fast-forward: `overlay.remoteKey`), and so do typing, Back, the list
+    closing or the focus moved elsewhere. The highlight follows the focus, so no result looks
+    chosen while the box has it. A focused result keeps the focus when the article results or
+    the text hits arrive and the list is made again: the same result, not its place (a book
+    after the 6th keeps every book listed, §5.6); closing the list drops the searches still to
+    come (on a desktop too, where it reopened the list after Escape).
   - The focus falling to nowhere (a control that hid itself: ↩ Back after the last link, Put
     back) is walking again (common's), except in an open dialog, where it goes to the dialog's
     first control (`LibraryRemote.walk`); the help's reset Cancel gives it back to "Reset stored
@@ -2195,5 +2228,29 @@ ui/text-view.js, ui/remote.js); main.js only wires them.
   - A new query starts at the first again, the list scrolled back to its top. Before: a list
     scrolled down stayed so, its first result highlighted out of view.
   - The checks above (2026-11-03) again: the same results.
+
+  And with kiwix-serve's full text for the same three libraries (§4, `text`; 2026-11-04, again
+  2026-11-06), the full-text answers held back or broken (CDP):
+  - ↓ right after typing words only the full text finds ("queequeg harpoon razor") waits in the
+    box and goes to the first hit once they come, where OK opens its book; so with the hits held
+    back 1.5 s and ↓ while they are on the way. Before: "No matching books" once the empty
+    articles came, and ↓ then closed the list.
+  - With the hits held back 12 s: "Searching…" for 10 s, then "No results", the ↓ given up; the
+    hits are listed when they come, and ↓ then goes to the first. → at the end of the box's text
+    gives a waiting ↓ up. A hit answer the search cannot read (`{}`) is none found, a warning
+    logged (before: an uncaught TypeError). Articles still come before the hits; on a desktop
+    the list waits too and Enter opens the first hit. axe while the list waits and with the hits
+    shown, on a desktop and on a TV. The checks above, again with the hits coming too.
+  - Articles that come after the hits (held back) leave the focus on the hit that had it, and a
+    desktop's highlight on its hit (`listResults`). Before (2026-11-04): the focus was kept by
+    its place in the list, so it moved onto an article. Where the articles are slow, stalled or
+    broken, a waiting ↓ goes to the first hit, which keeps the focus as they come before it.
+  - "moby" lists the 6 books, the 8 articles, then "In the text" and 12 hits (4 a library), on a
+    desktop and on a TV. A hit opens its book at the block with its words ("queequeg harpoon
+    razor": Moby-Dick at the paragraph where Queequeg shaves with his harpoon, on the spread
+    shown); a Wikisource hit past where its work was cut ("white whales in confinement": Popular
+    Science Monthly, 8,952 parts) gives the notice, and the book goes back. axe at a book, an
+    article, a hit and the last result: nothing. Without `--kiwix-serve` no library has
+    `fulltext`, `text` answers 404 with why, and the checks above give main's results.
 
   The TV itself is another session's (TODO).

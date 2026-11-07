@@ -15,7 +15,7 @@ import { perf } from './perf.js';
 import { load, save } from './util/storage.js';
 import { progressText } from './util/progress.js';
 import { isLocal } from './local/local.js';
-import { resolveLink } from './api.js';
+import { findText, resolveLink } from './api.js';
 import { makeRoom } from './world/room-ahead.js';
 import { RESET_PARTS, defaultResetParts } from './reset.js';
 import { wayOut as defaultWayOut } from './hallway.js';
@@ -2540,18 +2540,48 @@ export class Interaction {
   }
 
   /** Article search result: take its Wikipedia volume off the shelf and open it at the article. */
-  async openArticle(libId, bookId, n) {
+  openArticle(libId, bookId, n) {
+    return this.openAt(libId, bookId, { c: n, b: 0 });
+  }
+
+  /**
+   * Full-text search result (api.searchText): take its book off the shelf and open it at the
+   * block holding the snippet's words, which the server finds while the book comes out.
+   */
+  async openText(libId, hit) {
+    const start = { c: hit.to.c ?? 0, b: hit.to.b ?? 0 };
+    const found = findText(libId, hit).catch((err) => {
+      console.warn('find', err);
+      return { at: null, beyond: false };
+    });
+    // A Wikisource work longer than the library holds (1,200 parts) leaves out its later pages:
+    // the book goes back, with a word why.
+    const place = found.then(({ at, beyond }) => {
+      if (beyond) this.notice('Not in this book', 'That page comes after where the library cut this long work', 5);
+      return beyond ? null : at ? { c: at.c, b: at.b } : start;
+    });
+    await this.openAt(libId, hit.to.book, place);
+  }
+
+  /**
+   * Takes a book of a library off the shelf and opens it at `at` ({ c, b }, or a promise of one,
+   * awaited only once the book is out; null puts it back).
+   */
+  async openAt(libId, bookId, at) {
     if (this.state === 'inspect' || this.state === 'read') await this.putBack();
     if (this.state !== 'browse') return;
     const book = (this.booksByLib[libId] || []).find((b) => b.id === bookId);
     if (!book || !(await this.ensureShelved(book))) {
-      this.overlay?.showToast('That volume is not on the shelves.', 'error');
+      this.overlay?.showToast('That book is not on the shelves.', 'error');
       return;
     }
     this.showBook(book);
     await this._tween(0.4, () => {});
     await this.pick(book);
-    if (this.state === 'inspect') await this.read({ at: { c: n, b: 0 } });
+    const place = await at;
+    if (this.state !== 'inspect') return;
+    if (place) await this.read({ at: place });
+    else await this.putBack();
   }
 
   /**

@@ -67,7 +67,10 @@ export const platform = {
   zstd: missing('zstd'),
   /** zlib-decompressed bytes (ZIM clusters of compression 2); truncated input: code 'Z_BUF_ERROR'. */
   inflate: missing('inflate'),
-  /** Raw-deflate-decompressed bytes, synchronously (zip/EPUB entries). */
+  /**
+   * Raw-deflate-decompressed bytes, synchronously (zip/EPUB entries, Xapian's compressed values).
+   * @type {(bytes: Uint8Array) => Uint8Array}
+   */
   inflateRaw: missing('inflateRaw'),
   /** CRC-32 (IEEE), or null: xz.js then uses its own table. */
   crc32: null,

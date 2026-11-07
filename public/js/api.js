@@ -105,6 +105,28 @@ export async function searchArticles(libId, q, limit = 8) {
   return (await getJSON(api(`api/libraries/${enc(libId)}/articles?q=${enc(q)}&limit=${limit}`))).articles;
 }
 
+/**
+ * Full-text search of a library (§4): the server's, through kiwix-serve, for a library with
+ * `fulltext`: { total, results: [{ title, author?, snippet: [[text, hit]], find, words, path, to }] }.
+ * None for libraries opened here or a static site.
+ */
+export async function searchText(libId, q, limit = 6) {
+  if (local.isLocal(libId) || staticSite) return { total: 0, results: [] };
+  return getJSON(api(`api/libraries/${enc(libId)}/text?q=${enc(q)}&limit=${limit}`));
+}
+
+/**
+ * Where a full-text hit (searchText) is in its book: { at: { c, b, exact } | null, beyond? }:
+ * the block that best matches the query and the snippet; `beyond` when the page lies past what
+ * its Wikisource work holds (the work was cut).
+ */
+export async function findText(libId, hit) {
+  const { to, path, find } = hit;
+  const q = `path=${enc(path ?? '')}&c=${to.c ?? 0}&t=${enc((find.terms ?? []).join(' '))}&w=${enc(find.words.join(' '))}&h=${enc(find.hits.join(' '))}`;
+  const { at = null, beyond = false } = await getJSON(api(`api/libraries/${enc(libId)}/books/${enc(to.book)}/find?${q}`));
+  return { at, beyond };
+}
+
 const collator = new Intl.Collator(); // the server's title order (wikipedia.js), as util/books.js sorts
 const titleLists = new Map(); // libId -> Promise<{ volumeSize, titles, keys }>
 
