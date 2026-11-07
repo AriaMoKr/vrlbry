@@ -3,7 +3,7 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { fold, bookIndex, matchBooks, asksArticles, findArticles, listResults, asksText, findInText } from '../public/js/search.js';
+import { fold, bookIndex, matchBooks, asksArticles, findArticles, listResults, resultKey, asksText, findInText } from '../public/js/search.js';
 
 const pg = { id: 'pg', kind: 'gutenberg', title: 'Gutenberg' };
 const wp = { id: 'wp', kind: 'wikipedia', title: 'Wikipedia' };
@@ -86,9 +86,34 @@ describe('search', () => {
     assert.equal(far.at, 8, 'the same book');
     assert.equal(listResults(books, articles, articles[3]).at, 9, 'an article held: found where it is now');
     assert.equal(listResults(books, [], books[11]).at, 11);
-    assert.deepEqual(listResults(books, articles, { book: book('b2', 'Book 2') }), shown, 'another object is not held');
+    assert.deepEqual(listResults(books, articles, { book: book('b99', 'Book 99') }), shown, 'a book not listed is not held');
     assert.deepEqual(listResults([], articles, articles[0]), { results: articles, at: 0 });
     assert.deepEqual(listResults([], []), { results: [], at: -1 });
+  });
+
+  it('holds a result made anew by what it is: the list made again for a changed catalogue', () => {
+    // Entries as matchBooks, findArticles and findInText make them, each library's object new too.
+    const make = () => {
+      const libs = { pg: { ...pg }, wp: { ...wp }, ws: { ...ws, fulltext: true } };
+      return {
+        books: Array.from({ length: 10 }, (_, i) => ({ book: book(`b${i}`, `Book ${i}`), lib: libs.pg })),
+        more: [
+          { article: { title: 'Paris', book: 'v706', n: 432 }, lib: libs.wp },
+          { article: { title: 'Paris', book: 'v706', n: 432, from: 'City of Light' }, lib: libs.wp },
+          { hit: { title: 'Paris', path: 'C/Paris_(poem)' }, lib: libs.ws },
+        ],
+      };
+    };
+    const before = make();
+    const after = make();
+    assert.equal(listResults(after.books, after.more, before.books[8]).at, 8, 'a later book: every book listed, the same one');
+    assert.equal(listResults(after.books, after.more, before.more[1]).at, 7, 'the article by the name it was found by');
+    assert.equal(listResults(after.books, after.more, before.more[2]).at, 8, 'a hit');
+    assert.equal(listResults(after.books.slice(1), after.more, before.books[0]).at, -1, 'a book no longer found');
+    const otherLib = { ...before.books[3], lib: { id: 'pg2' } };
+    assert.equal(listResults(after.books, after.more, otherLib).at, -1, 'the same book id in another library');
+    assert.equal(resultKey(before.books[3]), resultKey(after.books[3]));
+    assert.notEqual(resultKey(before.more[0]), resultKey(before.more[1]));
   });
 
   it('asks the libraries with full text for hits from three letters, as asksText says, and survives failures', async () => {

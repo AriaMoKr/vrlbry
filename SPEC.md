@@ -202,7 +202,9 @@ whole. It works on GitHub Pages (no server) and beside a server's own libraries.
   own ZIM files or the addresses reopened as the page starts: they are not new to the visitor,
   and the box showed them opening). With several files the
   box's head has a Stop: no more files are opened (`openFiles`' `stopped`; "Stopped: N files
-  not opened."). Several files opened together go to the "Opened here" place (§5.6), one to its
+  not opened."). The box's buttons are drawn as the card's (Stop as its Open, the rows' toggle
+  as its ⟳, a row's × as a library's), never on the browser's own button grey (#6b6b6b in a
+  dark color scheme, on which Stop's text was 4.3:1), each a 24 px target. Several files opened together go to the "Opened here" place (§5.6), one to its
   own room. Under the
   button, a line links an example to download
   (`EXAMPLE_ZIM` in `local/local.js`: Gutenberg LCC-P, 37 MB, from tools/demo-set.txt, which a
@@ -1818,11 +1820,22 @@ States: `browse` → `inspect` → `opening` → `read` (and back), plus `busy` 
   `fulltext` and three letters or more, `asksText`), the list and the status say "Searching…"
   and the list is `aria-busy`, for 10 s at most (`RESULTS_WAIT`, for a stalled request; what
   comes later is still listed); "No results" waits until then. A search that fails counts as
-  none found.
+  none found. When the libraries or their books change while the list shows (the site's own ZIM
+  files open as the page starts, §2.6; a library closed by its ×; an index ready; not their
+  details alone, such as an index build's progress), the list is made again for them
+  (`_relist`): the books matched again, the articles and the hits asked again of the libraries
+  now there, those of a library gone left out at once. It is not a new query: the highlighted
+  result stays that result, found by what it is, since every entry is made anew (`resultKey`:
+  its kind, library and book, article and the name it was found by, or page), the list keeps its
+  scroll, and it waits ("Searching…") only when nothing is left to list.
   The card stays within the screen and scrolls inside it; on a short screen (a phone held
   sideways, height ≤ 500 px) it stops above the buttons at the foot, its library list does not
   scroll on its own, and the hint goes; between 641 and 780 px wide the search box takes the space
-  beside the card.
+  beside the card. Elsewhere the library list scrolls in a box of its own (40 % of the screen's
+  height; a TV's is in the card's one scroll, §5.9), and while it does it is a region named
+  "Libraries" that takes the focus (Tab) and whose keys are its own (`data-own-keys`: ↑ ↓ scroll
+  it rather than walk; `_fitLibs`, run as it is filled and as it is resized): until a file of
+  this device is open nothing in it takes the focus (axe's scrollable-region-focusable).
 
 ### 5.7 Bootstrap (`main.js`)
 
@@ -2114,8 +2127,8 @@ ui/text-view.js, ui/remote.js); main.js only wires them.
     TalkBack's rewind and fast-forward: `overlay.remoteKey`), and so do typing, Back, the list
     closing or the focus moved elsewhere. The highlight follows the focus, so no result looks
     chosen while the box has it. A focused result keeps the focus when the article results or
-    the text hits arrive and the list is made again: the same result, not its place (a book
-    after the 6th keeps every book listed, §5.6); closing the list drops the searches still to
+    the text hits arrive, or the libraries change, and the list is made again: the same result,
+    not its place (a book after the 6th keeps every book listed, §5.6); closing the list drops the searches still to
     come (on a desktop too, where it reopened the list after Escape).
   - The focus falling to nowhere (a control that hid itself: ↩ Back after the last link, Put
     back) is walking again (common's), except in an open dialog, where it goes to the dialog's
@@ -2252,5 +2265,30 @@ ui/text-view.js, ui/remote.js); main.js only wires them.
     Science Monthly, 8,952 parts) gives the notice, and the book goes back. axe at a book, an
     article, a hit and the last result: nothing. Without `--kiwix-serve` no library has
     `fulltext`, `text` answers 404 with why, and the checks above give main's results.
+
+  And again (2026-11-06), while the main site opens the three ZIM files it ships (golf,
+  mathematics and physics Wikipedias), held back (CDP, `*/zims/*`) so that the status box shows
+  "Opening 3 ZIM files…" with its Stop: this checkout's page over the live site's files (through
+  a local proxy that gives each file the first date it saw: TODO, "The site's ZIM files carry two
+  dates"), and before it the live site:
+  - axe at 1280×800, at 375×812 and on a TV (`?tv=emulate`), while they open and once they are
+    open: nothing. Before: Stop's text 4.31:1 on the browser's grey (color-contrast, serious; now
+    8.96:1), and on the desktop and the phone the library list, 479 px scrolling in 320 and 325
+    with nothing in it to focus (scrollable-region-focusable, serious; a TV's list is in the
+    card's one scroll).
+  - The list scrolling in its own box is a region "Libraries" that Tab reaches, outlined, and ↓
+    scrolls it 40 px, the view standing still. Before: Tab reached it (Chrome's own), but ↓
+    walked the view back 0.8 m and scrolled nothing.
+  - "language" typed while they open lists 11 results (Gutenberg's 6 books, WikiMed's 5
+    articles); once they are open, 14, 8 of them articles, as when typed after, and never
+    "Searching…" in between. A book or an article highlighted (desktop) or focused (TV) is the
+    same result after. Before: the 11 for good.
+  - Golf closed by its × while "golf" lists 18 results, 14 of them its own: they go at once, the
+    other 4 kept. Before: all 18 stayed.
+  - A Wikisource file of this device opened once they are open, its index built from the file
+    (the site's prebuilt one answered 404): the rows' toggle 7.22:1 (13 px on the desktop, 16 px
+    on a TV) and a row's × 7.22:1 (14.17:1 under the pointer), 24 px square. Before: both
+    4.31:1, the × 22 px high on the desktop. The card's Leave, Reopen and Forget 8.99:1 (before:
+    4.31:1, 2.19:1 and 2.19:1). axe: nothing.
 
   The TV itself is another session's (TODO).

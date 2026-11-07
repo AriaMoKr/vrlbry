@@ -270,6 +270,8 @@ export class Overlay {
       const btn = e.target.closest('.ov-lib-close');
       if (btn) this._closeLibrary?.(btn.dataset.id);
     };
+    // Whether the list scrolls in a box of its own changes with the screen's height too (_fitLibs).
+    if (typeof ResizeObserver === 'function') new ResizeObserver(() => this._fitLibs()).observe(this.$('.ov-libs'));
     this.$('.ov-reopen-btn').onclick = () => this._reopen?.();
     this.$('.ov-reopen-forget').onclick = () => this._forget?.();
     // The index builds' status box: its rows shown or not (remembered).
@@ -536,6 +538,13 @@ export class Overlay {
    */
   setLibraries(libraries, booksByLib) {
     this._shown = [libraries, booksByLib];
+    // Libraries come or go, or their books change (files opened or closed, an index ready): a list
+    // of results shown is made again for them (_relist). Their details alone (an index build's
+    // progress) change nothing listed.
+    const was = this._libraries;
+    const wasBooks = this._booksByLib;
+    const changed = libraries.length !== was.length || libraries.some((l, i) => l.id !== was[i].id || l.kind !== was[i].kind
+      || !!l.fulltext !== !!was[i].fulltext || booksByLib[l.id] !== wasBooks[l.id]);
     const total = libraries.reduce((n, l) => n + (booksByLib[l.id]?.length || 0), 0);
     this.$('.ov-libs').innerHTML = libraries.length
       ? libraries.map((l) => `
@@ -550,12 +559,35 @@ export class Overlay {
         </div>`).join('') + (libraries.length > 1 ? `<div class="ov-lib-meta">${total.toLocaleString()} books in ${libraries.length} libraries</div>` : '')
       : `<div class="ov-lib-desc">${this._static ? 'This online version has no books yet. Open a ZIM file from this device or the web below, or run vrlbry yourself (see the README).' : 'No .zim files were found in the server folder. Add some and reload, or open one from this device or the web below.'}</div>`;
     fillLocalImages(this.$('.ov-libs'));
+    this._fitLibs();
     // The search index is made at the first search, not with every catalogue: an entry and two
     // strings per book (80,000 with a 60,000-book library open) that every full garbage
     // collection had to mark, also in VR, where this search is never used.
     this._index = null;
     this._libraries = libraries;
     this._booksByLib = booksByLib;
+    if (changed) this._relist();
+  }
+
+  /**
+   * The libraries' list scrolls in a box of its own once it is taller than 40vh (a short screen,
+   * a phone held sideways, and a TV give it the card's one scroll instead). Meanwhile it is a
+   * named region that takes the focus, so the keyboard scrolls it too (until a file of this device
+   * is open nothing in it is focusable: axe's scrollable-region-focusable), and its keys are its
+   * own (data-own-keys: ↑ ↓ scroll it rather than walk, xr/controls.js).
+   */
+  _fitLibs() {
+    const el = this.$('.ov-libs');
+    const scrolls = el.scrollHeight > el.clientHeight + 1 && getComputedStyle(el).overflowY !== 'visible';
+    if (scrolls === el.hasAttribute('tabindex')) return;
+    if (scrolls) {
+      el.tabIndex = 0;
+      el.setAttribute('role', 'region');
+      el.setAttribute('aria-label', 'Libraries');
+      el.setAttribute('data-own-keys', '');
+    } else {
+      for (const name of ['tabindex', 'role', 'aria-label', 'data-own-keys']) el.removeAttribute(name);
+    }
   }
 
   /** The search index of the current catalogue (search.js bookIndex; shared with the kiosk's). */
@@ -768,6 +800,7 @@ export class Overlay {
     btn.title = collapsed ? 'Expand' : 'Collapse';
     btn.setAttribute('aria-label', btn.title);
     save('card', collapsed ? 'collapsed' : 'open');
+    this._fitLibs();
   }
 
   /** Puts back the library card and the search box of a uiState() (__vrlbry.reproduce). */
@@ -892,10 +925,55 @@ export class Overlay {
     // list with nothing in it yet waits for them (_showResults), for RESULTS_WAIT at most; what
     // comes after that is still listed.
     this._downWaits = false;
-    clearTimeout(this._dueTimer);
     this._articlesDue = asksArticles(this._libraries, q);
     this._textsDue = asksText(this._libraries, q);
-    if (this._articlesDue) {
+    this._ask(q, token, { articles: this._articlesDue, texts: this._textsDue });
+    this._waitAtMost(token);
+    this._books = matchBooks(this._bookIndex(), q, 12);
+    this._sel = -1; // a new query: the highlight starts at the first again, the list at its top
+    this.$('.ov-results').scrollTop = 0;
+    this._showResults();
+  }
+
+  /**
+   * The libraries or their books changed while results are listed (the site's own ZIM files open
+   * as the page starts, a file closed by its ×, an index ready): the list made again for them, the
+   * books matched again and the articles and the full-text hits asked again, those of a library
+   * gone left out at once. Not a new query: the result with the focus or the highlight stays that
+   * result (listResults), the list keeps its scroll, and it waits ("Searching…") only when nothing
+   * is left to list.
+   */
+  _relist() {
+    const q = this.$('.ov-search input').value;
+    if (this.$('.ov-results').hidden || !q.trim()) return;
+    const token = ++this._searchToken;
+    clearTimeout(this._searchTimer);
+    clearTimeout(this._textTimer);
+    const here = new Set(this._libraries.map((l) => l.id));
+    this._articles = this._articles.filter((e) => here.has(e.lib.id));
+    this._texts = this._texts.filter((e) => here.has(e.lib.id));
+    this._books = matchBooks(this._bookIndex(), q, 12);
+    const listed = this._books.length > 0 || this._articles.length > 0 || this._texts.length > 0;
+    const articles = asksArticles(this._libraries, q);
+    const texts = asksText(this._libraries, q);
+    this._articlesDue = articles && !listed;
+    this._textsDue = texts && !listed;
+    this._ask(q, token, { articles, texts });
+    this._waitAtMost(token);
+    this._showResults();
+  }
+
+  /**
+   * Asks for the articles and the full-text hits of `q` (each when told to): the articles 150 ms
+   * on, the hits 300 ms (the slowest), so typing asks only once it stops. Each list is made again
+   * as they come, unless the search has moved on since (`token`). None found (a failure counts as
+   * none) leaves a list that has other results as it is, and takes out those asked again.
+   * @param {string} q
+   * @param {number} token
+   * @param {{ articles: boolean, texts: boolean }} ask
+   */
+  _ask(q, token, { articles, texts }) {
+    if (articles) {
       this._searchTimer = setTimeout(async () => {
         const found = await findArticles(this._libraries, q, ARTICLE_RESULTS).catch((err) => {
           console.warn('[vrlbry] article search', err);
@@ -904,12 +982,12 @@ export class Overlay {
         if (token !== this._searchToken) return;
         const late = !this._articlesDue; // after the list stopped waiting for them
         this._articlesDue = false;
-        if (!found.length && (late || this._results.length)) return; // the list as it is
+        if (!found.length && !this._articles.length && (late || this._results.length)) return; // the list as it is
         this._articles = found;
         this._showResults();
       }, 150);
     }
-    if (this._textsDue) {
+    if (texts) {
       this._textTimer = setTimeout(async () => {
         const found = await findInText(this._libraries, q, TEXT_RESULTS).catch((err) => {
           console.warn('[vrlbry] full-text search', err);
@@ -918,22 +996,27 @@ export class Overlay {
         if (token !== this._searchToken) return;
         const late = !this._textsDue; // after the list stopped waiting for them
         this._textsDue = false;
-        if (!found.length && (late || this._results.length)) return; // the list as it is
+        if (!found.length && !this._texts.length && (late || this._results.length)) return; // the list as it is
         this._texts = found;
         this._showResults();
       }, 300);
     }
-    if (this._articlesDue || this._textsDue) {
-      this._dueTimer = setTimeout(() => {
-        if (token !== this._searchToken || !(this._articlesDue || this._textsDue)) return;
-        this._articlesDue = this._textsDue = false; // none yet: an empty list says so, and a waiting ↓ is given up
-        if (!this._results.length) this._showResults();
-      }, RESULTS_WAIT);
-    }
-    this._books = matchBooks(this._bookIndex(), q, 12);
-    this._sel = -1; // a new query: the highlight starts at the first again, the list at its top
-    this.$('.ov-results').scrollTop = 0;
-    this._showResults();
+  }
+
+  /**
+   * While the articles or the hits are due (_articlesDue, _textsDue), a list with nothing in it
+   * waits for them, RESULTS_WAIT at most (a stalled request); then it says none came, and what
+   * comes later is still listed.
+   * @param {number} token
+   */
+  _waitAtMost(token) {
+    clearTimeout(this._dueTimer);
+    if (!(this._articlesDue || this._textsDue)) return;
+    this._dueTimer = setTimeout(() => {
+      if (token !== this._searchToken || !(this._articlesDue || this._textsDue)) return;
+      this._articlesDue = this._textsDue = false; // none yet: an empty list says so, and a waiting ↓ is given up
+      if (!this._results.length) this._showResults();
+    }, RESULTS_WAIT);
   }
 
   /**

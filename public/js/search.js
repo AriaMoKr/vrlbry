@@ -83,10 +83,25 @@ export async function findArticles(libraries, q, perLibrary = 8) {
 }
 
 /**
+ * What a result is, the same for a result made anew (the catalogue changed and the books were
+ * matched again, the articles asked again): its kind and library, then the book, the article
+ * (and the name it was found by) or the hit's page.
+ * @param {any} e an entry of matchBooks, findArticles or findInText
+ * @returns {string}
+ */
+export function resultKey(e) {
+  const lib = e.lib?.id ?? '';
+  if (e.hit) return `t ${lib} ${e.hit.path ?? e.hit.title}`;
+  if (e.article) return `a ${lib} ${e.article.title} ${e.article.from ?? ''}`;
+  return `b ${lib} ${e.book?.id}`;
+}
+
+/**
  * The overlay's list of results: the books, then the others (the articles, then the text's
  * hits), with only the first 6 books once others have come, unless `held` (the result with the
  * focus or the highlight while the list is made again) is a later book: then all of them, so it
- * stays listed. `at` is where `held` is now, -1 for none.
+ * stays listed. `at` is where `held` is now, -1 for none; it is found by what it is (resultKey),
+ * since a list made again for a changed catalogue holds new entries.
  * @template T
  * @param {T[]} books
  * @param {T[]} more
@@ -94,9 +109,11 @@ export async function findArticles(libraries, q, perLibrary = 8) {
  * @returns {{ results: T[], at: number }}
  */
 export function listResults(books, more, held) {
-  const all = !more.length || books.findIndex((e) => e === held) >= 6;
+  const key = held == null ? null : resultKey(held);
+  const same = (/** @type {T} */ e) => e === held || (key !== null && resultKey(e) === key);
+  const all = !more.length || books.findIndex(same) >= 6;
   const results = [...(all ? books : books.slice(0, 6)), ...more];
-  return { results, at: results.findIndex((e) => e === held) };
+  return { results, at: results.findIndex(same) };
 }
 
 /**

@@ -493,6 +493,24 @@
     text (as `find` does), titles from the path or the title value.
   - Not done with kiwix-serve either: the kiosk's Search tab (VR) shows no text hits, the words
     are not highlighted on the page, no "more results".
+- **The kiosk's search when the libraries change.** The overlay's list is made again when the
+  libraries or their books change while it shows (`overlay._relist`, 2026-11-06: the main site's
+  own ZIM files open a few seconds after the page, ~10 s on a Quest). The kiosk's Search tab (VR)
+  is not: a query typed meanwhile keeps the results of the libraries it was typed for until it is
+  typed again. `interaction.setCatalog` could run `_runSearch` again for a query shown.
+- **The site's ZIM files carry two dates.** GitHub Pages' CDN gives each of the site's ZIM files
+  one of two Last-Modified dates, 2 s apart, by the node that answers (2026-11-07, 1.5 h after a
+  deploy: 03:33:46 and 03:33:48 GMT for all three, from nodes at San Jose, Los Angeles and
+  Burbank alike; the ETag holds the date too). `HttpSource` takes an answer dated otherwise than
+  the probe for a changed file ("the file changed on the server: open it again"), so a page whose
+  reads reach two such nodes cannot read the file. A browser's reads go over one connection; it
+  showed here through a local proxy whose reads went over several (the golf ZIM's articles were
+  not found, and a file never opened). Whether one connection can meet both dates (a node
+  fetching the file again once its copy is 10 minutes old, a connection made again) is not
+  known. The block cache keys reads by the date too (`block-cache.js`), so a visit that probed
+  the other date reads anew. To decide: dates within a minute or so as one edition (a deploy
+  takes minutes, a new edition at a mirror's address comes days later), or the site's own files
+  checked by size alone (each deploy uploads the same bytes).
 - **All-libraries hall draw calls.** On the Quest: 380 → 104 standing (both eyes), 142 → 56
   walking, with one draw call per sign and no books drawn behind a nearer row. The room itself
   (chandeliers, walls, wainscots, ~31 calls per eye) could still be merged per material.

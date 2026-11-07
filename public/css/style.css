@@ -79,14 +79,19 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .ov-reopen { margin-top: 6px; font-size: 12px; line-height: 1.6; color: var(--muted); }
 /* The shared session (together.js): who else is in it, and Leave. */
 .ov-session { margin-top: 6px; font-size: 12px; line-height: 1.6; color: var(--text); }
-.ov-session button { margin-left: 6px; padding: 1px 8px; font-size: 12px; }
+/* Their buttons (Leave; Reopen, Forget) drawn as the card's others, never on the browser's grey
+   (#6b6b6b in a dark color-scheme: Leave's text was 4.3:1 on it, the muted line's 2.2:1), each a
+   24 px target. */
+.ov-session button, .ov-reopen button { margin-left: 6px; min-height: 24px; padding: 1px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--accent); font-size: 12px; }
+.ov-session button:hover, .ov-reopen button:hover { border-color: var(--accent); }
 .ov-reopen-names { color: var(--text); }
-.ov-reopen button { margin-left: 6px; padding: 1px 8px; font-size: 12px; }
 .ov-open-hint a { color: var(--accent); }
 /* Shown while ZIM files are dragged over the page. */
 .ov-drop { position: fixed; inset: 16px; z-index: 30; display: flex; align-items: center; justify-content: center; border: 3px dashed var(--accent); border-radius: 18px; background: rgba(20, 16, 10, 0.72); color: var(--accent); font: 600 24px/1.3 var(--serif); pointer-events: none; }
 .ov-drop[hidden] { display: none; }
 .ov-libs { margin-top: 8px; display: grid; gap: 10px; max-height: 40vh; overflow: auto; }
+/* While it scrolls in its own box it takes the focus, so the keyboard scrolls it (overlay.js _fitLibs). */
+.ov-libs:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .ov-lib { display: flex; gap: 10px; align-items: flex-start; }
 .ov-lib img { border-radius: 8px; flex: none; image-rendering: auto; }
 .ov-lib-title { font: 600 16px/1.25 var(--serif); }
@@ -179,13 +184,18 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .ov-status-head { display: flex; align-items: center; gap: 8px; }
 .ov-status-head::before { content: ""; flex: none; width: 11px; height: 11px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: ov-spin .9s linear infinite; }
 .ov-status-text { flex: 1; min-width: 0; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
-.ov-status-toggle, .ov-status-stop { flex: none; padding: 0 8px; font-size: 13px; line-height: 1.6; }
+/* Its buttons drawn as the card's, never on the browser's grey (#6b6b6b in a dark color-scheme, on
+   which the text was 4.3:1), each a 24 px target (WCAG 2.5.8). */
+.ov-status-toggle, .ov-status-stop { flex: none; min-width: 24px; min-height: 24px; padding: 0 8px; border-radius: 8px; border: 1px solid var(--line); font-size: 13px; line-height: 1.6; }
+.ov-status-stop { background: var(--panel); color: var(--accent); }
+.ov-status-stop:disabled { color: var(--muted); cursor: default; }
+.ov-status-toggle { background: none; color: var(--muted); }
+.ov-status-toggle:hover, .ov-status-stop:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 .ov-status-rows { list-style: none; margin: 8px 0 0; padding: 0; max-height: 40vh; overflow-y: auto; overflow-x: hidden; display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
 .ov-status-rows li.waiting { color: var(--muted); }
 .ov-status-row { display: flex; align-items: baseline; gap: 8px; }
 .ov-status-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ov-status-line { flex: none; color: var(--muted); font-size: 12px; }
-.ov-status-cancel { flex: none; padding: 0 7px; line-height: 1.4; }
 .ov-status-rows .ov-toast-bar { margin: 4px 0 0; height: 3px; }
 
 /* A short screen (a phone held sideways): the card stops above the buttons at the foot, and the
@@ -221,8 +231,9 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .ov-url button:hover { border-color: var(--accent); }
 .ov-try-btn { padding: 0; min-height: 24px; border: 0; background: none; color: var(--accent); font: inherit; text-decoration: underline; cursor: pointer; } /* a 24 px target (WCAG 2.5.8) */
 .ov-lib-body { flex: 1; min-width: 0; }
-.ov-lib-close { flex: none; width: 24px; height: 24px; padding: 0; border-radius: 6px; border: 1px solid transparent; background: none; color: var(--muted); font-size: 16px; line-height: 1; }
-.ov-lib-close:hover { border-color: var(--line); color: var(--text); }
+/* A local library's × in the card, and a build's in the status box. */
+.ov-lib-close, .ov-status-cancel { flex: none; width: 24px; height: 24px; padding: 0; border-radius: 6px; border: 1px solid transparent; background: none; color: var(--muted); font-size: 16px; line-height: 1; }
+.ov-lib-close:hover, .ov-status-cancel:hover { border-color: var(--line); color: var(--text); }
 
 /* Kiwix's library (ui/kiwix-dialog.js, milestone 3 step 5) */
 .ov-kiwix-btn { padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--accent); }
