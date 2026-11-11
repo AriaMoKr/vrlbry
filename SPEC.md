@@ -233,7 +233,14 @@ whole. It works on GitHub Pages (no server) and beside a server's own libraries.
   (remembered) a row per file with its
   bar, its time ("waiting" while queued, the time counted from its start) and a × that stops
   the build and closes the file (`close`: the archive's reads then fail and the build ends
-  silently; a closed library tells no more, `_setIndexing`), forgetting it for Reopen. The index is
+  silently; a closed library tells no more, `_setIndexing`), forgetting it for Reopen. The box
+  is drawn again every second, in place (`drawInPlace`, `ui/keep-focus.js`): a row still listed
+  keeps its elements, so its × keeps the keyboard's focus through the seconds and a screen reader
+  is told nothing again; when its row goes, the focus goes to the × now in its place, else to the
+  toggle or Stop, and once the box hides, near the card's libraries (`keepFocus`, §5.6). The head
+  line is no live region: a hidden status of its own (`.ov-status-said`, `setStatus`'s `said`)
+  tells a screen reader the same words without the seconds and the time left, when they change
+  (opening, indexing, how many are ready), not every second. The index is
   kept in IndexedDB (`local/idb-store.js`: the store interface of `server/cache-store.js`, one
   object store, name → string or `Uint8Array`; `appendBytes` and `truncate` read and write
   back in one transaction), named by the ZIM's UUID like the server's, so a file is indexed
@@ -1836,6 +1843,15 @@ States: `browse` → `inspect` → `opening` → `read` (and back), plus `busy` 
   "Libraries" that takes the focus (Tab) and whose keys are its own (`data-own-keys`: ↑ ↓ scroll
   it rather than walk; `_fitLibs`, run as it is filled and as it is resized): until a file of
   this device is open nothing in it takes the focus (axe's scrollable-region-focusable).
+  The list is drawn again with every catalogue (`setLibraries`), in place (`ui/keep-focus.js`
+  `drawInPlace`: a library still there keeps its elements, its picture too), so a library's ×
+  keeps the keyboard's focus. When the library of a × with the keyboard's focus goes (closed by
+  it, or from elsewhere), the focus goes to the × now in its place (the next, else the last), and
+  with none left near (`_nearLibraries`): the list itself while it scrolls, else the first button
+  under it that shows ("Browse Kiwix's library…", "Open ZIM files…"), else the card's –; so too
+  when the list has the focus and stops scrolling (`_fitLibs` takes its `tabindex` away). Only a
+  focus that shows (`:focus-visible`) is kept so (`keepFocus`): after a click on a × the focus is
+  let go, as a pointer's is. A screen reader hears of a move only when the × it was on has gone.
 
 ### 5.7 Bootstrap (`main.js`)
 
@@ -2133,7 +2149,10 @@ ui/text-view.js, ui/remote.js); main.js only wires them.
   - The focus falling to nowhere (a control that hid itself: ↩ Back after the last link, Put
     back) is walking again (common's), except in an open dialog, where it goes to the dialog's
     first control (`LibraryRemote.walk`); the help's reset Cancel gives it back to "Reset stored
-    data…".
+    data…". The card's lists never let it fall: OK on a library's × or a build's × leaves the
+    focus on the × now in its place, else near (§5.6, §2.6), the remote still in the card, and ↓
+    goes on from there. TalkBack's OK comes as a click: whether the focus stays then waits with
+    the TV's other checks (TODO).
   - **The book's buttons** stand in for the letter keys (`.ov-book`, shown in TV mode): in hand
     Read, Read as text (T), In front of me (F), Put back; open Contents (C, `aria-pressed`),
     A− / A+ (named as the text view's), Theme (N), 1 page / 2 pages (P), In front of me, ↩ Back
@@ -2290,5 +2309,35 @@ ui/text-view.js, ui/remote.js); main.js only wires them.
     on a TV) and a row's × 7.22:1 (14.17:1 under the pointer), 24 px square. Before: both
     4.31:1, the × 22 px high on the desktop. The card's Leave, Reopen and Forget 8.99:1 (before:
     4.31:1, 2.19:1 and 2.19:1). axe: nothing.
+
+  And again (2026-11-11), the card's lists drawn again with the keyboard's focus on a ×
+  (`ui/keep-focus.js`; `test/client-keep-focus.test.js` over `test/helpers/focus-dom.js`): this
+  checkout's page over the live site's files as above, and before it the live site:
+  - Tab to a library's ×: the catalogue drawn again with nothing changed leaves the focus on the
+    same element. Enter closes its library, and the focus is on the × now in its place, shown
+    (the next; after the last, the one before it, still the element Tab first reached); with the
+    last closed, on the list ("Libraries": it still scrolls, with the site's pre-rendered
+    libraries), and Tab goes on to "Browse Kiwix's library…". Before: the focus fell to `<body>`
+    at the first redraw.
+  - A click on a ×: the focus is let go (`<body>`); no other × takes it.
+  - The list with the focus, the window made 2,600 px tall: it no longer scrolls, and the focus is
+    on "Browse Kiwix's library…", shown.
+  - On a TV (`?tv=emulate`): ↑ from the Controls help to the last ×, then OK on each in turn: the
+    focus on the × now in its place, the remote still in the card; after the last, on "Browse
+    Kiwix's library…", and ↓ goes on to the address box, the view standing still. Before: OK
+    sent the focus to the 3D view, walking.
+  - While the site's files open (held back), the line shown changed 6 times in 6 s and what a
+    screen reader is told not once ("Opening 3 ZIM files…"); with a Wikisource file of this
+    device indexing (its prebuilt index answered 404), 6 and 0 ("Indexing Wikisource"). Before:
+    the line shown was the live region, changed every second.
+  - Tab (↓ on a TV) to that build's ×: the same element keeps the focus, shown, through 6 s of
+    the box drawn again; Enter (OK) stops the build and closes the file, and the focus goes near
+    (the list; on a TV "Browse Kiwix's library…", still in the card). Before: the focus fell to
+    `<body>` within the second, and on a TV to the 3D view, where OK went to the aim dot and the
+    build went on.
+  - Three rows put in with `setStatus`, the middle one's × with the focus: kept through the
+    redraws, then on the next × when its row went, on the one left, and on the list once the box
+    hid.
+  - axe with the focus on a library's × and on a build's ×, at 1280×800 and on a TV: nothing.
 
   The TV itself is another session's (TODO).

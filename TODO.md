@@ -406,6 +406,12 @@
     keeps every book listed (done 2026-11-05 in a browser, SPEC §5.6, §5.9; for that session to
     check on the TV). A full-text hit with the focus stays too when the articles come after the
     hits (2026-11-06).
+  - OK on a library's × or a build's × in the card: its list was drawn again (the libraries with
+    every catalogue, the builds every second) and the focus went with the old one, so the remote
+    walked again. Now the focus stays, on the × now in its place or near (done 2026-11-11 in a
+    browser, SPEC §5.6, §5.9; for that session to check on the TV). Only a focus that shows
+    (`:focus-visible`) is kept, and TalkBack's OK comes as a click: whether the focus stays
+    after it is for that session too.
   - Reading in 3D the spread is small on a TV (the reading pose of a desktop screen); the text
     view is the readable way for now.
 - **The text view and the 3D panel on common's** (requested 2026-11-01; done the same day; SPEC

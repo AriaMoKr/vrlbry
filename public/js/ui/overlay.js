@@ -7,6 +7,7 @@ import { imageSource } from '../api.js';
 import { EXAMPLE_ZIM, MORE_ZIMS_URL, isLocalUrl } from '../local/local.js';
 import { droppedHandles } from '../local/handles.js';
 import { KiwixDialog } from './kiwix-dialog.js';
+import { keepFocus, drawInPlace, shown } from './keep-focus.js';
 import { bookIndex, matchBooks, asksArticles, findArticles, listResults, asksText, findInText } from '../search.js';
 import { load, save } from '../util/storage.js';
 import { noteError } from '../debug-info.js';
@@ -24,8 +25,11 @@ const snippetHtml = (parts) => parts.map(([t, hit]) => (hit ? `<b>${esc(t)}</b>`
 /** A web address's host, for a library read from the web ("mirror.download.kiwix.org"). */
 const hostOf = (url) => { try { return new URL(url).hostname; } catch { return 'the web'; } };
 
-/** An <img>'s source attribute; a local library's image is loaded after rendering (fillLocalImages). */
-const imgSrc = (url) => (isLocalUrl(url) ? `data-local-src="${esc(url)}"` : `src="${esc(url)}"`);
+/**
+ * An <img>'s source attributes; a local library's image is loaded after rendering (fillLocalImages).
+ * data-img names the picture whatever its src becomes, so a list drawn in place keeps it (drawInPlace).
+ */
+const imgSrc = (url) => `data-img="${esc(url)}" ${isLocalUrl(url) ? `data-local-src="${esc(url)}"` : `src="${esc(url)}"`}`;
 
 /** Loads the local library images rendered under `root` (blob URLs, released once loaded). */
 function fillLocalImages(root) {
@@ -219,9 +223,10 @@ export class Overlay {
       </div>
       <div class="ov-toasts" aria-live="polite"></div>
       <div class="ov-announce ov-sr" role="status" aria-live="polite"></div>
+      <div class="ov-status-said ov-sr" role="status" aria-live="polite"></div>
       <section class="ov-status" aria-label="Your ZIM files" hidden>
         <div class="ov-status-head">
-          <span class="ov-status-text" role="status"></span>
+          <span class="ov-status-text"></span>
           <button class="ov-status-stop" hidden>Stop</button>
           <button class="ov-status-toggle" aria-expanded="false" title="Show each file">▸</button>
         </div>
@@ -546,9 +551,14 @@ export class Overlay {
     const changed = libraries.length !== was.length || libraries.some((l, i) => l.id !== was[i].id || l.kind !== was[i].kind
       || !!l.fulltext !== !!was[i].fulltext || booksByLib[l.id] !== wasBooks[l.id]);
     const total = libraries.reduce((n, l) => n + (booksByLib[l.id]?.length || 0), 0);
-    this.$('.ov-libs').innerHTML = libraries.length
+    // Drawn in place (keep-focus.js), with every catalogue and with their details alone: a × with
+    // the keyboard's focus keeps it while its library stays, and goes to the × now in its place
+    // when it closes (Enter on it), else near (_nearLibraries), not to <body> (on a TV, walking).
+    const libs = this.$('.ov-libs');
+    const refocus = keepFocus(libs, '.ov-lib-close');
+    drawInPlace(libs, libraries.length
       ? libraries.map((l) => `
-        <div class="ov-lib">
+        <div class="ov-lib" data-key="lib ${esc(l.id)}">
           ${l.illustration ? `<img ${imgSrc(l.illustration)} alt="" width="40" height="40">` : ''}
           <div class="ov-lib-body"><div class="ov-lib-title">${esc(l.title)}</div>
           <div class="ov-lib-desc">${esc(l.longDescription || (l.description && !String(l.title).includes(l.description) ? l.description : ''))}</div>
@@ -556,10 +566,11 @@ export class Overlay {
             ? (l.indexing.stage === 'queued' ? 'waiting to index…' : `indexing… ${Math.round((l.indexing.progress || 0) * 100)}%`)
             : `${(booksByLib[l.id]?.length || 0).toLocaleString()} ${l.kind === 'wikisource' ? 'works' : l.kind === 'wikipedia' ? `volumes (${(l.articles ?? 0).toLocaleString()} articles)` : 'books'}`} · ${esc(l.file)}${l.site ? ' · from this site' : l.url ? ` · from ${esc(hostOf(l.url))}` : ''}</div></div>
           ${String(l.id).startsWith('~') ? `<button class="ov-lib-close" data-id="${esc(l.id)}" title="${l.site ? 'Close it (it opens again with the page)' : l.url ? 'Close it (and do not reopen it)' : 'Close this file'}" aria-label="Close ${esc(l.title)}">×</button>` : ''}
-        </div>`).join('') + (libraries.length > 1 ? `<div class="ov-lib-meta">${total.toLocaleString()} books in ${libraries.length} libraries</div>` : '')
-      : `<div class="ov-lib-desc">${this._static ? 'This online version has no books yet. Open a ZIM file from this device or the web below, or run vrlbry yourself (see the README).' : 'No .zim files were found in the server folder. Add some and reload, or open one from this device or the web below.'}</div>`;
-    fillLocalImages(this.$('.ov-libs'));
+        </div>`).join('') + (libraries.length > 1 ? `<div class="ov-lib-meta" data-key="total">${total.toLocaleString()} books in ${libraries.length} libraries</div>` : '')
+      : `<div class="ov-lib-desc" data-key="none">${this._static ? 'This online version has no books yet. Open a ZIM file from this device or the web below, or run vrlbry yourself (see the README).' : 'No .zim files were found in the server folder. Add some and reload, or open one from this device or the web below.'}</div>`);
+    fillLocalImages(libs);
     this._fitLibs();
+    refocus(() => this._nearLibraries());
     // The search index is made at the first search, not with every catalogue: an entry and two
     // strings per book (80,000 with a 60,000-book library open) that every full garbage
     // collection had to mark, also in VR, where this search is never used.
@@ -574,7 +585,8 @@ export class Overlay {
    * a phone held sideways, and a TV give it the card's one scroll instead). Meanwhile it is a
    * named region that takes the focus, so the keyboard scrolls it too (until a file of this device
    * is open nothing in it is focusable: axe's scrollable-region-focusable), and its keys are its
-   * own (data-own-keys: ↑ ↓ scroll it rather than walk, xr/controls.js).
+   * own (data-own-keys: ↑ ↓ scroll it rather than walk, xr/controls.js). When it stops scrolling
+   * (a library closed, a taller window) with the keyboard's focus on it, the focus goes on near.
    */
   _fitLibs() {
     const el = this.$('.ov-libs');
@@ -586,8 +598,23 @@ export class Overlay {
       el.setAttribute('aria-label', 'Libraries');
       el.setAttribute('data-own-keys', '');
     } else {
+      const refocus = keepFocus(this.$('.ov-card'), '.ov-libs[tabindex]');
       for (const name of ['tabindex', 'role', 'aria-label', 'data-own-keys']) el.removeAttribute(name);
+      refocus(() => this._nearLibraries());
     }
+  }
+
+  /**
+   * Where the keyboard's focus goes when what had it went and nothing like it is left (a
+   * library's last ×, a build's last ×, the status box gone): the libraries' list while it takes
+   * the focus, else the first way under it to open another that shows, else the card's collapse
+   * button (the card collapsed).
+   * @returns {HTMLElement | undefined}
+   */
+  _nearLibraries() {
+    const libs = this.$('.ov-libs');
+    if (libs.hasAttribute('tabindex') && shown(libs)) return libs;
+    return [...this.root.querySelectorAll('.ov-open button'), this.$('.ov-collapse')].find(shown);
   }
 
   /** The search index of the current catalogue (search.js bookIndex; shared with the kiosk's). */
@@ -649,8 +676,9 @@ export class Overlay {
    * (not a toast each: six of them covered the view, and an opening toast beside the box made
    * two): its head line (opening files, or indexing), an overall bar, a Stop while several files
    * open, and behind a toggle (remembered) a row per index build (a Wikipedia or Wikisource
-   * file). null hides it.
-   * @param {{ summary: string, fraction: number, stop?: { label: string, disabled?: boolean } | null,
+   * file). null hides it. `said` is what a screen reader is told, when it changes: the summary's
+   * words without what changes every second (the seconds, the time left); else the summary.
+   * @param {{ summary: string, said?: string, fraction: number, stop?: { label: string, disabled?: boolean } | null,
    *   rows: Array<{ id: string, title: string, line: string, fraction: number, waiting: boolean }> } | null} status
    */
   setStatus(status) {
@@ -666,29 +694,49 @@ export class Overlay {
   _renderStatus() {
     const box = this.$('.ov-status');
     const s = this._status;
+    // The keyboard's focus on the box's buttons stays through its redraws, once a second while
+    // files open or index: the rows are drawn in place (keep-focus.js), so a row's × keeps it while
+    // its build runs; when its row goes, the × now in its place has it, else the head's buttons,
+    // else what is near in the card (the box gone), not <body> (on a TV, walking). Stop, once
+    // pressed (disabled: "Stopping…"), hands it on the same way.
+    const refocus = keepFocus(box, '.ov-status-stop:not(:disabled), .ov-status-toggle, .ov-status-cancel');
+    // What a screen reader is told: the words, when they change (opening, indexing, how many are
+    // ready), not the line shown, whose seconds and time left change every second (`said`).
+    const said = this.$('.ov-status-said');
+    const words = s ? s.said ?? s.summary : '';
+    if (said.textContent !== words) said.textContent = words;
     box.hidden = !s;
-    if (!s) return;
+    if (s) this._drawStatus(s);
+    refocus(() => this._nearLibraries());
+  }
+
+  /** The status box's head, bar and rows (_renderStatus). */
+  _drawStatus(s) {
     const pct = (f) => `${Math.round(Math.min(1, Math.max(0, f)) * 100)}%`;
-    this.$('.ov-status-text').textContent = s.summary;
+    // A text set only when it changes: a focused button's text is not made anew every second.
+    const text = (el, t) => {
+      if (el.textContent !== t) el.textContent = t;
+    };
+    text(this.$('.ov-status-text'), s.summary);
     this.$('.ov-status > .ov-toast-bar > div').style.width = pct(s.fraction);
     const stop = this.$('.ov-status-stop');
     stop.hidden = !s.stop;
     if (s.stop) {
-      stop.textContent = s.stop.label;
+      text(stop, s.stop.label);
       stop.disabled = !!s.stop.disabled;
     }
     const toggle = this.$('.ov-status-toggle');
     toggle.hidden = !s.rows.length;
-    toggle.textContent = this._statusOpen ? '▾' : '▸';
+    text(toggle, this._statusOpen ? '▾' : '▸');
     toggle.setAttribute('aria-expanded', String(this._statusOpen));
     toggle.title = this._statusOpen ? 'Hide the files' : 'Show each file';
     const list = this.$('.ov-status-rows');
     list.hidden = !this._statusOpen || !s.rows.length;
     if (list.hidden) return;
-    list.innerHTML = s.rows.map((r) => `<li class="${r.waiting ? 'waiting' : ''}">
+    drawInPlace(list, s.rows.map((r) => `<li class="${r.waiting ? 'waiting' : ''}" data-key="${esc(r.id)}">
       <div class="ov-status-row"><span class="ov-status-title">${esc(r.title)}</span><span class="ov-status-line">${esc(r.line)}</span>
         <button class="ov-status-cancel" data-id="${esc(r.id)}" title="Stop and close this file" aria-label="Stop and close ${esc(r.title)}">×</button></div>
-      <div class="ov-toast-bar"><div style="width:${pct(r.fraction)}"></div></div></li>`).join('');
+      <div class="ov-toast-bar"><div style="width:${pct(r.fraction)}"></div></div></li>`).join(''));
   }
 
   /** cb(files, handles): ZIM files picked or dropped (handles: the File System Access API's, or null each). */

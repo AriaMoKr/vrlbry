@@ -721,21 +721,28 @@ async function start() {
       return { id, title: b.title, waiting, fraction: waiting ? 0 : b.info.progress, line: waiting ? 'waiting' : time || 'starting' };
     });
     let summary;
+    let said; // the summary's words for a screen reader: told when they change, so without the seconds and the time left
     let fraction;
     if (job) { // opening files comes first: their builds wait for them
-      summary = `Opening ${job.label}…${progressText(performance.now() - job.t0, job.fraction, { estimating: true })}`
-        + `${rows.length ? ` · ${rows.length} to index` : ''}`;
+      const toIndex = rows.length ? ` · ${rows.length} to index` : '';
+      summary = `Opening ${job.label}…${progressText(performance.now() - job.t0, job.fraction, { estimating: true })}${toIndex}`;
+      said = `Opening ${job.label}…${toIndex}`;
       fraction = job.fraction ?? 0;
     } else {
       const now = rows.find((r) => !r.waiting);
       const waiting = rows.filter((r) => r.waiting).length;
+      const ready = buildsReady ? ` · ${buildsReady} ready` : '';
+      const queued = waiting ? ` · ${waiting} waiting` : '';
       summary = rows.length === 1
         ? `Indexing ${rows[0].title}${now ? ` · ${now.line}` : ' · waiting'}`
-        : `Indexing ${rows.length} files${buildsReady ? ` · ${buildsReady} ready` : ''}${now ? ` · ${now.title}: ${now.line}` : ''}${waiting ? ` · ${waiting} waiting` : ''}`;
+        : `Indexing ${rows.length} files${ready}${now ? ` · ${now.title}: ${now.line}` : ''}${queued}`;
+      said = rows.length === 1
+        ? `Indexing ${rows[0].title}${now ? '' : ' · waiting'}`
+        : `Indexing ${rows.length} files${ready}${now ? ` · ${now.title}` : ''}${queued}`;
       fraction = (buildsReady + rows.reduce((s, r) => s + r.fraction, 0)) / (buildsReady + rows.length);
     }
     const stop = job?.stoppable ? { label: job.stopping ? 'Stopping…' : 'Stop', disabled: job.stopping } : null;
-    overlay.setStatus({ summary, fraction, stop, rows });
+    overlay.setStatus({ summary, said, fraction, stop, rows });
   }
   setInterval(() => { if (builds.size || openings.size) renderStatus(); }, 1000);
   overlay.onStopOpening(() => {
