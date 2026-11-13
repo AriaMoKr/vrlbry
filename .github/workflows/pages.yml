@@ -5,7 +5,9 @@
 # The demo set (tools/demo-set.txt) is on the site itself, readable without Kiwix's mirrors or a
 # proxy: part pre-rendered (--zims: JSON files, read without the browser's worker), part as the ZIM
 # files themselves (--zim-files: opened in the browser with each visit, with their indexes), each
-# ZIM in its smaller form (TODO, "Merging back into the main site"): ~460 MB.
+# ZIM in its smaller form (TODO, "Merging back into the main site"): ~460 MB. Each comes from
+# Kiwix's mirror, or, once the mirror no longer has it, from the release "demo-set", which keeps
+# copies of Kiwix's files exactly as published (the Gutenberg one since 2026-11-12).
 #
 # Prebuilt indexes (tools/build-indexes.mjs, tools/indexes.txt): for big Wikipedias and
 # Wikisources a visitor opens from the web (Kiwix's library), which would otherwise need a build
@@ -60,15 +62,24 @@ jobs:
         with:
           path: .demo
           key: demo-set-${{ hashFiles('tools/demo-set.txt') }}
+      # From Kiwix's mirror; a file it no longer has, from the release "demo-set", which keeps
+      # copies of Kiwix's files exactly as published (the same size and SHA-256: gh release upload
+      # demo-set <file>, from a PC that has it).
       - name: Download the demo set
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p .demo/render .demo/files
           while read -r url form _; do
             case "$url" in ''|'#'*) continue ;; esac
             dir=.demo/render
             [ "$form" = file ] && dir=.demo/files
-            file="$dir/$(basename "$url")"
-            [ -f "$file" ] || curl -fsSL --retry 3 -o "$file" "$url"
+            name=$(basename "$url")
+            [ -f "$dir/$name" ] && continue
+            curl -fsSL --retry 3 -o "$dir/$name" "$url" || {
+              echo "::warning::$name could not be downloaded from Kiwix's mirror; trying the release \"demo-set\""
+              gh release download demo-set --repo "$GITHUB_REPOSITORY" --pattern "$name" --dir "$dir" --clobber < /dev/null
+            }
           done < tools/demo-set.txt
           ls -l .demo/render .demo/files
       - name: Build the site
