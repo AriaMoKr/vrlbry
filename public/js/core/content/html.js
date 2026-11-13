@@ -62,7 +62,8 @@ const PAGE_CLASSES_INLINE = new Set(['page', 'pn']);
 const NAV_CLASSES = new Set(['totoc', 'toclink', 'return', 'back', 'backlink', 'back-link', 'linkback', 'totop', 'gotop']);
 
 // MediaWiki / mwoffliner page chrome (Wikisource and other wiki ZIMs): navigation, edit links,
-// category boxes, licence banners, the ZIM footer. Class tokens (lower-cased) and element ids.
+// category boxes, licence banners, the ZIM footer. Class tokens (lower-cased) and element ids
+// (with one of papers2zim's).
 const MW_CHROME_CLASSES = new Set([
   'ws-noexport', 'noprint', 'mw-editsection', 'navbox', 'catlinks', 'printfooter', 'zim-footer',
   'licensecontainer', 'licensebanner', 'pr_quality', 'mw-jump-link', 'mw-indicators', 'mw-cite-backlink',
@@ -71,6 +72,9 @@ const MW_CHROME_CLASSES = new Set([
 const MW_CHROME_IDS = new Set([
   'firstHeading', 'contentSub', 'mw-content-subtitle', 'siteSub', 'catlinks', 'jump-to-nav',
   'mw-navigation', 'footer', 'mw-panel', 'mw-head', 'mw-page-base', 'mw-head-base', 'toc-toggle',
+  // The buttons papers2zim puts before a Gutenberg book's text (book info, EPUB, back to the top),
+  // as gutenberg2zim's span.zim_* were.
+  'html-reader-controls',
 ]);
 
 // Inline images (SPEC §3.5 image runs) stay in the line of text: MediaWiki's inline formulas (sized

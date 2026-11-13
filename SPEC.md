@@ -61,7 +61,7 @@ Header (little-endian, 80 bytes): `magic u32 = 0x044D495A`, `major u16`, `minor 
   metadata in `M`, `W/mainPage` redirect, `X` = indexes. Old scheme: articles `A`, images `I`,
   assets `-`, metadata `M`. Readers must handle both.
 
-### 2.2 The Gutenberg ZIM layout (gutenberg2zim 3.x — the file in this repo)
+### 2.2 The Gutenberg ZIM layout (gutenberg2zim 3.x — the file in this repo; papers2zim below)
 
 Reference file: `gutenberg_en_lcc-pe_2026-03.zim` (ZIM 6.3, 6926 entries, clusters
 uncompressed or zstd, 258 books). Facts verified by inspection:
@@ -101,11 +101,53 @@ best-effort: look up the JSON index in namespaces `C`, `A`, `-`, `J` (also under
 resolve a book's HTML by trying `<base>`, `<base>.html` in `C` then `A`; cover by trying
 `covers/<id>_cover_image.jpg`, `covers/<id>_cover.jpg` in `C` then `I`.
 
+**Kiwix's newer files (papers2zim).** From November 2026 Kiwix makes its Gutenberg files with
+papers2zim (openzim/papers, the gutenberg2zim repository renamed; `M/Scraper` =
+"papers2zim-1.1.0"). The first was `gutenberg_af_all_2026-11.zim` (17 books, 41 MB, in
+`zim/books/` on Kiwix's mirror; the others stayed in the old form in `zim/gutenberg/`). It has no
+JSON script. Facts from that file:
+
+- `C/config.json` names the source: `{ "source": { "slug": "gutenberg", "name": "Project
+  Gutenberg", … }, "zimName", "bookLanguages", "features": { "hasPopularity", … }, … }`.
+- `C/books.json` = `{ "totalCount": 17, "pageSize": 500, "totalPages": 1, … }`; the books are
+  listed in `C/books-pages/<sort>/<n>.json` (sorts `popularity`, `title`, `author`) as
+  `{ "books": [ { "id": "trekkerswee", "title": "Trekkerswee", "author": { "id": "totius",
+  "displayName": "Totius", "sortName": "Totius" }, "languages": ["af"], "popularity": 974,
+  "flames": 3, "coverPath": "covers/16543_cover_image.webp", "primaryCollection": "P",
+  "availableFormats": ["epub", "html"], "description": "…" }, … ] }`. `id` is a slug; the
+  Gutenberg number is only in `coverPath`. `primaryCollection` is the book's class: here `P`
+  (books shelved PT, PQ, PZ in the older file), `G` and `CDEF` (papers2zim's History: C to F).
+- `C/books/<n>.json` = `C/books/<slug>.json`: the book with its `subtitle` (not in its title: "Met
+  tekeninge van J.H. Pierneef"), licence, author's years and portrait, and `formats`:
+  `[{ "format": "epub", "path": "Trekkerswee.16543.epub", "available": true }, …]` (its own
+  `availableFormats` is empty).
+- A book's page is `C/<title>.<n>` (no `.html`), its EPUB `C/<title>.<n>.epub`, the name the
+  scraper's Python gives (`title.strip().replace("/", "-")[:230]`). The title keeps the spaced
+  colon where MARC's `$b` was ("Op die delwerye : Vyf sketse uit die lewe"). Pictures are WebP,
+  `C/<n>/images/<name>.webp`, with width and height in the page; covers
+  `C/covers/<n>_cover_image.webp`.
+- The page starts with the scraper's controls, `<div id="html-reader-controls">` (book info,
+  EPUB, back to the top: three icons) → strip it; it has no PG header or footer.
+- The rest is no book: `authors.json` and `authors/`, `collections.json` and `collections/`, a
+  reader app (`index.html`, `assets/`, `pdfjs/`), `index/` and `noscript/` pages.
+
+Such a file (its `config.json` naming Gutenberg) is of the kind `gutenberg`: each entry of the
+list by popularity (by title when there is none) is a book, ranked by its place; nothing else in
+the file is. Its id is its Gutenberg number from `coverPath` (as in the older files, so a place
+saved in one edition holds in the other; a book without a cover keeps its slug); its title and
+subtitle are split at the spaced colon (`splitPapersTitle`, as `$b`); `author` = `displayName`,
+`authorId` = the author's `id`, `language` = the first of `languages`, `shelf` =
+`primaryCollection`. Its files are looked up by its title and number (the scraper's name, then the
+two above), else as its own JSON's `formats` give them; only the formats its entry names are
+looked for. A file whose `config.json` names another source stays generic. A file that says
+papers2zim made it (`M/Scraper`) is not searched for the JSON script (8 lookups that would fail).
+
 ### 2.3 Non-Gutenberg ZIMs ("generic")
 
-A ZIM with no Gutenberg JSON index that is not Wikisource (§2.4) is a *generic* library: its
-books are its HTML article entries (mime `text/html`, namespace `C` or `A`, excluding redirects),
-in URL-pointer order, capped at `maxGenericBooks` (default 2000; log what was dropped). Book id =
+A ZIM that is no Gutenberg file (no JSON index, no `config.json` naming Gutenberg: §2.2) and not
+Wikisource (§2.4) is a *generic* library: its books are its HTML article entries (mime
+`text/html`, namespace `C` or `A`, excluding redirects), in URL-pointer order, capped at
+`maxGenericBooks` (default 2000; log what was dropped). Book id =
 `e<entryIndex>`, title = entry title, author = ZIM `Creator`/`Publisher` metadata, no cover, rank
 = position, shelf = null. Wikipedia ZIMs (mwoffliner, `Source` = `*.wikipedia.org`) end up here
 for now, which shows only their first 2,000 articles; proper support is in `TODO.md`.
@@ -829,11 +871,13 @@ files are not looked up as it opens (a binary search each, three per book: the l
 `gutenberg_mul_all` with 75,962 books, had not opened after 10 minutes), its formats are its
 list's flags, its cover the usual name (`C/covers/<id>_cover_image.jpg`, old scheme
 `I/covers/<id>_cover.jpg`; not looked up: one that is missing loads as nothing and the page
-keeps the made cover) and its size unknown (a thickness from its id). A book's files are
-looked up when it is first opened (`_resolveBook`: its HTML and EPUB, once however many ask;
-`formats`, `readable` and `epub` then say what was found, a missing one is unreadable as
-before). `gutenberg_mul_all` then opens from the web in about 10 s. Chunks keep their JSON as bytes (`Uint8Array`, a Buffer on Node), with `gzip()` and `etag`
-from the platform (the server's).
+keeps the made cover) and its size unknown (a thickness from its id). In a papers2zim file
+(§2.2) its formats are its entry's `availableFormats` and its cover its `coverPath`. A book's
+files are looked up when it is first opened (`_resolveBook`: its HTML and EPUB, once however
+many ask, a papers2zim book's as in §2.2; `formats`, `readable` and `epub` then say what was
+found, a missing one is unreadable as before). `gutenberg_mul_all` then opens from the web in
+about 10 s. Chunks keep their JSON as bytes (`Uint8Array`, a Buffer on Node), with `gzip()` and
+`etag` from the platform (the server's).
 
 ```js
 export class Library {
@@ -1054,7 +1098,9 @@ dotfiles skipped), walked on every request since the files may change while the 
 ```
 `rank` = 1-based popularity position. `readable` = has HTML or EPUB that exists in the archive.
 `cover`/`epub` null when absent (verify existence with `findPath`). Ids are strings.
-`authorId`/`language`/`shelf` null when unknown. Wikisource books (§3.8) have `rank: null` and add
+`authorId`/`language`/`shelf` null when unknown (in Kiwix's newer Gutenberg files, §2.2,
+`authorId` is the author's slug, `"totius"`, and `shelf` a class such as `"P"` or `"CDEF"`, with
+covers `….webp`). Wikisource books (§3.8) have `rank: null` and add
 `"genre": "Novels", "year": 1926, "parts": 44` (`year` may be null); the full list is returned
 (17,693 works ≈ 0.8 MB gzipped) and filtered into rooms by the client (§5.6). Wikipedia volumes
 (§2.5) have `id: "v<N>"`, `title` = the range ("Aachen – Abbey", or one title),
@@ -2339,5 +2385,29 @@ ui/text-view.js, ui/remote.js); main.js only wires them.
     redraws, then on the next × when its row went, on the one left, and on the list once the box
     hid.
   - axe with the focus on a library's × and on a build's ×, at 1280×800 and on a TV: nothing.
+
+  And again (2026-11-12), Kiwix's newer Gutenberg file (papers2zim, §2.2:
+  `gutenberg_af_all_2026-11`, 17 books) and the old form: this checkout's page over the live
+  site's files as above, and before it the live site:
+  - Kiwix's dialog, Gutenberg, Afrikaans (2 files), "Gutenberg · every book (AF)", Open: a
+    library of kind gutenberg, 17 books, each with its author (Totius, Leipoldt, …), language af,
+    its Gutenberg number as its id and its WebP cover; its classes P (10 books), G (5) and CDEF (2,
+    "History, biography, archaeology"), in one room (17 books: no rooms by class). The same from
+    its address in the card's field (Kiwix's download link, read from its mirror). Open in 6–11 s
+    over three runs. Before: kind generic, 86 "books" (each book three times, its page and two
+    about it, with the file's index, author and class pages), every author "gutenberg.org", open
+    in 5 s.
+  - Trekkerswee (Totius) found by the search, its cover in the list (1600×2400) and on the book
+    in hand, then read: the 3D book opens on its title page (Totius, Trekkerswee, "Met tekeninge
+    van J.H. Pierneef", Tafelberg, Pierneef's woodcut), the text view the same, its 4 pictures
+    loaded. Before: each book began with the three icons of papers2zim's controls (info, EPUB,
+    back to the top).
+  - The demo set's old-form file (`gutenberg_en_lcc-p_2026-03`) pre-rendered by this checkout:
+    its 214 answers (books.json, each book's index and chunks) byte for byte the live site's.
+    Opened from the web by its address: its library, its 19 books field by field and four books'
+    first parts the same as the live site gives.
+  - axe in the dialog, on the card with the new library open and in Trekkerswee's text view, at
+    1280×800 and on a TV (`?tv=emulate`: the remote's ↓ and OK from the search to the book, the
+    card's Read): nothing.
 
   The TV itself is another session's (TODO).

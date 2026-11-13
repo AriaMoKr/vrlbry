@@ -1,6 +1,7 @@
 // Synthetic ZIMs shared by tests: a gutenberg2zim-like archive exercising the catalogue rules (new
-// and old namespace scheme), a generic one, and the pieces they are made of (PNG headers, stored
-// ZIPs, EPUBs). Used by library.test.js and by the browser parity test.
+// and old namespace scheme), a papers2zim-like one (Kiwix's newer Gutenberg files), a generic one,
+// and the pieces they are made of (PNG and WebP headers, stored ZIPs, EPUBs). Used by
+// library.test.js and by the browser parity test.
 
 import zlib from 'node:zlib';
 import crypto from 'node:crypto';
@@ -182,6 +183,113 @@ export function writeOldGutenbergZim(file) {
     { ns: 'M', url: 'Title', mime: 'text/plain', content: 'Old Gutenberg' },
   ];
   return writeZim(file, { entries, scheme: 'old', compression: 'zlib' });
+}
+
+/** A WebP (VP8X) header that imageSize() can read: papers2zim's pictures and covers are WebP. */
+export function webp(w, h) {
+  const b = Buffer.alloc(30);
+  b.write('RIFF', 0, 'latin1');
+  b.writeUInt32LE(22, 4);
+  b.write('WEBPVP8X', 8, 'latin1');
+  b.writeUInt32LE(10, 16);
+  b.writeUIntLE(w - 1, 24, 3);
+  b.writeUIntLE(h - 1, 27, 3);
+  return b;
+}
+
+/** A papers2zim book page (§2.2): its controls before the text, its script after it. */
+export function papersPage(title, n, body) {
+  return `<!DOCTYPE html>
+<html lang="af"><head><meta content="text/html; charset=utf-8" http-equiv="Content-Type"/>
+<title>${title}</title><link href="css/html-reader-controls.css" rel="stylesheet"/></head>
+<body><div id="html-reader-controls">
+<a aria-label="View book cover and information" class="html-reader-btn html-reader-btn-info" href="./index.html#/book/${n}" title="View book cover and information">
+<img alt="Info" height="24" src="icons/info.svg" width="24"/>
+</a>
+<a aria-label="Download EPUB format" class="html-reader-btn html-reader-btn-epub" href="${title}.${n}.epub" title="Download EPUB format">
+<img alt="EPUB" height="24" src="icons/epub.svg" width="24"/>
+</a>
+<a aria-label="Scroll to top" class="html-reader-btn html-reader-btn-up hidden" href="#" id="scroll-to-top" title="Scroll to top">
+<img alt="Scroll to top" height="24" src="icons/scroll-up.svg" width="24"/>
+</a>
+</div><pre></pre>
+${body}
+<div style="text-align:center"></div><script src="js/html-reader-controls.js" type="text/javascript"></script></body></html>`;
+}
+
+/**
+ * The books of PAPERS_BOOKS' file as its lists give them, in popularity order. 305 is named after
+ * another title than its list's (its own JSON says where it is), 306 has no cover (so no number:
+ * its slug is its id), 301 is listed twice.
+ */
+export const PAPERS_BOOKS = [
+  { id: 'trek-tale', title: 'Trek Tale', author: { id: 'ann-author', displayName: 'Ann  Author', sortName: 'Author' }, languages: ['af'], popularity: 900, coverPath: 'covers/301_cover_image.webp', primaryCollection: 'P', availableFormats: ['epub', 'html'] },
+  { id: 'op-die-delwerye-vyf-sketse', title: 'Op die delwerye : Vyf sketse', author: { id: 'bob-writer', displayName: 'Bob Writer', sortName: 'Writer' }, languages: ['af', 'nl'], popularity: 800, coverPath: 'covers/302_cover_image.webp', primaryCollection: 'CDEF', availableFormats: ['html'] },
+  { id: 'epub-only', title: 'Epub Only', author: { id: 'ann-author', displayName: 'Ann Author', sortName: 'Author' }, languages: ['af'], popularity: 700, coverPath: 'covers/303_cover_image.webp', primaryCollection: 'G', availableFormats: ['epub'] },
+  { id: 'trek-tale', title: 'Trek Tale', author: { id: 'ann-author', displayName: 'Ann Author', sortName: 'Author' }, languages: ['af'], popularity: 650, coverPath: 'covers/301_cover_image.webp', primaryCollection: 'P', availableFormats: ['epub', 'html'] },
+  { id: 'renamed-book', title: 'Renamed Book', author: { id: 'cy-penman', displayName: 'Cy Penman', sortName: 'Penman' }, languages: ['af'], popularity: 600, coverPath: 'covers/305_cover_image.webp', primaryCollection: '', availableFormats: ['html'] },
+  { id: 'coverless', title: 'Coverless', author: null, popularity: 500, coverPath: null, primaryCollection: 'P', availableFormats: ['html'] },
+];
+
+/**
+ * A papers2zim-like Gutenberg archive (§2.2, Kiwix's newer files): config.json naming the source
+ * (`source`), books.json, the books listed in two pages of books-pages/popularity/ (and one of
+ * title/), each book's own JSON, its page with papers2zim's controls, its EPUB, its WebP cover and
+ * pictures, and the scraper's other pages (an app, author pages), none of them a book. `scraper`:
+ * its M/Scraper, or null for none. Its config.json starts with a byte-order mark, as some JSON
+ * writers put one (Kiwix's has none): it is read past.
+ */
+export function writePapersGutenbergZim(file, { source = 'gutenberg', scraper = 'papers2zim-1.1.0' } = {}) {
+  const page = (books) => JSON.stringify({ books });
+  const own = (b, formats) => JSON.stringify({ ...b, availableFormats: [], subtitle: '', formats });
+  const [trek, delwerye, epubOnly, , renamed, coverless] = PAPERS_BOOKS;
+  const at = (format, path) => ({ format, path, available: !!path });
+  const entries = [
+    { ns: 'C', url: 'config.json', mime: 'application/json', content: '﻿' + JSON.stringify({ title: 'Projek Gutenberg-biblioteek', source: { slug: source, name: 'Project Gutenberg' }, zimName: 'gutenberg_af_all' }) },
+    { ns: 'C', url: 'books.json', mime: 'application/json', content: JSON.stringify({ totalCount: 6, pageSize: 3, totalPages: 2 }) },
+    { ns: 'C', url: 'books-pages/popularity/0.json', mime: 'application/json', content: page(PAPERS_BOOKS.slice(0, 3)) },
+    { ns: 'C', url: 'books-pages/popularity/1.json', mime: 'application/json', content: page(PAPERS_BOOKS.slice(3)) },
+    { ns: 'C', url: 'books-pages/title/0.json', mime: 'application/json', content: page([...PAPERS_BOOKS].reverse()) },
+    { ns: 'C', url: 'books/301.json', mime: 'application/json', content: own(trek, [at('epub', 'Trek Tale.301.epub'), at('html', 'Trek Tale.301'), at('pdf', '')]) },
+    { ns: 'C', url: 'books/trek-tale.json', mime: 'application/json', content: own(trek, [at('epub', 'Trek Tale.301.epub'), at('html', 'Trek Tale.301'), at('pdf', '')]) },
+    { ns: 'C', url: 'books/op-die-delwerye-vyf-sketse.json', mime: 'application/json', content: own(delwerye, [at('html', 'Op die delwerye : Vyf sketse.302')]) },
+    { ns: 'C', url: 'books/epub-only.json', mime: 'application/json', content: own(epubOnly, [at('epub', 'Epub Only.303.epub')]) },
+    { ns: 'C', url: 'books/renamed-book.json', mime: 'application/json', content: own(renamed, [at('html', 'Another Name.305')]) },
+    { ns: 'C', url: 'books/coverless.json', mime: 'application/json', content: own(coverless, [at('html', 'Coverless.306')]) },
+    { ns: 'C', url: 'Trek Tale.301', mime: 'text/html', title: 'Trek Tale', content: papersPage('Trek Tale', 301, `<h1>Ann Author</h1>
+<h1>Trek Tale</h1>
+<div class="figcenter" style="width: 249px;"><img alt="Front" height="400" id="img_images_front.jpg" src="301/images/front.jpg.webp" title="" width="249"/></div>
+<h2 id="one">One</h2>
+<p>The trek begins.</p>
+<img alt="Unsized" src="301/images/unsized.png.webp"/>
+<p>See <a class="pginternal" href="#one">the start</a>.</p>`) },
+    { ns: 'C', url: 'Trek Tale.301.epub', mime: 'application/epub+zip', content: makeEpub({ title: 'Trek Tale', author: 'Ann' }), compression: 'none' },
+    { ns: 'C', url: '301/images/front.jpg.webp', mime: 'image/webp', content: webp(249, 400), compression: 'none' },
+    { ns: 'C', url: '301/images/unsized.png.webp', mime: 'image/webp', content: webp(120, 80), compression: 'none' },
+    { ns: 'C', url: 'covers/301_cover_image.webp', mime: 'image/webp', content: webp(300, 450), compression: 'none' },
+    { ns: 'C', url: 'Op die delwerye : Vyf sketse.302', mime: 'text/html', title: 'Op die delwerye : Vyf sketse', content: papersPage('Op die delwerye : Vyf sketse', 302, '<h1>Op die delwerye</h1><p>Sketse.</p>') },
+    { ns: 'C', url: 'covers/302_cover_image.webp', mime: 'image/webp', content: webp(300, 450), compression: 'none' },
+    { ns: 'C', url: 'Epub Only.303.epub', mime: 'application/epub+zip', content: makeEpub({ title: 'Epub Only', author: 'Ann' }) },
+    // 303's cover is missing; 305's page has another name than its title and number give.
+    { ns: 'C', url: 'Another Name.305', mime: 'text/html', title: 'Renamed Book', content: papersPage('Another Name', 305, '<h1>Renamed Book</h1><p>Found by its own JSON.</p>') },
+    { ns: 'C', url: 'covers/305_cover_image.webp', mime: 'image/webp', content: webp(300, 450), compression: 'none' },
+    { ns: 'C', url: 'Coverless.306', mime: 'text/html', title: 'Coverless', content: papersPage('Coverless', 306, '<h1>Coverless</h1><p>No cover.</p>') },
+    // The scraper's own pages: none of them is a book.
+    { ns: 'C', url: 'index.html', mime: 'text/html', title: 'index.html', content: '<!doctype html><html><head><title>Projek Gutenberg-biblioteek</title></head><body><div id="app"></div></body></html>' },
+    { ns: 'C', url: 'index/author_ann-author', mime: 'text/html', title: 'Ann Author', content: bookHtml('Ann Author') },
+    { ns: 'C', url: 'noscript/book_trek-tale.html', mime: 'text/html', title: 'Trek Tale', content: bookHtml('Trek Tale - Project Gutenberg') },
+    { ns: 'C', url: 'authors.json', mime: 'application/json', content: JSON.stringify({ authors: [{ id: 'ann-author', displayName: 'Ann Author', portraitPath: 'authors/7.webp' }] }) },
+    { ns: 'C', url: 'collections.json', mime: 'application/json', content: JSON.stringify({ collections: [{ id: 'CDEF' }, { id: 'G' }, { id: 'P' }], totalCount: 3 }) },
+    { ns: 'C', url: 'js/html-reader-controls.js', mime: 'text/javascript', content: '(function() {})();' },
+    { ns: 'M', url: 'Title', mime: 'text/plain', content: 'Projek Gutenberg-biblioteek' },
+    { ns: 'M', url: 'Description', mime: 'text/plain', content: 'Alle boeke in Afrikaans' },
+    { ns: 'M', url: 'Language', mime: 'text/plain', content: 'afr' },
+    { ns: 'M', url: 'Creator', mime: 'text/plain', content: 'gutenberg.org' },
+    { ns: 'M', url: 'Publisher', mime: 'text/plain', content: 'openZIM' },
+    { ns: 'M', url: 'Name', mime: 'text/plain', content: 'gutenberg_af_all' },
+    ...(scraper ? [{ ns: 'M', url: 'Scraper', mime: 'text/plain', content: scraper }] : []),
+  ];
+  return writeZim(file, { entries, scheme: 'new', mainPage: 'C/index.html' });
 }
 
 /** A ZIM without a Gutenberg index: its HTML articles are the books. */

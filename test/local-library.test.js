@@ -25,7 +25,7 @@ import { idbStore } from '../public/js/local/idb-store.js';
 import { createLocalLibraries } from '../public/js/local/local-handler.js';
 import { memoryStore, withPrebuilt } from '../public/js/local/prebuilt.js';
 import { fileStore } from '../server/cache-store.js';
-import { png, writeGenericZim, writeGutenbergZim, writeOldGutenbergZim, writeWikipediaZim, writeWikisourceZim } from './helpers/zim-fixtures.js';
+import { png, writeGenericZim, writeGutenbergZim, writeOldGutenbergZim, writePapersGutenbergZim, writeWikipediaZim, writeWikisourceZim } from './helpers/zim-fixtures.js';
 import { writeZim } from './helpers/zimwriter.js';
 import { startRangeServer } from './helpers/range-server.js';
 
@@ -182,6 +182,15 @@ describe('local library (ZIM files read in the browser)', () => {
 
   it('answers like the server for an old-scheme Gutenberg ZIM (zlib clusters)', async () => {
     await sameAnswers(writeOldGutenbergZim(path.join(tmp, 'old.zim')).filePath);
+  });
+
+  it('answers like the server for one of Kiwix\'s newer Gutenberg ZIMs (papers2zim: JSON lists, WebP)', async () => {
+    const { local, id, server } = await sameAnswers(writePapersGutenbergZim(path.join(tmp, 'gutenberg_af_all.zim')).filePath);
+    assert.equal(server.info.kind, 'gutenberg');
+    assert.deepEqual(server.books.map((b) => b.id), ['301', '302', '303', '305', 'coverless']);
+    provide(browser);
+    const front = (await local.call('image', { url: `/zim/${id}/C/301/images/front.jpg.webp` })).value;
+    assert.equal(front.mime, 'image/webp');
   });
 
   it('answers like the server for a generic ZIM, with zstd or xz clusters', async () => {
@@ -347,7 +356,7 @@ describe('local library (ZIM files read in the browser)', () => {
 
   it('answers like the server for ZIMs read from a web address (range requests)', async () => {
     const before = web.requests.length;
-    for (const write of [writeGutenbergZim, writeOldGutenbergZim, writeGenericZim, writeWikipediaZim, writeWikisourceZim]) {
+    for (const write of [writeGutenbergZim, writeOldGutenbergZim, writePapersGutenbergZim, writeGenericZim, writeWikipediaZim, writeWikisourceZim]) {
       const file = write(path.join(tmp, `web-${write.name.replace(/^write|Zim$/g, '').toLowerCase()}.zim`)).filePath;
       await sameAnswers(file, { via: 'url' });
     }

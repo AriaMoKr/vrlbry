@@ -10,7 +10,7 @@ import {
   ArchiveLibrary, Library, LibraryError, gutenbergBase, libraryIdFor, libraryTitle, parseIndexScript, splitTitle, zimUrl,
 } from '../server/library.js';
 import {
-  LONG_TITLE, png, writeGenericZim, writeGutenbergZim, writeOldGutenbergZim,
+  LONG_TITLE, png, writeGenericZim, writeGutenbergZim, writeOldGutenbergZim, writePapersGutenbergZim,
 } from './helpers/zim-fixtures.js';
 import { ZimArchive } from '../public/js/core/zim/reader.js';
 
@@ -398,6 +398,148 @@ describe('ArchiveLibrary: old namespace scheme', () => {
     assert.equal(meta.source, 'html');
     const img = chunks[0].blocks.find((b) => b.t === 'img');
     assert.deepEqual(img, { t: 'img', src: '/zim/old-scheme/I/201_fig.png', w: 10, h: 20, alt: 'Fig' });
+  });
+});
+
+describe('ArchiveLibrary: Kiwix\'s newer Gutenberg files (papers2zim, §2.2)', () => {
+  const ID = 'gutenberg_af_all_2026-11';
+  let lib;
+  let file;
+  /** Opens the file with bookLookups 0 (as a long list from the web), counting the archive's lookups. */
+  const openLazy = async (id) => {
+    const archive = await ZimArchive.open(file);
+    const counted = [];
+    const find = archive.findEntry.bind(archive);
+    archive.findEntry = (ns, url) => { counted.push(`${ns}/${url}`); return find(ns, url); };
+    return { lib: await ArchiveLibrary.open(archive, { log: quietLog, bookLookups: 0, id }), counted };
+  };
+  before(async () => {
+    file = path.join(tmp, `${ID}.zim`);
+    writePapersGutenbergZim(file);
+    lib = await ArchiveLibrary.open(file, { log: quietLog });
+  });
+  after(async () => {
+    await lib?.close();
+  });
+
+  it('is a Gutenberg library of the books its lists give, and of nothing else in the file', async () => {
+    assert.equal(lib.kind, 'gutenberg');
+    const info = await lib.info();
+    assert.equal(info.title, 'Gutenberg · every book (AF)');
+    assert.equal(info.bookCount, 5);
+    assert.deepEqual(info.shelves, ['CDEF', 'G', 'P']);
+    const books = await lib.books();
+    // Each by its Gutenberg number (from its cover's name), in popularity order over both pages of
+    // the list; the second 301 left out; a book without a cover keeps its slug.
+    assert.deepEqual(books.map((b) => b.id), ['301', '302', '303', '305', 'coverless']);
+    assert.deepEqual(books.map((b) => b.rank), [1, 2, 3, 4, 5]);
+    assert.deepEqual(books.map((b) => b.author), ['Ann Author', 'Bob Writer', 'Ann Author', 'Cy Penman', null]);
+    assert.deepEqual(books.map((b) => b.authorId), ['ann-author', 'bob-writer', 'ann-author', 'cy-penman', null]);
+    assert.deepEqual(books.map((b) => b.language), ['af', 'af', 'af', 'af', null]);
+    assert.deepEqual(books.map((b) => b.shelf), ['P', 'CDEF', 'G', null, 'P']);
+    for (const b of books) {
+      assert.deepEqual(Object.keys(b), ['id', 'title', 'subtitle', 'fullTitle', 'author', 'authorId', 'rank',
+        'shelf', 'language', 'formats', 'readable', 'cover', 'epub', 'size']);
+    }
+    assert.ok(books.every((b) => b.readable));
+  });
+
+  it('gives each book its title, cover and files, by its title and number or by its own JSON', async () => {
+    const trek = await lib.book('301');
+    assert.deepEqual([trek.title, trek.subtitle, trek.fullTitle], ['Trek Tale', null, 'Trek Tale']);
+    assert.deepEqual(trek.formats, { html: true, epub: true, pdf: false });
+    assert.equal(trek.cover, `/zim/${ID}/C/covers/301_cover_image.webp`);
+    assert.equal(trek.epub, `/zim/${ID}/C/Trek%20Tale.301.epub`);
+    assert.equal(trek.size, (await lib.archive.getContent('C/Trek Tale.301.epub')).data.length, 'its EPUB\'s size');
+    // The spaced colon papers2zim leaves where MARC's $b was: split as in gutenberg2zim's files.
+    const delwerye = await lib.book('302');
+    assert.deepEqual([delwerye.title, delwerye.subtitle, delwerye.fullTitle], ['Op die delwerye', 'Vyf sketse', 'Op die delwerye: Vyf sketse']);
+    assert.deepEqual(delwerye.formats, { html: true, epub: false, pdf: false });
+    const epubOnly = await lib.book('303');
+    assert.deepEqual(epubOnly.formats, { html: false, epub: true, pdf: false });
+    assert.equal(epubOnly.cover, null, 'a cover its list names but the file lacks');
+    const renamed = await lib.book('305');
+    assert.deepEqual(renamed.formats, { html: true, epub: false, pdf: false }, 'found by its own JSON');
+    assert.equal(renamed.cover, `/zim/${ID}/C/covers/305_cover_image.webp`);
+    assert.equal((await lib.book('coverless')).cover, null);
+  });
+
+  it('reads a book from its title page on, without papers2zim\'s controls, with its WebP pictures', async () => {
+    const { meta, chunks } = await lib.content('301');
+    assert.equal(meta.source, 'html');
+    assert.equal(meta.cover, `/zim/${ID}/C/covers/301_cover_image.webp`);
+    const blocks = chunks.flatMap((c) => c.blocks);
+    assert.deepEqual(blocks[0], { t: 'h', l: 1, r: [['Ann Author', 0]] }, 'the title page first');
+    const all = JSON.stringify(blocks);
+    assert.doesNotMatch(all, /icons\/|Scroll to top|View book cover|Download EPUB/, 'no controls');
+    assert.deepEqual(blocks.filter((b) => b.t === 'img'), [
+      { t: 'img', src: `/zim/${ID}/C/301/images/front.jpg.webp`, w: 249, h: 400, alt: 'Front', id: 'img_images_front.jpg' },
+      { t: 'img', src: `/zim/${ID}/C/301/images/unsized.png.webp`, w: 120, h: 80, alt: 'Unsized' },
+    ], 'one sized by its page, one by its WebP header');
+    const link = blocks.flatMap((b) => b.r ?? []).find((r) => r[0] === 'the start');
+    const one = blocks.findIndex((b) => b.id === 'one');
+    assert.deepEqual(link[2], { at: [0, one] }, 'a link within the book');
+    assert.deepEqual(meta.toc.map((t) => t.title), ['Ann Author', 'Trek Tale', 'One']);
+  });
+
+  it('reads the book found by its own JSON and the EPUB-only one, and places a book\'s page', async () => {
+    const renamed = (await lib.content('305')).chunks.flatMap((c) => c.blocks);
+    assert.deepEqual(renamed.map((b) => b.r?.[0][0]), ['Renamed Book', 'Found by its own JSON.']);
+    assert.equal((await lib.content('303')).meta.source, 'epub');
+    assert.equal((await lib.content('coverless')).chunks[0].blocks[0].r[0][0], 'Coverless');
+    assert.deepEqual(await lib.placeOf('C/Trek Tale.301#one'), { book: '301', c: 0, b: 0, f: 'one' });
+    assert.equal(await lib.placeOf('C/noscript/book_trek-tale.html'), null, 'the scraper\'s own pages lead to no book');
+    assert.equal(await lib.placeOf('C/index/book_301'), null);
+  });
+
+  it('makes a long list\'s books from the list alone, and finds a book\'s files when it is first opened', async () => {
+    const { lib: lazy, counted } = await openLazy('lazy-papers');
+    try {
+      const [a, b] = [await lib.books(), await lazy.books()];
+      const listed = (x) => ({ id: x.id, title: x.title, subtitle: x.subtitle, author: x.author, authorId: x.authorId, rank: x.rank, shelf: x.shelf, language: x.language });
+      assert.deepEqual(b.map(listed), a.map(listed));
+      assert.deepEqual(counted.filter((p) => /\.30\d|covers\//.test(p)), [], `no book's files looked up: ${counted.join(', ')}`);
+      assert.deepEqual(counted.filter((p) => /full_by_popularity/.test(p)), [], 'no gutenberg2zim index looked for: papers2zim made it');
+      const by = Object.fromEntries(b.map((x) => [x.id, x]));
+      assert.equal(by['303'].cover, '/zim/lazy-papers/C/covers/303_cover_image.webp', 'its cover as its list names it');
+      assert.deepEqual(by['303'].formats, { html: false, epub: true, pdf: false }, 'its formats as its list names them');
+      assert.equal(by['301'].epub, null, 'until it is opened');
+      assert.ok(b.every((x) => x.size === null));
+      for (const id of ['301', '302', '303', '305', 'coverless']) {
+        const [x, y] = [await lib.content(id), await lazy.content(id)];
+        assert.deepEqual(y.meta, { ...x.meta, library: y.meta.library, cover: y.meta.cover }, id);
+        assert.deepEqual(y.chunks.map((c) => c.json.toString().split('lazy-papers').join(ID)), x.chunks.map((c) => c.json.toString()), id);
+      }
+      assert.equal(by['301'].epub, `/zim/lazy-papers/C/Trek%20Tale.301.epub`, 'its EPUB found');
+      assert.deepEqual(by['305'].formats, { html: true, epub: false, pdf: false });
+    } finally {
+      await lazy.close();
+    }
+  });
+
+  it('stays generic when its config.json names another source', async () => {
+    const other = path.join(tmp, 'papers-other.zim');
+    writePapersGutenbergZim(other, { source: 'arxiv' });
+    const generic = await ArchiveLibrary.open(other, { log: quietLog });
+    try {
+      assert.equal(generic.kind, 'generic');
+      const titles = (await generic.books()).map((b) => b.title);
+      assert.ok(titles.includes('index.html') && titles.includes('Trek Tale'), titles.join(', '));
+    } finally {
+      await generic.close();
+    }
+  });
+
+  it('knows the file by its config.json alone, whatever made it', async () => {
+    const unsigned = path.join(tmp, 'papers-unsigned.zim');
+    writePapersGutenbergZim(unsigned, { scraper: null });
+    const again = await ArchiveLibrary.open(unsigned, { log: quietLog });
+    try {
+      assert.equal(again.kind, 'gutenberg');
+      assert.deepEqual((await again.books()).map((b) => b.id), (await lib.books()).map((b) => b.id));
+    } finally {
+      await again.close();
+    }
   });
 });
 

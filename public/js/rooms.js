@@ -100,12 +100,15 @@ const genreOf = (b) => b.genre || b.shelf || 'Other works';
  * The Library of Congress classes Gutenberg shelves its books by (a book's `shelf`, from the ZIM's
  * lcc_shelves.js: the 39 of gutenberg_en_all), by name: Kiwix's names for its Gutenberg ZIM of each
  * class, except E and F (both "History of the Americas" there), C and PZ (in plainer words).
- * Rooms and filters keep the codes (saved rooms stay valid); only what is shown is named.
+ * Kiwix's newer files (papers2zim, SPEC §2.2) give a book's class as its `primaryCollection`, C to
+ * F together as CDEF (the Afrikaans one also puts the P subclasses' books under P). Rooms and
+ * filters keep the codes (saved rooms stay valid); only what is shown is named.
  */
 export const LCC_NAMES = Object.freeze({
   A: 'General works',
   B: 'Philosophy, psychology, religion',
   C: 'Biography, genealogy, archaeology',
+  CDEF: 'History, biography, archaeology',
   D: 'World history (Europe, Asia, Africa, Australia)',
   E: 'History of the Americas (general, United States)',
   F: 'History of the Americas (U.S. local, Canada, Latin America)',
@@ -211,7 +214,8 @@ export function roomFor(book, books) {
 /**
  * Whether a library's capped rooms shelve their most read books (ROOM_CAP of them, in the shelf
  * order) rather than the first in the shelf order: a Gutenberg ZIM's `rank` is its popularity
- * (full_by_popularity.js); other libraries' is their order in the archive, or none.
+ * (full_by_popularity.js, or papers2zim's list by popularity); other libraries' is their order in
+ * the archive, or none.
  */
 export const capsByPopularity = (library) => library?.kind === 'gutenberg';
 

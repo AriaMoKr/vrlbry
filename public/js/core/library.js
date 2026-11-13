@@ -3,11 +3,12 @@
  * browser (core/platform.js). The server's `Library` (server/library.js) is the set of ZIM files
  * found in one directory; the browser opens files someone picks.
  *
- * A Gutenberg ZIM (gutenberg2zim) is catalogued from its own JSON index, a Wikisource ZIM from
- * its works, a Wikipedia ZIM as volumes of 1,000 articles (§2.5); any other ZIM becomes a
- * "generic" library whose books are its HTML articles. Book content is converted on demand
- * (HTML or EPUB → blocks → chunks), serialized once and kept in a byte-budgeted LRU shared by all
- * archives, so the HTTP layer can send cached bytes without re-serializing.
+ * A Gutenberg ZIM is catalogued from its own index (gutenberg2zim's JSON script, papers2zim's JSON
+ * lists), a Wikisource ZIM from its works, a Wikipedia ZIM as volumes of 1,000 articles (§2.5);
+ * any other ZIM becomes a "generic" library whose books are its HTML articles. Book content is
+ * converted on demand (HTML or EPUB → blocks → chunks), serialized once and kept in a
+ * byte-budgeted LRU shared by all archives, so the HTTP layer can send cached bytes without
+ * re-serializing.
  */
 import { parseEpub } from './content/epub.js';
 import { findInBlocks, topScore } from './content/find.js';
@@ -44,6 +45,8 @@ const INDEX_FILE = 'full_by_popularity.js';
 const IMAGE_HEAD_BYTES = 16 * 1024;
 const INDEX_NAMESPACES = ['C', 'A', '-', 'J'];
 const INDEX_PREFIXES = ['', 'js/'];
+/** papers2zim's lists of books (§2.2), in the order they are looked for: the first gives the ranks. */
+const PAPERS_SORTS = ['popularity', 'title'];
 const METADATA_FIELDS = {
   title: 'Title', description: 'Description', longDescription: 'LongDescription', language: 'Language',
   date: 'Date', creator: 'Creator', publisher: 'Publisher', name: 'Name', flavour: 'Flavour',
@@ -139,6 +142,26 @@ export function gutenbergBase(rawTitle, bookId) {
  */
 function pythonBase(rawTitle, bookId) {
   return Array.from(String(rawTitle).replaceAll('/', '-')).slice(0, 230).join('') + '.' + bookId;
+}
+
+/**
+ * The names a papers2zim book's page may have (§2.2): the scraper's own, which strips the title
+ * first (`title.strip().replace("/", "-")[:230]`), then the two above.
+ * @param {string} title the title as its list gives it
+ * @param {string} n the book's Gutenberg number
+ * @returns {string[]}
+ */
+function papersBases(title, n) {
+  return [...new Set([pythonBase(String(title).trim(), n), gutenbergBase(title, n), pythonBase(title, n)])];
+}
+
+/**
+ * A papers2zim title split as splitTitle splits gutenberg2zim's: the scraper drops MARC's `$b`
+ * but keeps the spaced colon before it ("Op die delwerye : Vyf sketse uit die lewe").
+ * @param {string} raw
+ */
+export function splitPapersTitle(raw) {
+  return splitTitle(String(raw ?? '').replace(/\s+:\s+/, ' : $b '));
 }
 
 /**
@@ -319,7 +342,7 @@ export class ArchiveLibrary {
     onIndexing, // (info) whenever info().indexing changes: { stage, progress }, or null once the index is ready
     checkImages = true, // false: a Wikipedia's or Wikisource's image whose size the HTML gives is not looked up (_fixImages)
     maxIndexBuildBytes = null, // an index found nowhere is built only for an archive up to this big (_startIndexing)
-    bookLookups = Infinity, // a Gutenberg list longer than this: its books' files looked up when first opened (_gutenbergCatalog)
+    bookLookups = Infinity, // a Gutenberg list longer than this: its books' files looked up when first opened (_gutenbergCatalog, _papersCatalog)
   } = {}) {
     // An open ZimArchive is taken over (closed with the library): the local library opens the
     // file once, for the metadata that decides whether to go on, and keeps its block cache.
@@ -725,7 +748,12 @@ export class ArchiveLibrary {
     // A Wikipedia or Wikisource says so in its metadata: the Gutenberg index is then not looked
     // for (8 lookups in a directory of millions of entries, 5 s over the network).
     const mediawiki = isWikisource(this._meta) || wikipedia.isWikipedia(this._meta);
-    const index = mediawiki ? null : await this._findIndex();
+    // Kiwix's newer Gutenberg files (papers2zim) have no such index: their C/config.json names the
+    // source, and their books are listed in JSON (§2.2); another source's file stays generic. A
+    // file that says papers2zim made it (M/Scraper) skips the index's 8 lookups, which would fail
+    // and over the network cost reads of their own (one of the Afrikaans file's 8).
+    const papers = !mediawiki && /^papers2zim\b/i.test(String(this._meta.Scraper ?? ''));
+    const index = mediawiki || papers ? null : await this._findIndex();
     if (index) {
       try {
         const books = await this._gutenbergCatalog(index);
@@ -733,6 +761,16 @@ export class ArchiveLibrary {
         return books;
       } catch (err) {
         this._warn(`${this.file}: Gutenberg index ${index.entry.path} is unusable (${err.message}); listing HTML articles instead`);
+        this._byId.clear();
+      }
+    }
+    if (!mediawiki && !index && await this._papersGutenberg()) {
+      try {
+        const books = await this._papersCatalog();
+        this.kind = 'gutenberg';
+        return books;
+      } catch (err) {
+        this._warn(`${this.file}: its Gutenberg book lists are unusable (${err.message}); listing HTML articles instead`);
         this._byId.clear();
       }
     }
@@ -1150,17 +1188,177 @@ export class ArchiveLibrary {
     return lookup;
   }
 
+  // ------------------------------------------------------------------------------------------
+  // Gutenberg: Kiwix's newer files (papers2zim, §2.2)
+
+  /** Whether this is one of Kiwix's newer Gutenberg files: its C/config.json names Gutenberg as the source. */
+  async _papersGutenberg() {
+    if (!this.archive.newNamespaceScheme) return false; // papers2zim writes no other
+    const config = await this._json('C/config.json').catch(() => null);
+    return config?.source?.slug === 'gutenberg';
+  }
+
+  /** A JSON file of the archive (redirects followed), parsed; null when there is none. */
+  async _json(path) {
+    const content = await this.archive.getContent(path);
+    return content ? JSON.parse(platform.utf8(content.data).replace(/^﻿/, '')) : null;
+  }
+
   /**
-   * The files of a book made from the list alone (_gutenbergCatalog's bookLookups): looked up
-   * once, when it is first opened; its formats and readability then say what was found.
+   * The books of one of Kiwix's newer Gutenberg files (papers2zim, §2.2), from its lists
+   * (_papersList), each with its title, author, language, cover and LCC class
+   * (`primaryCollection`); nothing else of the file is a book. A book's id is its Gutenberg
+   * number, which its entry gives only in its cover's name (`covers/<n>_cover_image.webp`): the
+   * id gutenberg2zim's files give it, so a place kept in one edition holds in the other (a book
+   * without a cover keeps its slug). Its files are found by its title and number, else by its
+   * own JSON (_papersFiles): now, or for a list longer than bookLookups when it is first opened
+   * (_resolveBook), as _gutenbergCatalog does.
+   */
+  async _papersCatalog() {
+    const counts = await this._json('C/books.json').catch(() => null);
+    const pages = Number.isInteger(counts?.totalPages) && counts.totalPages > 0 ? counts.totalPages : null;
+    // Progress: the lists (all of it when the books will not be looked up), then the lookups.
+    const listShare = (counts?.totalCount ?? 0) > this._bookLookups ? 1 : 0.1;
+    const entries = await this._papersList(pages, (f) => this._catalogProgress?.(f * listShare));
+    const parsed = [];
+    const seen = new Set();
+    for (const e of entries) {
+      if (!e || typeof e !== 'object') continue;
+      const slug = typeof e.id === 'string' && e.id ? e.id : null;
+      const coverPath = typeof e.coverPath === 'string' && e.coverPath ? e.coverPath.replace(/^\.?\//, '') : null;
+      const n = (coverPath && /(?:^|\/)(\d+)_cover_image\.\w+$/.exec(coverPath)?.[1]) || null;
+      const id = n ?? slug;
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      parsed.push({ e, id, n, slug, coverPath });
+    }
+    const lazy = parsed.length > this._bookLookups;
+    const recs = new Array(parsed.length);
+    const sizeEntries = new Array(parsed.length).fill(null);
+    let looked = 0;
+    await mapLimit(parsed, 16, async ({ e, id, n, slug, coverPath }, i) => {
+      const rawTitle = typeof e.title === 'string' && e.title.trim() ? e.title : id;
+      const { title, subtitle, fullTitle } = splitPapersTitle(rawTitle);
+      const name = e.author?.displayName;
+      // The formats its entry names are looked for (all of them when it names none).
+      const listed = Array.isArray(e.availableFormats) && e.availableFormats.length ? e.availableFormats.filter((f) => typeof f === 'string') : null;
+      const lookup = { papers: true, bases: n ? papersBases(rawTitle, n) : [], formats: listed, json: `C/books/${slug ?? id}.json` };
+      const book = {
+        id, title, subtitle, fullTitle,
+        author: typeof name === 'string' && name.trim() ? name.replace(/\s+/g, ' ').trim() : null,
+        authorId: typeof e.author?.id === 'string' && e.author.id ? e.author.id : null,
+        rank: i + 1,
+        shelf: typeof e.primaryCollection === 'string' && e.primaryCollection.trim() ? e.primaryCollection.trim() : null,
+        language: Array.isArray(e.languages) && typeof e.languages[0] === 'string' && e.languages[0] ? e.languages[0] : null,
+        formats: { html: !listed || listed.includes('html'), epub: !!listed?.includes('epub'), pdf: !!listed?.includes('pdf') },
+        readable: false,
+        cover: null,
+        epub: null,
+        size: null,
+      };
+      if (lazy) {
+        // From its entry alone: its cover as named there (not looked up), its files when it is first opened.
+        book.readable = book.formats.html || book.formats.epub;
+        book.cover = coverPath ? zimUrl(this.id, `C/${coverPath}`) : null;
+        recs[i] = { book, html: null, epub: null, kind: 'gutenberg', lookup };
+        return;
+      }
+      const { html, epub, pdf } = await this._papersFiles(lookup);
+      const cover = coverPath ? await this.archive.findEntry('C', coverPath) : null;
+      sizeEntries[i] = epub ?? html;
+      book.formats = { html: !!html, epub: !!epub, pdf: !!pdf };
+      book.readable = !!(html || epub);
+      book.cover = cover ? zimUrl(this.id, cover.path) : null;
+      book.epub = epub ? zimUrl(this.id, epub.path) : null;
+      recs[i] = { book, html, epub, kind: 'gutenberg' };
+      this._catalogProgress?.(listShare + (1 - listShare) * (++looked / parsed.length));
+    });
+    if (!lazy) {
+      const sizes = await this._blobSizes(sizeEntries);
+      for (let i = 0; i < recs.length; i++) recs[i].book.size = sizes[i];
+    }
+    // Registered in rank order so iteration over the id map is deterministic.
+    for (const rec of recs) this._byId.set(rec.book.id, rec);
+    const unreadable = recs.filter((r) => !r.book.readable).length;
+    if (unreadable) this._warn(`${this.file}: ${unreadable} book(s) have neither HTML nor EPUB ${lazy ? '(their list says)' : 'in the archive'}`);
+    const books = recs.map((r) => r.book);
+    this._shelves = [...new Set(books.map((b) => b.shelf).filter(Boolean))].sort();
+    return books;
+  }
+
+  /**
+   * The entries of a papers2zim file's list of books (books-pages/<sort>/<n>.json, 500 a page;
+   * `pages` from books.json, else read until one is missing): in popularity order, else by title.
+   * @param {number|null} pages
+   * @param {(fraction: number) => void} onProgress
+   * @returns {Promise<object[]>}
+   */
+  async _papersList(pages, onProgress) {
+    for (const sort of PAPERS_SORTS) {
+      const page = async (p) => {
+        const list = await this._json(`C/books-pages/${sort}/${p}.json`);
+        return Array.isArray(list?.books) ? list.books : null;
+      };
+      const first = await page(0);
+      if (!first) continue;
+      const lists = [first];
+      if (pages) {
+        let read = 1;
+        onProgress(read / pages);
+        await mapLimit(Array.from({ length: pages - 1 }, (_, i) => i + 1), 4, async (p) => {
+          lists[p] = await page(p);
+          if (!lists[p]) this._warn(`${this.file}: books-pages/${sort}/${p}.json is missing; its books are left out`);
+          onProgress(++read / pages);
+        });
+      } else {
+        for (let p = 1, more; (more = await page(p)); p++) lists.push(more);
+      }
+      return lists.flatMap((l) => l ?? []);
+    }
+    throw new Error('no list of books (books-pages/)');
+  }
+
+  /**
+   * A papers2zim book's files: named after its title and number as gutenberg2zim named them
+   * (papersBases: '<title>.<n>', '.epub', '.pdf'), else as its own JSON lists them (`formats`,
+   * each with its path). Only the formats its entry names are looked for (all when it names none).
+   * @param {{ bases: string[], formats: string[]|null, json: string }} lookup
+   */
+  async _papersFiles({ bases, formats, json }) {
+    const want = (f) => !formats || formats.includes(f);
+    const named = (suffix) => (bases.length ? this._firstOf(['C'], bases.map((b) => b + suffix)) : null);
+    const files = {
+      html: want('html') ? await named('') : null,
+      epub: want('epub') ? await named('.epub') : null,
+      pdf: want('pdf') ? await named('.pdf') : null,
+    };
+    if ((want('html') && !files.html) || (want('epub') && !files.epub)) {
+      const own = await this._json(json).catch(() => null);
+      for (const f of Array.isArray(own?.formats) ? own.formats : []) {
+        const kind = f?.format;
+        if (!f?.available || typeof f.path !== 'string' || !f.path || !Object.hasOwn(files, kind) || files[kind]) continue;
+        files[kind] = await this.archive.findEntry('C', f.path.replace(/^\.?\//, ''));
+      }
+    }
+    return files;
+  }
+
+  /**
+   * The files of a book made from the list alone (_gutenbergCatalog's and _papersCatalog's
+   * bookLookups): looked up once, when it is first opened; its formats and readability then say
+   * what was found.
    */
   async _resolveBook(rec) {
     if (!rec.lookup) return;
     rec.resolving ??= (async () => {
-      const { bases, nsHtml, nsEpub, flags } = rec.lookup;
-      const want = (k) => !flags || flags[k] === '1';
-      rec.html = want(0) ? await this._firstOf(nsHtml, bases.flatMap((b) => [b, b + '.html'])) : null;
-      rec.epub = want(1) ? await this._firstOf(nsEpub, bases.map((b) => b + '.epub')) : null;
+      if (rec.lookup.papers) {
+        ({ html: rec.html, epub: rec.epub } = await this._papersFiles(rec.lookup));
+      } else {
+        const { bases, nsHtml, nsEpub, flags } = rec.lookup;
+        const want = (k) => !flags || flags[k] === '1';
+        rec.html = want(0) ? await this._firstOf(nsHtml, bases.flatMap((b) => [b, b + '.html'])) : null;
+        rec.epub = want(1) ? await this._firstOf(nsEpub, bases.map((b) => b + '.epub')) : null;
+      }
       const { book } = rec;
       book.formats = { ...book.formats, html: !!rec.html, epub: !!rec.epub };
       book.readable = !!(rec.html || rec.epub);
