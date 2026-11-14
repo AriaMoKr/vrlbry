@@ -140,6 +140,37 @@ describe('Kiwix\'s library (kiwix.js)', () => {
     assert.deepEqual((await cat.view('gutenberg', 'fra')).entries.map((e) => e.name), ['gutenberg_mul_all']);
   });
 
+  it('reads nothing from Kiwix until a list is asked for', async () => {
+    const fetch = fakeFetch({ indexes: { indexes: [] } });
+    const cat = kiwixCatalog({ fetch, indexList: 'https://site.example/indexes/list.json', localIndexes: async () => ['x'] });
+    const told = [];
+    cat.whenAsked(() => told.push('first'));
+    // The site's own list of indexes and this browser's store are not Kiwix's.
+    assert.deepEqual([...await cat.prebuilt()], []);
+    assert.deepEqual([...await cat.local()], ['x']);
+    assert.equal(cat.asked, false);
+    assert.deepEqual(fetch.asked.map((u) => new URL(u).host), ['site.example'], 'no request to Kiwix');
+    assert.deepEqual(told, []);
+    // A list shown: the feed and the languages, and those waiting are told once, after the asker's turn.
+    const listed = cat.view('gutenberg', 'eng');
+    assert.equal(cat.asked, true, 'asked as the list is asked for');
+    assert.deepEqual(told, [], 'not within the asker\'s turn');
+    assert.ok((await listed).entries.length);
+    assert.deepEqual(fetch.asked.filter((u) => new URL(u).origin === CATALOG_ORIGIN).map((u) => new URL(u).pathname).sort(),
+      ['/catalog/v2/entries', '/catalog/v2/languages']);
+    assert.deepEqual(told, ['first']);
+    await cat.view('wikipedia', 'eng');
+    cat.whenAsked(() => told.push('later'));
+    assert.deepEqual(told, ['first'], 'one waiting after it was asked is told soon, not at once');
+    await Promise.resolve();
+    assert.deepEqual(told, ['first', 'later'], 'each told once');
+    // The languages alone ask too (a failure is not kept, but the asking stays).
+    const names = kiwixCatalog({ fetch: fakeFetch({ fail: new Set(['/catalog/v2/languages']) }), indexList: null });
+    assert.equal(names.asked, false);
+    assert.deepEqual(await names.languageNames(), new Map());
+    assert.equal(names.asked, true);
+  });
+
   it('says when the catalogue cannot be reached, and tries again when asked again', async () => {
     const fails = new Set(['wikisource']);
     const fetch = fakeFetch({ fail: fails });

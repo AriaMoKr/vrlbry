@@ -364,7 +364,16 @@ whole. It works on GitHub Pages (no server) and beside a server's own libraries.
   typing an address, in VR too (no file picker or keyboard there). Read live, one feed per kind
   with every language (`/catalog/v2/entries?category=<kind>&count=-1`: 100 KB to 1.5 MB, about
   100 KB compressed, revalidated by its ETag), kept for the page's life, a language chosen
-  without another request; the languages' own names from `/catalog/v2/languages`. The feed is
+  without another request; the languages' own names from `/catalog/v2/languages`. Read only
+  once a visitor asks for a list (since 2026-11-14): the card's dialog opened, or on the
+  kiosk's Kiwix tab its "Show Kiwix's library", the tab or one of its kinds pressed (§5.6). The
+  catalogue says whether it has been (`asked`: a feed or the languages asked for; the site's
+  `indexes/list.json` and this browser's store are not Kiwix's) and tells who waits for it
+  (`whenAsked`, once, after the asker's turn: the tab lists without a press once the dialog has
+  read it). Until then a page asks nothing of Kiwix's server, nor any host but its own unless
+  web addresses opened before reopen as it starts (above, unchanged): the kiosk opens on the
+  Kiwix tab, and while it read the list as soon as it was drawn, Kiwix's server learnt of every
+  visit. Each visit asks anew; nothing of the asking is kept. The feed is
   machine-written and read with patterns (`parseEntries`; no DOMParser in a worker or Node).
   Each entry: its UUID, name, kind, languages, flavour, size, date, article count, thumbnail
   and the ZIM's address (through `zimUrl`: Kiwix's mirror), its title as the app shows a
@@ -1656,6 +1665,11 @@ States: `browse` → `inspect` → `opening` → `read` (and back), plus `busy` 
   is more than one library or the current one is browsed by rooms), *Search* and *Kiwix* (§2.6,
   Kiwix's library). The page opens on *Kiwix*: more to read is what a new visitor most likely
   wants (a tab chosen before Kiwix's library is ready, or restored with a scene, stays):
+  - *Kiwix* (§2.6): its list is read only once asked for. Until then the tab shows its kinds, a
+    line saying where the list comes from (library.kiwix.org) and "Show Kiwix's library" in its
+    place; that button, the tab or a kind pressed asks (`interaction._kiwixAsked`), and so does
+    the card's dialog opened, after which the tab lists without a press. A scene restored on the
+    tab does not ask.
   - *Shelves & settings*: library summary, sort toggle Title/Author/Popularity (rebuilds shelves),
     A–Z letter grid over the shelved books (teleports to the first book with that letter via
     `shelves.locate` and highlights it for 4 s), "Surprise me" (random book), "Recently read"

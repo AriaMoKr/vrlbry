@@ -205,6 +205,7 @@ export class Interaction {
     this.kiosk = p;
     this._kioskTab = 'shelves';
     this._kioskTabPicked = false; // a tab was chosen (or restored): Kiwix's arrival no longer moves it
+    this._kiwixAsked = false; // the Kiwix tab, a kind or its button pressed: its list is read from Kiwix
     this._search = { q: '', results: [], pending: false, token: 0, timer: 0 };
     p.mesh.name = 'kiosk';
     this.scene.add(p.mesh);
@@ -273,6 +274,7 @@ export class Interaction {
         onClick: () => {
           this._kioskTab = id;
           this._kioskTabPicked = true;
+          if (id === 'kiwix') this._kiwixAsked = true;
           this._search.focus = id === 'search';
           this._resetForm = null; // another tab, or the same again: the reset's choice is left
           this._fillKiosk();
@@ -308,6 +310,8 @@ export class Interaction {
     this.onOpenUrl = onOpenUrl;
     // The kiosk opens on Kiwix's library: more to read is what a new visitor most likely wants.
     if (!this._kioskTabPicked) this._kioskTab = 'kiwix';
+    // Its list once the card's dialog has asked for it: shown without a press.
+    kiwix.catalog.whenAsked?.(() => { if (this._kioskTab === 'kiwix' && !this._kiwixAsked) this._fillKiosk(); });
     this._fillKiosk();
   }
 
@@ -763,9 +767,14 @@ export class Interaction {
     const k = this.kiwix;
     const { kind, lang } = k.prefs();
     const key = `${kind}|${lang}`;
+    // Nothing is read from Kiwix until the visitor asks: this tab, a kind or "Show Kiwix's library"
+    // pressed, or the card's dialog opened (the catalogue's `asked`). The kiosk opens on this tab,
+    // so a page left alone would otherwise tell Kiwix's server of every visit. A scene restored on
+    // this tab does not ask.
+    const asked = this._kiwixAsked || k.catalog.asked;
     // Read when the kind or language changes; again in the background (the shown list stays) when
     // the libraries changed (their Open marks, and an index now kept here).
-    if (this._kiwixView?.key !== key || this._kiwixView.stale) {
+    if (asked && (this._kiwixView?.key !== key || this._kiwixView.stale)) {
       const shown = this._kiwixView?.key === key ? this._kiwixView.view : null;
       this._kiwixView = shown ? { key, view: shown } : { key, loading: true };
       k.catalog.view(kind, lang).then((view) => ({ key, view }), (err) => ({ key, error: err.message })).then((st) => {
@@ -783,12 +792,20 @@ export class Interaction {
         active: kind === kd.id,
         onClick: () => {
           this._kiwixPicking = false;
+          this._kiwixAsked = true;
           k.setPrefs({ kind: kd.id, lang });
           this._fillKiosk();
         },
       });
     });
     y += 62;
+    if (!asked) {
+      p.add({ type: 'text', x: pad, y: y + 8, w: W - 2 * pad, h: 100, size: 24, color: UI.text, maxLines: 3,
+        text: "Books and encyclopedias this library reads well, listed by Kiwix at library.kiwix.org. The list is read from there only when you ask for it." });
+      p.add({ id: 'kiwix-show', type: 'button', x: pad, y: y + 124, w: 340, h: 56, label: "Show Kiwix's library", size: 24,
+        onClick: () => { this._kiwixAsked = true; this._fillKiosk(); } });
+      return;
+    }
     const langName = st.view?.languages.find((l) => l.code === lang)?.name ?? lang;
     p.add({ type: 'text', x: pad, y: y + 8, w: W - 2 * pad - 250, h: 34, text: `Language: ${langName}`, size: 24, color: UI.text, maxLines: 1 });
     p.add({

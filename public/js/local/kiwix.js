@@ -3,8 +3,10 @@
 // which lets a page read it: CORS *), for the card's dialog (ui/kiwix-dialog.js) and the kiosk's
 // Kiwix tab (interaction.js). Read live, one feed per kind with every language (100 KB to 1.5 MB,
 // about 100 KB compressed, revalidated by its ETag), so it is never out of date and a language is
-// chosen without another request. When it cannot be reached the page says so, and web addresses
-// and files still open: nothing else needs it.
+// chosen without another request. Read only once a visitor asks for a list (the dialog opened, the
+// tab or its button pressed: `asked`), so a page left alone asks nothing of Kiwix's server, and
+// kept for the page's life; each visit asks anew. When it cannot be reached the page says so, and
+// web addresses and files still open: nothing else needs it.
 
 import { indexNamesFor } from '../core/index-versions.js';
 import { libraryTitle } from '../util/library-title.js';
@@ -159,7 +161,8 @@ export function indexLabel(entry) {
 
 /**
  * Kiwix's library, read when first asked for and kept for the page's life (a failure is not kept:
- * asking again tries again).
+ * asking again tries again). Nothing is read from Kiwix before a feed or the languages are asked
+ * for (`asked`); the site's own list of indexes and this browser's store are not Kiwix's.
  * @param {{ fetch?: typeof fetch, origin?: string, timeoutMs?: number, indexList?: URL|string|null,
  *   localIndexes?: () => Promise<Iterable<string>> }} [opts] localIndexes: the names in this
  *   browser's store (local/idb-store.js), asked each time a list is shown (they change as ZIMs
@@ -172,6 +175,14 @@ export function kiwixCatalog({
   const feeds = new Map(); // kind → Promise<entries>
   let languageNames = null;
   let prebuilt = null;
+  let asked = false; // a feed or the languages asked for: before that nothing is read from Kiwix
+  const askers = []; // whenAsked's callbacks, called once
+  const ask = () => {
+    if (asked) return;
+    asked = true;
+    // After the asker's turn: a list being drawn asks, and a callback may draw again.
+    if (askers.length) queueMicrotask(() => { for (const f of askers.splice(0)) f(); });
+  };
   const get = async (url) => {
     const abort = new AbortController();
     const timer = setTimeout(() => abort.abort(), timeoutMs);
@@ -195,11 +206,22 @@ export function kiwixCatalog({
     return p;
   };
   return {
+    /** Whether Kiwix's catalogue has been asked for (by a list shown): until then nothing was read from it. */
+    get asked() { return asked; },
+    /** Calls `f` once the catalogue is first asked for (soon, if it already has been), so another list can show it too. */
+    whenAsked(f) {
+      if (asked) queueMicrotask(f);
+      else askers.push(f);
+    },
     /** Every entry of a kind (all languages). */
-    entries: (kind) => kept(feeds, kind, async () => parseEntries(
-      await get(`${origin}/catalog/v2/entries?category=${encodeURIComponent(kind)}&count=-1`), { origin })),
+    entries: (kind) => {
+      ask();
+      return kept(feeds, kind, async () => parseEntries(
+        await get(`${origin}/catalog/v2/entries?category=${encodeURIComponent(kind)}&count=-1`), { origin }));
+    },
     /** Language names (code → name); empty when they cannot be read (the codes are shown then). */
     languageNames() {
+      ask();
       languageNames ??= get(`${origin}/catalog/v2/languages`).then(parseLanguages, () => {
         languageNames = null;
         return new Map();

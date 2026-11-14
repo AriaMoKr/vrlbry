@@ -119,7 +119,9 @@ offers to reopen them. On a Quest, open them before entering VR.
 A ZIM can also be read straight from the web, without downloading it: choose one in Kiwix's
 library ("Browse Kiwix's library…" in the card, or the Kiwix tab of the catalogue stand, also in
 VR), paste its address into the field under the button (or drop its link on the page), or read
-the example from the card.
+the example from the card. The page reads Kiwix's list from library.kiwix.org only when you ask
+for it (the card's button, or "Show Kiwix's library" on the stand), so a visit that never looks
+at it asks nothing of Kiwix.
 Kiwix's download links work: they are turned into the same file on Kiwix's own mirror,
 `mirror.download.kiwix.org`, the one that lets a web page read its files (its other mirrors do
 not). Only what is shown is fetched, a few kilobytes at a time. On a Quest 3 in California,

@@ -205,7 +205,10 @@
   part's size (`navigator.storage.estimate()` gives only the total).
 - **The kiosk opens on its Kiwix tab** (done 2026-10-10): the page starts on Kiwix's library,
   more to read being what a new visitor most likely wants. Possible later: remember a returning
-  visitor's last tab.
+  visitor's last tab. *Since 2026-11-14* its list is read from Kiwix only once a visitor asks
+  for it ("Show Kiwix's library", the tab or a kind pressed, or the card's dialog opened; SPEC
+  §2.6): read as the tab was drawn, it told Kiwix's server of every visit, here and on the sites
+  made from this one. A scene restored on the tab does not ask; each visit asks anew.
 - **Garbage collection pauses** are now the main source of dropped frames on a Quest 3. The
   atlas stalls are fixed (run 2026-10-05 03:37: walking the hall 9.1 % → 0.1 % dropped, an
   ordinary room 5.4 % → 1.8 %, no drop before an atlas arrived, down from 343 of 406), and of
